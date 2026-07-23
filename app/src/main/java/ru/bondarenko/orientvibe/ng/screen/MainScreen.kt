@@ -20,6 +20,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
@@ -28,10 +32,91 @@ import ru.bondarenko.orientvibe.ng.model.PanelButton
 import ru.bondarenko.orientvibe.ng.model.PanelStep
 import ru.bondarenko.orientvibe.ng.ui.components.BottomButtonPanel
 import ru.bondarenko.orientvibe.ng.ui.components.MapDisplayArea
+import ru.bondarenko.orientvibe.ng.ui.components.MapDragListener
+import ru.bondarenko.orientvibe.ng.ui.components.MapTapListener
 import ru.bondarenko.orientvibe.ng.ui.components.SubsamplingMapView
 import ru.bondarenko.orientvibe.ng.ui.components.TopInfoPanel
 import ru.bondarenko.orientvibe.ng.viewmodel.MapViewModel
+import ru.bondarenko.orientvibe.ng.viewmodel.PlacingMode
 import java.io.File
+
+// Equilateral triangle pointing up (orienteering start symbol)
+// Side length = 30, centered at (24, 24)
+private val StartIcon: ImageVector
+    get() = ImageVector.Builder(
+        name = "Start",
+        defaultWidth = 48.dp,
+        defaultHeight = 48.dp,
+        viewportWidth = 48f,
+        viewportHeight = 48f
+    ).apply {
+        // Outlined triangle (lighter appearance for button icon)
+        path(
+            fill = SolidColor(Color.Transparent),
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 4f
+        ) {
+            // Equilateral triangle: side=30, height=25.98, centered vertically
+            // top=(24, 11), bottom-left=(9, 37), bottom-right=(39, 37)
+            moveTo(24f, 11f)
+            lineTo(9f, 37f)
+            lineTo(39f, 37f)
+            close()
+        }
+    }.build()
+
+// Double circle (orienteering finish symbol) — outlined style for lighter appearance
+private val FinishIcon: ImageVector
+    get() = ImageVector.Builder(
+        name = "Finish",
+        defaultWidth = 48.dp,
+        defaultHeight = 48.dp,
+        viewportWidth = 48f,
+        viewportHeight = 48f
+    ).apply {
+        // Outer circle outline (approximated as 12-gon)
+        path(
+            fill = SolidColor(Color.Transparent),
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 4f
+        ) {
+            // 12-gon with r=16, cx=24, cy=24
+            moveTo(40f, 24f)
+            lineTo(37.86f, 32f)
+            lineTo(32f, 37.86f)
+            lineTo(24f, 40f)
+            lineTo(16f, 37.86f)
+            lineTo(10.14f, 32f)
+            lineTo(8f, 24f)
+            lineTo(10.14f, 16f)
+            lineTo(16f, 10.14f)
+            lineTo(24f, 8f)
+            lineTo(32f, 10.14f)
+            lineTo(37.86f, 16f)
+            close()
+        }
+        // Inner circle outline
+        path(
+            fill = SolidColor(Color.Transparent),
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 4f
+        ) {
+            // 12-gon with r=10, cx=24, cy=24
+            moveTo(34f, 24f)
+            lineTo(32.66f, 29f)
+            lineTo(29f, 32.66f)
+            lineTo(24f, 34f)
+            lineTo(19f, 32.66f)
+            lineTo(15.34f, 29f)
+            lineTo(14f, 24f)
+            lineTo(15.34f, 19f)
+            lineTo(19f, 15.34f)
+            lineTo(24f, 14f)
+            lineTo(29f, 15.34f)
+            lineTo(32.66f, 19f)
+            close()
+        }
+    }.build()
 
 @Composable
 fun MainScreen(
@@ -75,8 +160,18 @@ fun MainScreen(
     }
 
     // Update info message based on state
-    LaunchedEffect(mapState.isProcessing, mapState.errorMessage) {
+    LaunchedEffect(mapState.isProcessing, mapState.errorMessage, mapState.placingMode) {
         when {
+            mapState.placingMode == PlacingMode.PLACING_START -> {
+                infoMessage = "Нажмите на карту чтобы поставить точку СТАРТ"
+                isInfoVisible = true
+            }
+
+            mapState.placingMode == PlacingMode.PLACING_FINISH -> {
+                infoMessage = "Нажмите на карту чтобы поставить точку ФИНИШ"
+                isInfoVisible = true
+            }
+
             mapState.isProcessing -> {
                 infoMessage = "Обработка изображения..."
                 isInfoVisible = true
@@ -90,6 +185,28 @@ fun MainScreen(
             mapState.boundingBoxes.isNotEmpty() -> {
                 infoMessage = "Найдено ${mapState.boundingBoxes.size} контрольных точек"
                 isInfoVisible = true
+            }
+        }
+    }
+
+    // Map tap listener: when user taps the map, place route point
+    val tapListener = remember {
+        object : MapTapListener {
+            override fun onMapTap(relativeX: Float, relativeY: Float) {
+                viewModel.placeRoutePoint(relativeX, relativeY)
+            }
+        }
+    }
+
+    // Map drag listener: when user drags start/finish points
+    val dragListener = remember {
+        object : MapDragListener {
+            override fun onStartPointDragged(relativeX: Float, relativeY: Float) {
+                viewModel.moveStartPoint(relativeX, relativeY)
+            }
+
+            override fun onFinishPointDragged(relativeX: Float, relativeY: Float) {
+                viewModel.moveFinishPoint(relativeX, relativeY)
             }
         }
     }
@@ -124,13 +241,25 @@ fun MainScreen(
             ),
             PanelStep(
                 id = "step2",
-                title = "Обработка",
+                title = "Маршрут",
                 buttons = listOf(
                     PanelButton(
-                        id = "process",
-                        text = "Обработать",
+                        id = "start",
+                        text = "Старт",
+                        icon = StartIcon,
                         onClick = {
-                            infoMessage = "Обработка карты..."
+                            viewModel.setPlacingMode(PlacingMode.PLACING_START)
+                            infoMessage = "Нажмите на карту чтобы поставить СТАРТ"
+                            isInfoVisible = true
+                        }
+                    ),
+                    PanelButton(
+                        id = "finish",
+                        text = "Финиш",
+                        icon = FinishIcon,
+                        onClick = {
+                            viewModel.setPlacingMode(PlacingMode.PLACING_FINISH)
+                            infoMessage = "Нажмите на карту чтобы поставить ФИНИШ"
                             isInfoVisible = true
                         }
                     )
@@ -184,6 +313,10 @@ fun MainScreen(
                 SubsamplingMapView(
                     bitmap = mapState.bitmap!!,
                     boundingBoxes = mapState.boundingBoxes,
+                    startPoint = mapState.startPoint,
+                    finishPoint = mapState.finishPoint,
+                    tapListener = tapListener,
+                    dragListener = dragListener,
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(

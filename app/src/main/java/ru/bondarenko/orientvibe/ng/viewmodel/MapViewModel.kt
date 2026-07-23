@@ -24,6 +24,17 @@ data class BoundingBox(
     val label: String
 )
 
+data class RoutePoint(
+    val x: Float, // relative 0..1
+    val y: Float  // relative 0..1
+)
+
+enum class PlacingMode {
+    NONE,
+    PLACING_START,
+    PLACING_FINISH
+}
+
 data class MapState(
     val imageUri: Uri? = null,
     val bitmap: Bitmap? = null,
@@ -31,27 +42,31 @@ data class MapState(
     val isProcessing: Boolean = false,
     val errorMessage: String? = null,
     val progress: Float = 0f,
-    val progressMessage: String? = null
+    val progressMessage: String? = null,
+    val startPoint: RoutePoint? = null,
+    val finishPoint: RoutePoint? = null,
+    val placingMode: PlacingMode = PlacingMode.NONE
 )
 
 class MapViewModel(
     private val context: Context
 ) : ViewModel() {
-    
+
     private val _mapState = MutableStateFlow(MapState())
     val mapState: StateFlow<MapState> = _mapState
-    
+
     private var detector: OnnxObjectDetector? = null
-    
+
     init {
         initializeDetector()
     }
-    
+
     private fun initializeDetector() {
         viewModelScope.launch {
             try {
                 val newDetector = OnnxObjectDetector(context)
-                newDetector.setProgressListener(object : ru.bondarenko.orientvibe.ng.yolo.DetectionProgressListener {
+                newDetector.setProgressListener(object :
+                    ru.bondarenko.orientvibe.ng.yolo.DetectionProgressListener {
                     override fun onProgressUpdate(current: Int, total: Int, message: String) {
                         _mapState.value = _mapState.value.copy(
                             progress = current.toFloat() / total.toFloat(),
@@ -74,7 +89,7 @@ class MapViewModel(
             }
         }
     }
-    
+
     fun loadImageFromUri(uri: Uri) {
         viewModelScope.launch {
             _mapState.value = _mapState.value.copy(
@@ -82,18 +97,18 @@ class MapViewModel(
                 isProcessing = true,
                 errorMessage = null
             )
-            
+
             try {
                 val bitmap = withContext(Dispatchers.IO) {
                     val inputStream: InputStream = context.contentResolver.openInputStream(uri)
                         ?: throw Exception("Unable to open image")
                     BitmapFactory.decodeStream(inputStream)
                 }
-                
+
                 _mapState.value = _mapState.value.copy(
                     bitmap = bitmap
                 )
-                
+
                 // Run detection
                 detectObjects(bitmap)
             } catch (e: Exception) {
@@ -104,17 +119,17 @@ class MapViewModel(
             }
         }
     }
-    
+
     private fun detectObjects(bitmap: Bitmap) {
         viewModelScope.launch {
             try {
                 val detections = withContext(Dispatchers.IO) {
                     detector?.detect(bitmap) ?: emptyList()
                 }
-                
+
                 // Filter only class 0 (control points)
                 val filteredDetections = detections.filter { it.classId == 0 }
-                
+
                 val boundingBoxes = filteredDetections.map { detection ->
                     BoundingBox(
                         left = detection.boundingBox.left / bitmap.width,
@@ -125,7 +140,7 @@ class MapViewModel(
                         label = "control_point"
                     )
                 }
-                
+
                 _mapState.value = _mapState.value.copy(
                     boundingBoxes = boundingBoxes,
                     isProcessing = false
@@ -138,16 +153,78 @@ class MapViewModel(
             }
         }
     }
-    
+
+    fun setPlacingMode(mode: PlacingMode) {
+        _mapState.value = _mapState.value.copy(placingMode = mode)
+    }
+
+    private fun snapToControlPoint(relativeX: Float, relativeY: Float): RoutePoint {
+        val boxes = _mapState.value.boundingBoxes
+        val snapped = boxes.minByOrNull { box ->
+            val cx = (box.left + box.right) / 2
+            val cy = (box.top + box.bottom) / 2
+            val dx = cx - relativeX
+            val dy = cy - relativeY
+            dx * dx + dy * dy
+        }
+
+        val threshold = 0.03f // 3% of image dimension
+        if (snapped != null) {
+            val cx = (snapped.left + snapped.right) / 2
+            val cy = (snapped.top + snapped.bottom) / 2
+            val dx = cx - relativeX
+            val dy = cy - relativeY
+            if (dx * dx + dy * dy < threshold * threshold) {
+                return RoutePoint(cx, cy)
+            }
+        }
+        return RoutePoint(relativeX, relativeY)
+    }
+
+    fun placeRoutePoint(relativeX: Float, relativeY: Float) {
+        val state = _mapState.value
+        if (state.placingMode == PlacingMode.NONE) return
+
+        val finalPoint = snapToControlPoint(relativeX, relativeY)
+
+        when (state.placingMode) {
+            PlacingMode.PLACING_START -> {
+                _mapState.value = state.copy(
+                    startPoint = finalPoint,
+                    placingMode = PlacingMode.NONE
+                )
+            }
+
+            PlacingMode.PLACING_FINISH -> {
+                _mapState.value = state.copy(
+                    finishPoint = finalPoint,
+                    placingMode = PlacingMode.NONE
+                )
+            }
+
+            else -> {}
+        }
+    }
+
+    fun moveStartPoint(relativeX: Float, relativeY: Float) {
+        _mapState.value =
+            _mapState.value.copy(startPoint = snapToControlPoint(relativeX, relativeY))
+    }
+
+    fun moveFinishPoint(relativeX: Float, relativeY: Float) {
+        _mapState.value =
+            _mapState.value.copy(finishPoint = snapToControlPoint(relativeX, relativeY))
+    }
+
     fun clearError() {
         _mapState.value = _mapState.value.copy(errorMessage = null)
     }
-    
+
     override fun onCleared() {
         super.onCleared()
         detector?.close()
     }
-    
+
     companion object {
         fun Factory(context: Context) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
