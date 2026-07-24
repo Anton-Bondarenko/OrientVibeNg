@@ -317,6 +317,9 @@ fun MainScreen(
                     finishPoint = mapState.finishPoint,
                     tapListener = tapListener,
                     dragListener = dragListener,
+                    northAngle = mapState.northAngle,
+                    onNorthAngleChanged = { angle -> viewModel.updateNorthAngle(angle) },
+                    onNorthAngleReset = { viewModel.resetNorthAngle() },
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(

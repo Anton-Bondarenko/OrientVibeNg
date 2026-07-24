@@ -45,7 +45,8 @@ data class MapState(
     val progressMessage: String? = null,
     val startPoint: RoutePoint? = null,
     val finishPoint: RoutePoint? = null,
-    val placingMode: PlacingMode = PlacingMode.NONE
+    val placingMode: PlacingMode = PlacingMode.NONE,
+    val northAngle: Float = 0f // degrees, 0 = up, positive = CW, range -45..45
 )
 
 class MapViewModel(
@@ -214,6 +215,14 @@ class MapViewModel(
     fun moveFinishPoint(relativeX: Float, relativeY: Float) {
         _mapState.value =
             _mapState.value.copy(finishPoint = snapToControlPoint(relativeX, relativeY))
+    }
+
+    fun updateNorthAngle(angle: Float) {
+        _mapState.value = _mapState.value.copy(northAngle = angle.coerceIn(-45f, 45f))
+    }
+
+    fun resetNorthAngle() {
+        _mapState.value = _mapState.value.copy(northAngle = 0f)
     }
 
     fun clearError() {
