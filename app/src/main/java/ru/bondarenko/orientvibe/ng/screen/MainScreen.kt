@@ -125,6 +125,20 @@ fun MainScreen(
     val context = LocalContext.current
     val mapState by viewModel.mapState.collectAsState()
 
+    // Compute azimuth: angle from north line to route line, clockwise in degrees
+    val azimuth = remember(mapState.startPoint, mapState.finishPoint, mapState.northAngle) {
+        val sp = mapState.startPoint
+        val fp = mapState.finishPoint
+        if (sp != null && fp != null) {
+            val dx = fp.x - sp.x
+            val dy = fp.y - sp.y
+            val routeDir = (Math.toDegrees(Math.atan2(dx.toDouble(), -dy.toDouble())) + 360) % 360
+            ((routeDir + mapState.northAngle + 360) % 360).toFloat()
+        } else {
+            null
+        }
+    }
+
     var currentStepIndex by remember { mutableStateOf(0) }
     var infoMessage by remember { mutableStateOf("Добро пожаловать в OrientVibe") }
     var isInfoVisible by remember { mutableStateOf(true) }
@@ -160,7 +174,14 @@ fun MainScreen(
     }
 
     // Update info message based on state
-    LaunchedEffect(mapState.isProcessing, mapState.errorMessage, mapState.placingMode) {
+    LaunchedEffect(
+        mapState.isProcessing,
+        mapState.errorMessage,
+        mapState.placingMode,
+        mapState.startPoint,
+        mapState.finishPoint,
+        mapState.northAngle
+    ) {
         when {
             mapState.placingMode == PlacingMode.PLACING_START -> {
                 infoMessage = "Нажмите на карту чтобы поставить точку СТАРТ"
@@ -184,6 +205,11 @@ fun MainScreen(
 
             mapState.boundingBoxes.isNotEmpty() -> {
                 infoMessage = "Найдено ${mapState.boundingBoxes.size} контрольных точек"
+                isInfoVisible = true
+            }
+
+            mapState.startPoint != null && mapState.finishPoint != null -> {
+                infoMessage = "Маршрут задан"
                 isInfoVisible = true
             }
         }
@@ -360,6 +386,7 @@ fun MainScreen(
                 progress = mapState.progress,
                 isProcessing = mapState.isProcessing,
                 progressMessage = mapState.progressMessage,
+                azimuth = azimuth,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .padding(top = 16.dp)

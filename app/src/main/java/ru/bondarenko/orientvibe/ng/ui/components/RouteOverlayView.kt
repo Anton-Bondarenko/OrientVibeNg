@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.view.MotionEvent
+import ru.bondarenko.orientvibe.ng.ui.theme.ControlsRed
 import ru.bondarenko.orientvibe.ng.viewmodel.RoutePoint
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -34,7 +35,7 @@ class RouteOverlay {
     private enum class Dragging { NONE, START, FINISH }
 
     private val startPaint = Paint().apply {
-        color = Color.rgb(0, 180, 0)
+        color = ControlsRed
         style = Paint.Style.FILL
     }
 
@@ -45,7 +46,7 @@ class RouteOverlay {
     }
 
     private val finishFillPaint = Paint().apply {
-        color = Color.BLUE
+        color = ControlsRed
         style = Paint.Style.FILL
     }
 
@@ -56,15 +57,15 @@ class RouteOverlay {
     }
 
     private val routeLinePaint = Paint().apply {
-        color = Color.rgb(0, 180, 0)
+        color = ControlsRed
         style = Paint.Style.STROKE
         strokeWidth = 6f
         isAntiAlias = true
     }
 
     private val arrowPaint = Paint().apply {
-        color = Color.rgb(0, 180, 0)
-        style = Paint.Style.FILL
+        color = ControlsRed
+        style = Paint.Style.STROKE
         isAntiAlias = true
     }
 

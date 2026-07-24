@@ -26,6 +26,7 @@ fun TopInfoPanel(
     progress: Float = 0f,
     isProcessing: Boolean = false,
     progressMessage: String? = null,
+    azimuth: Float? = null,
     modifier: Modifier = Modifier
 ) {
     val alpha by animateFloatAsState(
@@ -33,13 +34,13 @@ fun TopInfoPanel(
         animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
         label = "alpha"
     )
-    
+
     val backgroundColor by animateColorAsState(
         targetValue = MaterialTheme.colorScheme.primary.copy(alpha = alpha),
         animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
         label = "backgroundColor"
     )
-    
+
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -68,7 +69,18 @@ fun TopInfoPanel(
                 fontWeight = FontWeight.Medium,
                 textAlign = TextAlign.Center
             )
-            
+
+            azimuth?.let {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Азимут: ${String.format("%.1f", it)}°",
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Normal,
+                    textAlign = TextAlign.Center
+                )
+            }
+
             if (isProcessing) {
                 Spacer(modifier = Modifier.height(8.dp))
                 LinearProgressIndicator(
