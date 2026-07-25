@@ -207,9 +207,10 @@ class RouteOverlay {
             val viewS = toView(sx, sy) ?: return
 
             val angle = if (fp != null) {
+                val (sWidth, sHeight) = imageDimensions ?: 0f to 0f
                 atan2(
-                    (fp.y - sp.y).toDouble(),
-                    (fp.x - sp.x).toDouble()
+                    ((fp.y - sp.y) * sHeight).toDouble(),
+                    ((fp.x - sp.x) * sWidth).toDouble()
                 ).toFloat()
             } else {
                 -(Math.PI.toFloat() / 2)

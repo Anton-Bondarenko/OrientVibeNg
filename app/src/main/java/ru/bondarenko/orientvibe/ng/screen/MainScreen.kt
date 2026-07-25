@@ -125,13 +125,18 @@ fun MainScreen(
     val context = LocalContext.current
     val mapState by viewModel.mapState.collectAsState()
 
+    var currentStepIndex by remember { mutableStateOf(0) }
+    var infoMessage by remember { mutableStateOf("Добро пожаловать в OrientVibe") }
+    var isInfoVisible by remember { mutableStateOf(true) }
+
     // Compute azimuth: angle from north line to route line, clockwise in degrees
-    val azimuth = remember(mapState.startPoint, mapState.finishPoint, mapState.northAngle) {
+    val azimuth = remember(mapState.startPoint, mapState.finishPoint, mapState.northAngle, mapState.bitmap) {
         val sp = mapState.startPoint
         val fp = mapState.finishPoint
-        if (sp != null && fp != null) {
-            val dx = fp.x - sp.x
-            val dy = fp.y - sp.y
+        val bmp = mapState.bitmap
+        if (sp != null && fp != null && bmp != null) {
+            val dx = (fp.x - sp.x) * bmp.width
+            val dy = (fp.y - sp.y) * bmp.height
             val routeDir = (Math.toDegrees(Math.atan2(dx.toDouble(), -dy.toDouble())) + 360) % 360
             ((routeDir + mapState.northAngle + 360) % 360).toFloat()
         } else {
@@ -139,9 +144,24 @@ fun MainScreen(
         }
     }
 
-    var currentStepIndex by remember { mutableStateOf(0) }
-    var infoMessage by remember { mutableStateOf("Добро пожаловать в OrientVibe") }
-    var isInfoVisible by remember { mutableStateOf(true) }
+    // Compute map rotation: rotate image so route line is vertical (bottom-to-top)
+    val mapRotation = remember(mapState.startPoint, mapState.finishPoint, mapState.bitmap, currentStepIndex) {
+        if (currentStepIndex == 2) {
+            val sp = mapState.startPoint
+            val fp = mapState.finishPoint
+            val bmp = mapState.bitmap
+            if (sp != null && fp != null && bmp != null) {
+                val dx = (fp.x - sp.x) * bmp.width
+                val dy = (fp.y - sp.y) * bmp.height
+                val routeAngle = Math.toDegrees(Math.atan2(dx.toDouble(), -dy.toDouble())).toFloat()
+                (-routeAngle).toFloat()
+            } else {
+                0f
+            }
+        } else {
+            0f
+        }
+    }
 
     // Gallery picker
     val galleryLauncher = rememberLauncherForActivityResult(
@@ -294,24 +314,7 @@ fun MainScreen(
             PanelStep(
                 id = "step3",
                 title = "Результат",
-                buttons = listOf(
-                    PanelButton(
-                        id = "save",
-                        text = "Сохранить",
-                        onClick = {
-                            infoMessage = "Сохранение результата..."
-                            isInfoVisible = true
-                        }
-                    ),
-                    PanelButton(
-                        id = "share",
-                        text = "Поделиться",
-                        onClick = {
-                            infoMessage = "Поделиться результатом..."
-                            isInfoVisible = true
-                        }
-                    )
-                )
+                buttons = emptyList()
             )
         )
     }
@@ -346,6 +349,7 @@ fun MainScreen(
                     northAngle = mapState.northAngle,
                     onNorthAngleChanged = { angle -> viewModel.updateNorthAngle(angle) },
                     onNorthAngleReset = { viewModel.resetNorthAngle() },
+                    mapRotation = mapRotation,
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(

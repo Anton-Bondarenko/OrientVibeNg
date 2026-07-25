@@ -86,18 +86,30 @@ class OnnxObjectDetector(private val context: Context) {
             return emptyList()
         }
 
+        val source = if (bitmap.isRecycled) {
+            Log.w(tag, "Detect called with recycled bitmap")
+            return emptyList()
+        } else {
+            bitmap
+        }
+
         return try {
             // Use sliced inference for better detection on high-resolution images
-            detectWithSlicing(bitmap, session)
+            detectWithSlicing(source, session)
         } catch (e: Exception) {
             Log.e(tag, "Error during detection", e)
             emptyList()
         }
     }
 
-    private fun detectWithSlicing(bitmap: Bitmap, session: OrtSession): List<DetectionResult> {
-        val originalWidth = bitmap.width
-        val originalHeight = bitmap.height
+    private fun detectWithSlicing(original: Bitmap, session: OrtSession): List<DetectionResult> {
+        if (original.isRecycled) {
+            Log.w(tag, "Skipping sliced inference: recycled bitmap")
+            return emptyList()
+        }
+        val source = original.copy(Bitmap.Config.ARGB_8888, false)
+        val originalWidth = source.width
+        val originalHeight = source.height
 
         Log.d(tag, "Sliced inference: Original image ${originalWidth}x${originalHeight}")
 
@@ -127,8 +139,10 @@ class OnnxObjectDetector(private val context: Context) {
         // Process each slice
         for (y in 0 until numSlicesY) {
             for (x in 0 until numSlicesX) {
-                val sliceX1 = (x * step).coerceAtMost(originalWidth - sliceSize)
-                val sliceY1 = (y * step).coerceAtMost(originalHeight - sliceSize)
+                val maxStartX = (originalWidth - sliceSize).coerceAtLeast(0)
+                val maxStartY = (originalHeight - sliceSize).coerceAtLeast(0)
+                val sliceX1 = (x * step).coerceAtMost(maxStartX)
+                val sliceY1 = (y * step).coerceAtMost(maxStartY)
                 val sliceX2 = (sliceX1 + sliceSize).coerceAtMost(originalWidth)
                 val sliceY2 = (sliceY1 + sliceSize).coerceAtMost(originalHeight)
 
@@ -137,11 +151,16 @@ class OnnxObjectDetector(private val context: Context) {
                     continue
                 }
 
+                if (source.isRecycled) {
+                    Log.w(tag, "Source bitmap recycled during slicing, aborting")
+                    return allDetections
+                }
+
                 // Extract slice
                 val sliceWidth = sliceX2 - sliceX1
                 val sliceHeight = sliceY2 - sliceY1
                 val sliceBitmap =
-                    Bitmap.createBitmap(bitmap, sliceX1, sliceY1, sliceWidth, sliceHeight)
+                    Bitmap.createBitmap(source, sliceX1, sliceY1, sliceWidth, sliceHeight)
 
                 // Update progress
                 processedSlices++

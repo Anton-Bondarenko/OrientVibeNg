@@ -3,7 +3,7 @@ package ru.bondarenko.orientvibe.ng.ui.components
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.view.MotionEvent
+import android.graphics.PointF
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -11,66 +11,35 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
-import com.davemorrissey.labs.subscaleview.ImageSource
-import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import ru.bondarenko.orientvibe.ng.viewmodel.BoundingBox
 import ru.bondarenko.orientvibe.ng.viewmodel.RoutePoint
+import kotlin.math.atan2
+import kotlin.math.pow
+import kotlin.math.sqrt
 
 class OverlayMapView(
     context: Context,
-    private var startPoint: RoutePoint? = null,
-    private var finishPoint: RoutePoint? = null,
-    private var tapListener: MapTapListener? = null,
-    private var dragListener: MapDragListener? = null
-) : SubsamplingScaleImageView(context) {
+    startPoint: RoutePoint? = null,
+    finishPoint: RoutePoint? = null,
+    tapListener: MapTapListener? = null,
+    dragListener: MapDragListener? = null
+) : CustomImageView(context) {
 
-    val northIndicator = NorthIndicator()
-    val routeOverlay = RouteOverlay()
-    val controlPointOverlay = ControlPointOverlay()
-
-    fun updateBoundingBoxes(boxes: List<BoundingBox>) {
-        controlPointOverlay.boundingBoxes = boxes
-        invalidate()
+    init {
+        this.startPoint = startPoint
+        this.finishPoint = finishPoint
+        this.tapListener = tapListener
+        this.dragListener = dragListener
     }
 
-    fun updateStartPoint(point: RoutePoint?) {
-        routeOverlay.startPoint = point
-        invalidate()
-    }
-
-    fun updateFinishPoint(point: RoutePoint?) {
-        routeOverlay.finishPoint = point
-        invalidate()
-    }
-
-    fun setTapListener(listener: MapTapListener?) {
-        routeOverlay.tapListener = listener
-    }
-
-    fun setDragListener(listener: MapDragListener?) {
-        routeOverlay.dragListener = listener
-    }
-
-    private fun updateOverlayCoords() {
-        val sWidth = getSWidth().toFloat()
-        val sHeight = getSHeight().toFloat()
-        routeOverlay.imageDimensions = Pair(sWidth, sHeight)
-        routeOverlay.sourceToViewCoord = { x, y -> sourceToViewCoord(x, y) }
-        routeOverlay.viewToSourceCoord = { x, y -> viewToSourceCoord(x, y) }
-        controlPointOverlay.imageDimensions = Pair(sWidth, sHeight)
-        controlPointOverlay.sourceToViewCoord = { x, y -> sourceToViewCoord(x, y) }
-    }
-
-    override fun onTouchEvent(event: MotionEvent): Boolean {
+    override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
         updateOverlayCoords()
 
-        // Let NorthIndicator try first
         if (northIndicator.handleTouchEvent(event)) {
             invalidate()
             return true
         }
 
-        // Let RouteOverlay try
         if (routeOverlay.handleTouchEvent(event)) {
             invalidate()
             return true
@@ -82,25 +51,23 @@ class OverlayMapView(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
-        if (controlPointOverlay.boundingBoxes.isEmpty() &&
-            routeOverlay.startPoint == null &&
-            routeOverlay.finishPoint == null
-        ) return
-
-        val sWidth = getSWidth().toFloat()
-        val sHeight = getSHeight().toFloat()
+        val sWidth = bitmap?.width?.toFloat() ?: 0f
+        val sHeight = bitmap?.height?.toFloat() ?: 0f
         if (sWidth <= 0 || sHeight <= 0) return
+
+        if (mapRotation != 0f && !mapTransformApplied) {
+            applyMapTransform()
+        }
 
         updateOverlayCoords()
 
-        // Draw control point circles
         controlPointOverlay.draw(canvas)
-
-        // Draw route overlay (start, finish, line, arrow)
         routeOverlay.draw(canvas)
 
-        // Draw north indicator
+        val savedAngle = northIndicator.angle
+        northIndicator.angle -= mapRotation
         northIndicator.draw(canvas)
+        northIndicator.angle = savedAngle
     }
 }
 
@@ -115,6 +82,7 @@ fun SubsamplingMapView(
     northAngle: Float = 0f,
     onNorthAngleChanged: ((Float) -> Unit)? = null,
     onNorthAngleReset: (() -> Unit)? = null,
+    mapRotation: Float = 0f,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -122,7 +90,7 @@ fun SubsamplingMapView(
     val overlayView = remember { OverlayMapView(context) }
 
     DisposableEffect(bitmap) {
-        overlayView.setImage(ImageSource.bitmap(bitmap))
+        overlayView.bitmap = bitmap
         onDispose { }
     }
 
@@ -138,13 +106,13 @@ fun SubsamplingMapView(
     }
 
     DisposableEffect(tapListener) {
-        overlayView.setTapListener(tapListener)
-        onDispose { overlayView.setTapListener(null) }
+        overlayView.assignTapListener(tapListener)
+        onDispose { overlayView.assignTapListener(null) }
     }
 
     DisposableEffect(dragListener) {
-        overlayView.setDragListener(dragListener)
-        onDispose { overlayView.setDragListener(null) }
+        overlayView.assignDragListener(dragListener)
+        onDispose { overlayView.assignDragListener(null) }
     }
 
     DisposableEffect(northAngle) {
@@ -164,6 +132,13 @@ fun SubsamplingMapView(
         }
         overlayView.northIndicator.listener = listener
         onDispose { overlayView.northIndicator.listener = null }
+    }
+
+    DisposableEffect(mapRotation) {
+        overlayView.mapRotation = mapRotation
+        overlayView.mapTransformApplied = false
+        overlayView.invalidate()
+        onDispose { }
     }
 
     AndroidView(

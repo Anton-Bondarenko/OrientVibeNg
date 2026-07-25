@@ -46,7 +46,6 @@ dependencies {
     implementation(libs.onnxruntime.android)
     implementation(libs.coil.compose)
     implementation(libs.androidx.material.icons.extended)
-    implementation(libs.subsampling.scale.image.view)
     implementation(libs.accompanist.permissions)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
