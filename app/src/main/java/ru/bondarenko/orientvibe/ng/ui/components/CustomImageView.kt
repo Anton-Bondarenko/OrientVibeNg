@@ -12,9 +12,6 @@ import android.view.View
 import ru.bondarenko.orientvibe.ng.viewmodel.BoundingBox
 import ru.bondarenko.orientvibe.ng.viewmodel.RoutePoint
 import kotlin.math.atan2
-import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.pow
 import kotlin.math.sqrt
 
 open class CustomImageView(context: Context) : View(context) {
@@ -193,34 +190,47 @@ open class CustomImageView(context: Context) : View(context) {
         mapTransformApplied = true
     }
 
-    private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.OnScaleGestureListener {
-        override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
-            return true
-        }
+    private val scaleDetector =
+        ScaleGestureDetector(context, object : ScaleGestureDetector.OnScaleGestureListener {
+            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+                return true
+            }
 
-        override fun onScale(detector: ScaleGestureDetector): Boolean {
-            mapScale *= detector.scaleFactor
-            mapScale = mapScale.coerceIn(scaleMin, scaleMax)
-            invalidate()
-            return true
-        }
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                mapScale *= detector.scaleFactor
+                mapScale = mapScale.coerceIn(scaleMin, scaleMax)
+                invalidate()
+                return true
+            }
 
-        override fun onScaleEnd(detector: ScaleGestureDetector) {}
-    })
+            override fun onScaleEnd(detector: ScaleGestureDetector) {}
+        })
 
-    private val gestureDetector = GestureDetector(context, object : GestureDetector.OnGestureListener {
-        override fun onDown(e: MotionEvent): Boolean = true
-        override fun onShowPress(e: MotionEvent) {}
-        override fun onSingleTapUp(e: MotionEvent): Boolean = false
-        override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
-            mapPanX -= distanceX
-            mapPanY -= distanceY
-            invalidate()
-            return true
-        }
-        override fun onLongPress(e: MotionEvent) {}
-        override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean = false
-    })
+    private val gestureDetector =
+        GestureDetector(context, object : GestureDetector.OnGestureListener {
+            override fun onDown(e: MotionEvent): Boolean = true
+            override fun onShowPress(e: MotionEvent) {}
+            override fun onSingleTapUp(e: MotionEvent): Boolean = false
+            override fun onScroll(
+                e1: MotionEvent?,
+                e2: MotionEvent,
+                distanceX: Float,
+                distanceY: Float
+            ): Boolean {
+                mapPanX -= distanceX
+                mapPanY -= distanceY
+                invalidate()
+                return true
+            }
+
+            override fun onLongPress(e: MotionEvent) {}
+            override fun onFling(
+                e1: MotionEvent?,
+                e2: MotionEvent,
+                velocityX: Float,
+                velocityY: Float
+            ): Boolean = false
+        })
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         updateOverlayCoords()
@@ -267,8 +277,8 @@ open class CustomImageView(context: Context) : View(context) {
         canvas.restoreToCount(saved)
 
         val hasOverlays = controlPointOverlay.boundingBoxes.isNotEmpty() ||
-            routeOverlay.startPoint != null ||
-            routeOverlay.finishPoint != null
+                routeOverlay.startPoint != null ||
+                routeOverlay.finishPoint != null
 
         if (hasOverlays) {
             controlPointOverlay.draw(canvas)
