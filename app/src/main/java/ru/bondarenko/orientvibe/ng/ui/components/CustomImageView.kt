@@ -43,7 +43,10 @@ open class CustomImageView(context: Context) : View(context) {
     private var preNavRotation: Float = 0f
     private var preNavPanX: Float = 0f
     private var preNavPanY: Float = 0f
+    private var savedTapListener: MapTapListener? = null
+    private var savedDragListener: MapDragListener? = null
 
+    var isInteractionEnabled: Boolean = true
     var mapRotation: Float = 0f
         set(value) {
             val previous = field
@@ -53,11 +56,19 @@ open class CustomImageView(context: Context) : View(context) {
                 preNavRotation = currentRotation
                 preNavPanX = mapPanX
                 preNavPanY = mapPanY
+                savedTapListener = routeOverlay.tapListener
+                savedDragListener = routeOverlay.dragListener
+                routeOverlay.tapListener = null
+                routeOverlay.dragListener = null
+                isInteractionEnabled = false
             } else if (previous != 0f && value == 0f) {
                 mapScale = preNavScale
                 currentRotation = preNavRotation
                 mapPanX = preNavPanX
                 mapPanY = preNavPanY
+                routeOverlay.tapListener = savedTapListener
+                routeOverlay.dragListener = savedDragListener
+                isInteractionEnabled = true
                 invalidate()
             }
             mapTransformApplied = false
@@ -233,6 +244,8 @@ open class CustomImageView(context: Context) : View(context) {
         })
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (!isInteractionEnabled) return false
+
         updateOverlayCoords()
 
         if (northIndicator.handleTouchEvent(event)) {

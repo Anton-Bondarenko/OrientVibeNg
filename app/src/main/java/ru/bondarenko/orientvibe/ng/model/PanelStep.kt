@@ -5,7 +5,8 @@ data class PanelButton(
     val text: String,
     val icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
     val onClick: () -> Unit,
-    val enabled: Boolean = true
+    val enabled: Boolean = true,
+    val isActive: Boolean = false
 )
 
 data class PanelStep(

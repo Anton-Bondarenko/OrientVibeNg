@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -128,6 +129,28 @@ fun MainScreen(
     var currentStepIndex by remember { mutableStateOf(0) }
     var infoMessage by remember { mutableStateOf("Добро пожаловать в OrientVibe") }
     var isInfoVisible by remember { mutableStateOf(true) }
+
+    // Auto-place start after image load
+    LaunchedEffect(mapState.boundingBoxes, mapState.isProcessing) {
+        if (!mapState.isProcessing && mapState.boundingBoxes.isNotEmpty() && mapState.placingMode == PlacingMode.NONE && mapState.startPoint == null) {
+            viewModel.setPlacingMode(PlacingMode.PLACING_START)
+        }
+    }
+
+    // Auto-place finish after start
+    LaunchedEffect(mapState.startPoint) {
+        val start = mapState.startPoint
+        if (start != null && mapState.placingMode != PlacingMode.PLACING_FINISH && mapState.finishPoint == null) {
+            viewModel.setPlacingMode(PlacingMode.PLACING_FINISH)
+        }
+    }
+
+    // Auto-enter navigation after finish
+    LaunchedEffect(mapState.finishPoint) {
+        if (mapState.finishPoint != null) {
+            currentStepIndex = 2
+        }
+    }
 
     // Compute azimuth: angle from north line to route line, clockwise in degrees
     val azimuth = remember(mapState.startPoint, mapState.finishPoint, mapState.northAngle, mapState.bitmap) {
@@ -293,6 +316,7 @@ fun MainScreen(
                         id = "start",
                         text = "Старт",
                         icon = StartIcon,
+                        isActive = mapState.placingMode == PlacingMode.PLACING_START,
                         onClick = {
                             viewModel.setPlacingMode(PlacingMode.PLACING_START)
                             infoMessage = "Нажмите на карту чтобы поставить СТАРТ"
@@ -303,6 +327,7 @@ fun MainScreen(
                         id = "finish",
                         text = "Финиш",
                         icon = FinishIcon,
+                        isActive = mapState.placingMode == PlacingMode.PLACING_FINISH,
                         onClick = {
                             viewModel.setPlacingMode(PlacingMode.PLACING_FINISH)
                             infoMessage = "Нажмите на карту чтобы поставить ФИНИШ"
@@ -322,7 +347,7 @@ fun MainScreen(
     val currentStep = steps[currentStepIndex]
 
     // Auto-advance to step 2 after processing completes
-    LaunchedEffect(mapState.isProcessing, mapState.boundingBoxes) {
+    LaunchedEffect(mapState.isProcessing, mapState.boundingBoxes, mapState.startPoint, mapState.finishPoint) {
         if (!mapState.isProcessing && mapState.boundingBoxes.isNotEmpty() && currentStepIndex == 0) {
             currentStepIndex = 1
             infoMessage = "Шаг 2: ${steps[1].title}"
@@ -380,6 +405,18 @@ fun MainScreen(
                             start = 16.dp,
                             end = 16.dp
                         )
+                )
+            }
+
+            // Lock icon in top-right when navigating
+            if (mapRotation != 0f) {
+                androidx.compose.material3.Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = "Навигация",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(top = 24.dp, end = 24.dp)
                 )
             }
 

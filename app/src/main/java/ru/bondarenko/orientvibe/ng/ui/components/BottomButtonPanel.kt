@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -149,19 +150,21 @@ private fun PanelButton(
     )
     
     val backgroundColor by animateColorAsState(
-        targetValue = if (button.enabled) 
-            MaterialTheme.colorScheme.primary 
-        else 
-            MaterialTheme.colorScheme.surfaceVariant,
+        targetValue = when {
+            !button.enabled -> MaterialTheme.colorScheme.surfaceVariant
+            button.isActive -> MaterialTheme.colorScheme.primary
+            else -> MaterialTheme.colorScheme.surface
+        },
         animationSpec = tween(durationMillis = 200),
         label = "backgroundColor"
     )
-    
+
     val contentColor by animateColorAsState(
-        targetValue = if (button.enabled) 
-            MaterialTheme.colorScheme.onPrimary 
-        else 
-            MaterialTheme.colorScheme.onSurfaceVariant,
+        targetValue = when {
+            !button.enabled -> MaterialTheme.colorScheme.onSurfaceVariant
+            button.isActive -> Color.White
+            else -> MaterialTheme.colorScheme.primary
+        },
         animationSpec = tween(durationMillis = 200),
         label = "contentColor"
     )
