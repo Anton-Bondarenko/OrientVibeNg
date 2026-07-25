@@ -26,6 +26,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import ru.bondarenko.orientvibe.ng.model.PanelButton
 import ru.bondarenko.orientvibe.ng.model.PanelStep
+import ru.bondarenko.orientvibe.ng.ui.theme.ControlsRed
+import ru.bondarenko.orientvibe.ng.viewmodel.PlacingMode
 
 @Composable
 fun BottomButtonPanel(
@@ -34,7 +36,8 @@ fun BottomButtonPanel(
     canGoForward: Boolean,
     onPreviousStep: () -> Unit,
     onNextStep: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    placingMode: PlacingMode = PlacingMode.NONE
 ) {
     var navigationDirection by remember { mutableStateOf(0) } // 1 for forward, -1 for backward
     
@@ -65,7 +68,8 @@ fun BottomButtonPanel(
             onNextStep = {
                 navigationDirection = 1
                 onNextStep()
-            }
+            },
+            placingMode = placingMode
         )
     }
 }
@@ -76,7 +80,8 @@ private fun PanelContent(
     canGoBack: Boolean,
     canGoForward: Boolean,
     onPreviousStep: () -> Unit,
-    onNextStep: () -> Unit
+    onNextStep: () -> Unit,
+    placingMode: PlacingMode = PlacingMode.NONE
 ) {
     Card(
         modifier = Modifier
@@ -119,7 +124,8 @@ private fun PanelContent(
                 step.buttons.forEach { button ->
                     PanelButton(
                         button = button,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        placingMode = placingMode
                     )
                 }
             }
@@ -141,7 +147,8 @@ private fun PanelContent(
 @Composable
 private fun PanelButton(
     button: PanelButton,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    placingMode: PlacingMode = PlacingMode.NONE
 ) {
     val scale by animateFloatAsState(
         targetValue = if (button.enabled) 1f else 0.95f,
@@ -149,10 +156,10 @@ private fun PanelButton(
         label = "scale"
     )
     
+    // Background color does NOT change when active — only icon tint changes
     val backgroundColor by animateColorAsState(
         targetValue = when {
             !button.enabled -> MaterialTheme.colorScheme.surfaceVariant
-            button.isActive -> MaterialTheme.colorScheme.primary
             else -> MaterialTheme.colorScheme.surface
         },
         animationSpec = tween(durationMillis = 200),
@@ -162,7 +169,6 @@ private fun PanelButton(
     val contentColor by animateColorAsState(
         targetValue = when {
             !button.enabled -> MaterialTheme.colorScheme.onSurfaceVariant
-            button.isActive -> Color.White
             else -> MaterialTheme.colorScheme.primary
         },
         animationSpec = tween(durationMillis = 200),
@@ -191,9 +197,21 @@ private fun PanelButton(
             contentAlignment = Alignment.Center
         ) {
             if (button.icon != null) {
+                // Use placingMode directly to determine icon tint, avoiding stale isActive capture
+                val isThisButtonActive = when (button.id) {
+                    "start" -> placingMode == PlacingMode.PLACING_START
+                    "finish" -> placingMode == PlacingMode.PLACING_FINISH
+                    else -> false
+                }
+                val iconTint = when {
+                    !button.enabled -> MaterialTheme.colorScheme.onSurfaceVariant
+                    isThisButtonActive -> Color(ControlsRed)
+                    else -> contentColor
+                }
                 Icon(
                     imageVector = button.icon,
                     contentDescription = null,
+                    tint = iconTint,
                     modifier = Modifier.size(40.dp)
                 )
             } else {

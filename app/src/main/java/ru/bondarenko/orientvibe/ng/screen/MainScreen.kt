@@ -129,25 +129,34 @@ fun MainScreen(
     var currentStepIndex by remember { mutableStateOf(0) }
     var infoMessage by remember { mutableStateOf("Добро пожаловать в OrientVibe") }
     var isInfoVisible by remember { mutableStateOf(true) }
+    var autoPlacementDone by remember { mutableStateOf(false) }
 
-    // Auto-place start after image load
+    // Reset auto-placement flag when a new image starts loading
+    LaunchedEffect(mapState.isProcessing) {
+        if (mapState.isProcessing) {
+            autoPlacementDone = false
+        }
+    }
+
+    // Auto-place start after image load (only once)
     LaunchedEffect(mapState.boundingBoxes, mapState.isProcessing) {
-        if (!mapState.isProcessing && mapState.boundingBoxes.isNotEmpty() && mapState.placingMode == PlacingMode.NONE && mapState.startPoint == null) {
+        if (!autoPlacementDone && !mapState.isProcessing && mapState.boundingBoxes.isNotEmpty() && mapState.placingMode == PlacingMode.NONE && mapState.startPoint == null) {
             viewModel.setPlacingMode(PlacingMode.PLACING_START)
         }
     }
 
-    // Auto-place finish after start
+    // Auto-place finish after start (only once)
     LaunchedEffect(mapState.startPoint) {
         val start = mapState.startPoint
-        if (start != null && mapState.placingMode != PlacingMode.PLACING_FINISH && mapState.finishPoint == null) {
+        if (!autoPlacementDone && start != null && mapState.placingMode != PlacingMode.PLACING_FINISH && mapState.finishPoint == null) {
             viewModel.setPlacingMode(PlacingMode.PLACING_FINISH)
         }
     }
 
-    // Auto-enter navigation after finish
+    // Auto-enter navigation after finish (only once — guards against drag re-triggering)
     LaunchedEffect(mapState.finishPoint) {
-        if (mapState.finishPoint != null) {
+        if (!autoPlacementDone && mapState.finishPoint != null) {
+            autoPlacementDone = true
             currentStepIndex = 2
         }
     }
@@ -456,7 +465,8 @@ fun MainScreen(
                 },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 16.dp)
+                    .padding(bottom = 16.dp),
+                placingMode = mapState.placingMode
             )
         }
     }
