@@ -181,6 +181,15 @@ open class CustomImageView(context: Context) : View(context) {
         mapPanY = 0f
         invalidate()
 
+        computeImageMatrix()
+        val midSrcX = ((sp.x + fp.x) / 2f) * sWidth
+        val midSrcY = ((sp.y + fp.y) / 2f) * sHeight
+        val mid = floatArrayOf(midSrcX, midSrcY)
+        imageMatrix.mapPoints(mid)
+        mapPanX += width / 2f - mid[0]
+        mapPanY += height / 2f - mid[1]
+        invalidate()
+
         mapTransformApplied = true
     }
 
