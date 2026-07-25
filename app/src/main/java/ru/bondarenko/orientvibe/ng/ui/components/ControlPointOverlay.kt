@@ -3,6 +3,7 @@ package ru.bondarenko.orientvibe.ng.ui.components
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import kotlin.math.sqrt
 import ru.bondarenko.orientvibe.ng.ui.theme.ControlsRed
 import ru.bondarenko.orientvibe.ng.viewmodel.BoundingBox
 
@@ -35,23 +36,15 @@ class ControlPointOverlay {
         val toView = sourceToViewCoord ?: return
 
         for (box in boundingBoxes) {
-            val centerRelX = (box.left + box.right) / 2
-            val centerRelY = (box.top + box.bottom) / 2
-            val boxRelWidth = box.right - box.left
-            val boxRelHeight = box.bottom - box.top
+            val cx = box.centerX * sWidth
+            val cy = box.centerY * sHeight
 
-            val centerX = centerRelX * sWidth
-            val centerY = centerRelY * sHeight
-            val boxWidth = boxRelWidth * sWidth
-            val boxHeight = boxRelHeight * sHeight
-            val radius = minOf(boxWidth, boxHeight) / 2
+            val viewCenter = toView(cx, cy) ?: continue
+            val viewEdge = toView(cx + box.width * sWidth / 2f, cy) ?: continue
+            val radius = (viewEdge.x - viewCenter.x).coerceAtLeast(4f)
 
-            val viewCenter = toView(centerX, centerY) ?: continue
-            val viewEdge = toView(centerX + radius, centerY) ?: continue
-            val viewRadius = (viewEdge.x - viewCenter.x).coerceAtLeast(4f)
-
-            canvas.drawCircle(viewCenter.x, viewCenter.y, viewRadius, controlFillPaint)
-            canvas.drawCircle(viewCenter.x, viewCenter.y, viewRadius, controlCirclePaint)
+            canvas.drawCircle(viewCenter.x, viewCenter.y, radius, controlFillPaint)
+            canvas.drawCircle(viewCenter.x, viewCenter.y, radius, controlCirclePaint)
         }
     }
 }

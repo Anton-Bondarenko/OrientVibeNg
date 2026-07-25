@@ -16,10 +16,10 @@ import ru.bondarenko.orientvibe.ng.yolo.OnnxObjectDetector
 import java.io.InputStream
 
 data class BoundingBox(
-    val left: Float,
-    val top: Float,
-    val right: Float,
-    val bottom: Float,
+    val centerX: Float,
+    val centerY: Float,
+    val width: Float,
+    val height: Float,
     val confidence: Float,
     val label: String
 )
@@ -132,11 +132,15 @@ class MapViewModel(
                 val filteredDetections = detections.filter { it.classId == 0 }
 
                 val boundingBoxes = filteredDetections.map { detection ->
+                    val bw = (detection.boundingBox.right - detection.boundingBox.left) / bitmap.width
+                    val bh = (detection.boundingBox.bottom - detection.boundingBox.top) / bitmap.height
+                    val cx = detection.boundingBox.left / bitmap.width + bw / 2f
+                    val cy = detection.boundingBox.top / bitmap.height + bh / 2f
                     BoundingBox(
-                        left = detection.boundingBox.left / bitmap.width,
-                        top = detection.boundingBox.top / bitmap.height,
-                        right = detection.boundingBox.right / bitmap.width,
-                        bottom = detection.boundingBox.bottom / bitmap.height,
+                        centerX = cx,
+                        centerY = cy,
+                        width = bw,
+                        height = bh,
                         confidence = detection.confidence,
                         label = "control_point"
                     )
@@ -162,21 +166,17 @@ class MapViewModel(
     private fun snapToControlPoint(relativeX: Float, relativeY: Float): RoutePoint {
         val boxes = _mapState.value.boundingBoxes
         val snapped = boxes.minByOrNull { box ->
-            val cx = (box.left + box.right) / 2
-            val cy = (box.top + box.bottom) / 2
-            val dx = cx - relativeX
-            val dy = cy - relativeY
+            val dx = box.centerX - relativeX
+            val dy = box.centerY - relativeY
             dx * dx + dy * dy
         }
 
         val threshold = 0.03f // 3% of image dimension
         if (snapped != null) {
-            val cx = (snapped.left + snapped.right) / 2
-            val cy = (snapped.top + snapped.bottom) / 2
-            val dx = cx - relativeX
-            val dy = cy - relativeY
+            val dx = snapped.centerX - relativeX
+            val dy = snapped.centerY - relativeY
             if (dx * dx + dy * dy < threshold * threshold) {
-                return RoutePoint(cx, cy)
+                return RoutePoint(snapped.centerX, snapped.centerY)
             }
         }
         return RoutePoint(relativeX, relativeY)
