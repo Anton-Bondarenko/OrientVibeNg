@@ -217,27 +217,27 @@ fun MainScreen(
     }
 
     // Auto-place start after image load (only once)
-    LaunchedEffect(mapState.boundingBoxes, mapState.isProcessing) {
-        if (!autoPlacementDone && !mapState.isProcessing && mapState.boundingBoxes.isNotEmpty() && mapState.placingMode == PlacingMode.NONE && mapState.startPoint == null) {
-            viewModel.setPlacingMode(PlacingMode.PLACING_START)
-        }
-    }
+//    LaunchedEffect(mapState.boundingBoxes, mapState.isProcessing) {
+//        if (!autoPlacementDone && !mapState.isProcessing && mapState.boundingBoxes.isNotEmpty() && mapState.placingMode == PlacingMode.NONE && mapState.startPoint == null) {
+//            viewModel.setPlacingMode(PlacingMode.PLACING_START)
+//        }
+//    }
 
     // Auto-place finish after start (only once)
-    LaunchedEffect(mapState.startPoint) {
-        val start = mapState.startPoint
-        if (!autoPlacementDone && start != null && mapState.placingMode != PlacingMode.PLACING_FINISH && mapState.finishPoint == null) {
-            viewModel.setPlacingMode(PlacingMode.PLACING_FINISH)
-        }
-    }
+//    LaunchedEffect(mapState.startPoint) {
+//        val start = mapState.startPoint
+//        if (!autoPlacementDone && start != null && mapState.placingMode != PlacingMode.PLACING_FINISH && mapState.finishPoint == null) {
+//            viewModel.setPlacingMode(PlacingMode.PLACING_FINISH)
+//        }
+//    }
 
     // Auto-enter navigation after finish (only once — guards against drag re-triggering)
-    LaunchedEffect(mapState.finishPoint) {
-        if (!autoPlacementDone && mapState.finishPoint != null) {
-            autoPlacementDone = true
-            currentStepIndex = 2
-        }
-    }
+//    LaunchedEffect(mapState.finishPoint) {
+//        if (!autoPlacementDone && mapState.finishPoint != null) {
+//            autoPlacementDone = true
+//            currentStepIndex = 2
+//        }
+//    }
 
     // Compute azimuth: angle from north line to route line, clockwise in degrees
     val azimuth = remember(mapState.startPoint, mapState.finishPoint, mapState.northAngle, mapState.bitmap) {

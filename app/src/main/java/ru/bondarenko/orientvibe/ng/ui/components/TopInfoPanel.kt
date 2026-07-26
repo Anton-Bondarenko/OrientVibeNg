@@ -123,21 +123,6 @@ fun TopInfoPanel(
                     textAlign = TextAlign.Center
                 )
             }
-            mapScale?.let { scale ->
-                Spacer(modifier = Modifier.height(2.dp))
-                val scaleText = if (scale >= 1.0) {
-                    "${String.format("%.1f", scale)} м/пиксель"
-                } else {
-                    "${String.format("%.1f", scale * 100)} см/пиксель"
-                }
-                Text(
-                    text = "Масштаб: $scaleText",
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Normal,
-                    textAlign = TextAlign.Center
-                )
-            }
 
             if (isProcessing) {
                 Spacer(modifier = Modifier.height(8.dp))
