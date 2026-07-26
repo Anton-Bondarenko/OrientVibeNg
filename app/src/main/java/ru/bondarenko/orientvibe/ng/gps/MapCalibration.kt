@@ -68,8 +68,9 @@ object MapCalibrationUtils {
 
         // Rotate by -bearingDegrees to align with image axes
         val bearingRad = Math.toRadians(calibration.bearingDegrees)
-        // Image X = east * cos(bearing) - north * sin(bearing)
-        // Image Y = -(east * sin(bearing) + north * cos(bearing))  (Y points down)
+        // Image X = dEast * cos(bearing) - dNorth * sin(bearing)
+        // Image Y (down) = -(dEast * sin(bearing) + dNorth * cos(bearing))
+        //   Negation because image Y points down, so north (positive dNorth) => up (negative image Y)
         val imageDx = dEast * cos(bearingRad) - dNorth * sin(bearingRad)
         val imageDy = -(dEast * sin(bearingRad) + dNorth * cos(bearingRad))
 
@@ -101,11 +102,11 @@ object MapCalibrationUtils {
         val metersDy = relDy * calibration.scaleMetersPerPixel
 
         // Rotate by bearingDegrees to align with geographic axes
+        // Inverse of gpsToImage: [dx; dy] = [[cos(b), -sin(b)]; [-sin(b), -cos(b)]] * [dE; dN]
+        // The matrix is its own inverse, so: [dE; dN] = [[cos(b), -sin(b)]; [-sin(b), -cos(b)]] * [dx; dy]
         val bearingRad = Math.toRadians(calibration.bearingDegrees)
-        // dEast = dx * cos(bearing) - dy * sin(bearing)
-        // dNorth = dx * sin(bearing) + dy * cos(bearing)
         val dEast = metersDx * cos(bearingRad) - metersDy * sin(bearingRad)
-        val dNorth = metersDx * sin(bearingRad) + metersDy * cos(bearingRad)
+        val dNorth = -(metersDx * sin(bearingRad) + metersDy * cos(bearingRad))
 
         return offsetCoordinate(calibration.pointA.gps, dNorth, dEast)
     }
