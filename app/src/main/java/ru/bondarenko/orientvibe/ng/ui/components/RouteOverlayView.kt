@@ -29,6 +29,7 @@ class RouteOverlay {
     var finishPoint: RoutePoint? = null
     var tapListener: MapTapListener? = null
     var dragListener: MapDragListener? = null
+    var magneticBearing: Float? = null
 
     private var dragging: Dragging = Dragging.NONE
 

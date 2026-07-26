@@ -4,7 +4,18 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -24,10 +35,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import ru.bondarenko.orientvibe.ng.model.PanelButton
 import ru.bondarenko.orientvibe.ng.model.PanelStep
 import ru.bondarenko.orientvibe.ng.ui.theme.ControlsRed
 import ru.bondarenko.orientvibe.ng.viewmodel.PlacingMode
+
+// Fixed dark colors — independent of theme
+private val DarkPanelBg = Color(0xFF1E1E1E)
+private val DarkPanelBgVariant = Color(0xFF2A2A2A)
+private val DarkDisabledBg = Color(0xFF2A2A2A)
+private val DarkDisabledText = Color(0xFF888888)
+private val DarkShadowColor = Color(0xFF6200EE)
 
 @Composable
 fun BottomButtonPanel(
@@ -40,15 +59,15 @@ fun BottomButtonPanel(
     placingMode: PlacingMode = PlacingMode.NONE
 ) {
     var navigationDirection by remember { mutableStateOf(0) } // 1 for forward, -1 for backward
-    
+
     val slideInHorizontally = slideInHorizontally(
         animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing)
     ) { fullWidth -> if (navigationDirection == 1) fullWidth else -fullWidth }
-    
+
     val slideOutHorizontally = slideOutHorizontally(
         animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing)
     ) { fullWidth -> if (navigationDirection == 1) -fullWidth else fullWidth }
-    
+
     AnimatedContent(
         targetState = currentStep,
         transitionSpec = {
@@ -90,12 +109,12 @@ private fun PanelContent(
             .shadow(
                 elevation = 12.dp,
                 shape = RoundedCornerShape(24.dp),
-                ambientColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
-                spotColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                ambientColor = DarkShadowColor.copy(alpha = 0.3f),
+                spotColor = DarkShadowColor.copy(alpha = 0.5f)
             ),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
+            containerColor = DarkPanelBg
         )
     ) {
         Row(
@@ -115,7 +134,7 @@ private fun PanelContent(
             } else {
                 Spacer(modifier = Modifier.size(56.dp))
             }
-            
+
             // Buttons
             Row(
                 modifier = Modifier.weight(1f),
@@ -129,7 +148,7 @@ private fun PanelContent(
                     )
                 }
             }
-            
+
             // Right navigation arrow
             if (canGoForward) {
                 NavigationButton(
@@ -155,12 +174,12 @@ private fun PanelButton(
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
         label = "scale"
     )
-    
+
     // Background color does NOT change when active — only icon tint changes
     val backgroundColor by animateColorAsState(
         targetValue = when {
-            !button.enabled -> MaterialTheme.colorScheme.surfaceVariant
-            else -> MaterialTheme.colorScheme.surface
+            !button.enabled -> DarkDisabledBg
+            else -> DarkPanelBg
         },
         animationSpec = tween(durationMillis = 200),
         label = "backgroundColor"
@@ -168,13 +187,13 @@ private fun PanelButton(
 
     val contentColor by animateColorAsState(
         targetValue = when {
-            !button.enabled -> MaterialTheme.colorScheme.onSurfaceVariant
-            else -> MaterialTheme.colorScheme.primary
+            !button.enabled -> DarkDisabledText
+            else -> Color.White
         },
         animationSpec = tween(durationMillis = 200),
         label = "contentColor"
     )
-    
+
     Button(
         onClick = button.onClick,
         enabled = button.enabled,
@@ -183,7 +202,7 @@ private fun PanelButton(
             .shadow(
                 elevation = if (button.enabled) 8.dp else 0.dp,
                 shape = RoundedCornerShape(16.dp),
-                ambientColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+                ambientColor = DarkShadowColor.copy(alpha = 0.3f)
             ),
         colors = ButtonDefaults.buttonColors(
             containerColor = backgroundColor,
@@ -196,15 +215,56 @@ private fun PanelButton(
             modifier = Modifier.fillMaxHeight(),
             contentAlignment = Alignment.Center
         ) {
-            if (button.icon != null) {
-                // Use placingMode directly to determine icon tint, avoiding stale isActive capture
+            if (button.icon != null && button.text.isNotEmpty()) {
+                // Show both icon and text in a column
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    // Determine icon tint: calibrated = green, active = red, default = contentColor
+                    val isThisButtonCalibrated = when (button.id) {
+                        "here_start", "here_finish" -> button.isActive
+                        else -> false
+                    }
+                    val isThisButtonActive = when (button.id) {
+                        "start" -> placingMode == PlacingMode.PLACING_START
+                        "finish" -> placingMode == PlacingMode.PLACING_FINISH
+                        else -> false
+                    }
+                    val iconTint = when {
+                        !button.enabled -> DarkDisabledText
+                        isThisButtonCalibrated -> Color(0xFF4CAF50) // green
+                        isThisButtonActive -> Color(ControlsRed)
+                        else -> contentColor
+                    }
+                    Icon(
+                        imageVector = button.icon,
+                        contentDescription = null,
+                        tint = iconTint,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Text(
+                        text = button.text,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 10.sp,
+                        color = contentColor,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+            } else if (button.icon != null) {
+                // Show only icon
+                val isThisButtonCalibrated = when (button.id) {
+                    "here_start", "here_finish" -> button.isActive
+                    else -> false
+                }
                 val isThisButtonActive = when (button.id) {
                     "start" -> placingMode == PlacingMode.PLACING_START
                     "finish" -> placingMode == PlacingMode.PLACING_FINISH
                     else -> false
                 }
                 val iconTint = when {
-                    !button.enabled -> MaterialTheme.colorScheme.onSurfaceVariant
+                    !button.enabled -> DarkDisabledText
+                    isThisButtonCalibrated -> Color(0xFF4CAF50) // green
                     isThisButtonActive -> Color(ControlsRed)
                     else -> contentColor
                 }
@@ -218,6 +278,7 @@ private fun PanelButton(
                 Text(
                     text = button.text,
                     fontWeight = FontWeight.Medium,
+                    color = contentColor,
                     modifier = Modifier.padding(horizontal = 12.dp)
                 )
             }
@@ -236,26 +297,26 @@ private fun NavigationButton(
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
         label = "scale"
     )
-    
+
     Box(
         modifier = modifier
             .clip(CircleShape)
             .clickable(onClick = onClick)
             .background(
-                color = MaterialTheme.colorScheme.primaryContainer,
+                color = DarkPanelBgVariant,
                 shape = CircleShape
             )
             .shadow(
                 elevation = 6.dp,
                 shape = CircleShape,
-                ambientColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+                ambientColor = DarkShadowColor.copy(alpha = 0.3f)
             ),
         contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+            tint = Color.White,
             modifier = Modifier.size(32.dp)
         )
     }

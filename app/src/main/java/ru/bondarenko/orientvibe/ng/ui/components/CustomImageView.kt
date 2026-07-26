@@ -9,6 +9,9 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import ru.bondarenko.orientvibe.ng.gps.GpsFix
+import ru.bondarenko.orientvibe.ng.gps.MapCalibration
+import ru.bondarenko.orientvibe.ng.gps.TrackPoint
 import ru.bondarenko.orientvibe.ng.viewmodel.BoundingBox
 import ru.bondarenko.orientvibe.ng.viewmodel.RoutePoint
 import kotlin.math.atan2
@@ -33,6 +36,7 @@ open class CustomImageView(context: Context) : View(context) {
     val northIndicator = NorthIndicator()
     val routeOverlay = RouteOverlay()
     val controlPointOverlay = ControlPointOverlay()
+    val trackOverlay = TrackOverlay()
 
     var startPoint: RoutePoint? = null
     var finishPoint: RoutePoint? = null
@@ -151,6 +155,26 @@ open class CustomImageView(context: Context) : View(context) {
         routeOverlay.dragListener = listener
     }
 
+    fun updateTrackPoints(points: List<TrackPoint>) {
+        trackOverlay.trackPoints = points
+        invalidate()
+    }
+
+    fun updateCurrentFix(fix: GpsFix?) {
+        trackOverlay.currentFix = fix
+        invalidate()
+    }
+
+    fun updateCalibration(cal: MapCalibration?) {
+        trackOverlay.calibration = cal
+        invalidate()
+    }
+
+    fun updateNorthAngle(angle: Float) {
+        trackOverlay.northAngle = angle
+        invalidate()
+    }
+
     protected fun updateOverlayCoords() {
         val sWidth = bitmap?.width?.toFloat() ?: 0f
         val sHeight = bitmap?.height?.toFloat() ?: 0f
@@ -159,6 +183,8 @@ open class CustomImageView(context: Context) : View(context) {
         routeOverlay.viewToSourceCoord = { x, y -> viewToSourceCoord(x, y) }
         controlPointOverlay.imageDimensions = Pair(sWidth, sHeight)
         controlPointOverlay.sourceToViewCoord = { x, y -> sourceToViewCoord(x, y) }
+        trackOverlay.imageDimensions = Pair(sWidth, sHeight)
+        trackOverlay.sourceToViewCoord = { x, y -> sourceToViewCoord(x, y) }
     }
 
     protected open fun applyMapTransform() {
@@ -291,11 +317,14 @@ open class CustomImageView(context: Context) : View(context) {
 
         val hasOverlays = controlPointOverlay.boundingBoxes.isNotEmpty() ||
                 routeOverlay.startPoint != null ||
-                routeOverlay.finishPoint != null
+                routeOverlay.finishPoint != null ||
+                trackOverlay.trackPoints.isNotEmpty() ||
+                trackOverlay.currentFix != null
 
         if (hasOverlays) {
             controlPointOverlay.draw(canvas)
             routeOverlay.draw(canvas)
+            trackOverlay.draw(canvas)
 
             val savedAngle = northIndicator.angle
             northIndicator.angle -= mapRotation

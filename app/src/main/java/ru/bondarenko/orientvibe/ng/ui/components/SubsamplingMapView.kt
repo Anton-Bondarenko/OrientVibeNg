@@ -11,6 +11,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import ru.bondarenko.orientvibe.ng.gps.GpsFix
+import ru.bondarenko.orientvibe.ng.gps.MapCalibration
+import ru.bondarenko.orientvibe.ng.gps.TrackPoint
 import ru.bondarenko.orientvibe.ng.viewmodel.BoundingBox
 import ru.bondarenko.orientvibe.ng.viewmodel.RoutePoint
 import kotlin.math.atan2
@@ -63,6 +66,7 @@ class OverlayMapView(
 
         controlPointOverlay.draw(canvas)
         routeOverlay.draw(canvas)
+        trackOverlay.draw(canvas)
 
         val savedAngle = northIndicator.angle
         northIndicator.angle -= mapRotation
@@ -83,6 +87,9 @@ fun SubsamplingMapView(
     onNorthAngleChanged: ((Float) -> Unit)? = null,
     onNorthAngleReset: (() -> Unit)? = null,
     mapRotation: Float = 0f,
+    trackPoints: List<TrackPoint> = emptyList(),
+    calibration: MapCalibration? = null,
+    currentFix: GpsFix? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -138,6 +145,26 @@ fun SubsamplingMapView(
         overlayView.mapRotation = mapRotation
         overlayView.mapTransformApplied = false
         overlayView.invalidate()
+        onDispose { }
+    }
+
+    DisposableEffect(trackPoints) {
+        overlayView.updateTrackPoints(trackPoints)
+        onDispose { }
+    }
+
+    DisposableEffect(calibration) {
+        overlayView.updateCalibration(calibration)
+        onDispose { }
+    }
+
+    DisposableEffect(currentFix) {
+        overlayView.updateCurrentFix(currentFix)
+        onDispose { }
+    }
+
+    DisposableEffect(northAngle, calibration) {
+        overlayView.updateNorthAngle(northAngle)
         onDispose { }
     }
 

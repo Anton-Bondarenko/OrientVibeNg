@@ -18,6 +18,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ru.bondarenko.orientvibe.ng.gps.AccuracyLevel
+import ru.bondarenko.orientvibe.ng.gps.GpsState
+
+private val GpsRed = Color(0xFFE53935)
+private val GpsYellow = Color(0xFFFFD600)
+private val GpsGreen = Color(0xFF4CAF50)
 
 @Composable
 fun TopInfoPanel(
@@ -27,6 +33,9 @@ fun TopInfoPanel(
     isProcessing: Boolean = false,
     progressMessage: String? = null,
     azimuth: Float? = null,
+    gpsState: GpsState? = null,
+    routeDistance: Double? = null,  // meters
+    mapScale: Double? = null,       // meters per pixel
     modifier: Modifier = Modifier
 ) {
     val alpha by animateFloatAsState(
@@ -36,7 +45,7 @@ fun TopInfoPanel(
     )
 
     val backgroundColor by animateColorAsState(
-        targetValue = MaterialTheme.colorScheme.primary.copy(alpha = alpha),
+        targetValue = Color(0xFF1E1E1E).copy(alpha = alpha),
         animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
         label = "backgroundColor"
     )
@@ -48,8 +57,8 @@ fun TopInfoPanel(
             .shadow(
                 elevation = 8.dp,
                 shape = RoundedCornerShape(16.dp),
-                ambientColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
-                spotColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                ambientColor = Color(0xFF6200EE).copy(alpha = 0.3f),
+                spotColor = Color(0xFF6200EE).copy(alpha = 0.5f)
             )
             .background(
                 color = backgroundColor,
@@ -76,6 +85,55 @@ fun TopInfoPanel(
                     text = "Азимут: ${String.format("%.1f", it)}°",
                     color = MaterialTheme.colorScheme.onPrimary,
                     style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Normal,
+                    textAlign = TextAlign.Center
+                )
+            }
+
+            // GPS status line
+            gpsState?.let { gps ->
+                Spacer(modifier = Modifier.height(4.dp))
+                val gpsText = when (gps.accuracyLevel) {
+                    AccuracyLevel.NO_FIX -> "GPS: —"
+                    AccuracyLevel.LOW_ACCURACY -> "GPS: ${String.format("%.0f", gps.currentFix!!.accuracy)} м"
+                    AccuracyLevel.HIGH_ACCURACY -> "GPS: ${String.format("%.0f", gps.currentFix!!.accuracy)} м"
+                }
+                val gpsColor = when (gps.accuracyLevel) {
+                    AccuracyLevel.NO_FIX -> GpsRed
+                    AccuracyLevel.LOW_ACCURACY -> GpsYellow
+                    AccuracyLevel.HIGH_ACCURACY -> GpsGreen
+                }
+                Text(
+                    text = if (gps.isGpsEnabled) gpsText else "GPS: выкл",
+                    color = if (gps.isGpsEnabled) gpsColor else Color.Gray,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+            }
+
+            // Route distance and map scale
+            routeDistance?.let { dist ->
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Расстояние: ${String.format("%.0f", dist)} м",
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+            }
+            mapScale?.let { scale ->
+                Spacer(modifier = Modifier.height(2.dp))
+                val scaleText = if (scale >= 1.0) {
+                    "${String.format("%.1f", scale)} м/пиксель"
+                } else {
+                    "${String.format("%.1f", scale * 100)} см/пиксель"
+                }
+                Text(
+                    text = "Масштаб: $scaleText",
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Normal,
                     textAlign = TextAlign.Center
                 )
