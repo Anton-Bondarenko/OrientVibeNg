@@ -369,6 +369,7 @@ fun MainScreen(
 
     // Helper: bind current GPS position to a calibration point
     val bindGpsToStart: () -> Unit = bindStart@{
+        
         val fix = gpsState.currentFix ?: return@bindStart
         // Store original start GPS for later recalibration
         originalStartGps = fix.coordinate
@@ -412,6 +413,7 @@ fun MainScreen(
     }
 
     val bindGpsToFinish: () -> Unit = bindFinish@{
+
         val fix = gpsState.currentFix ?: return@bindFinish
         
         // Recalibrate with real finish GPS to get actual map scale
@@ -445,7 +447,21 @@ fun MainScreen(
             )
             finishCalibrated = true
             
-            infoMessage = "Масштаб карты пересчитан по реальному финишу"
+            // Update north angle from calibration bearing
+            val cal = gpsViewModel.getCalibration()
+            if (cal != null) {
+                // bearingDegrees is the angle of image Y-axis to true north.
+                // northAngle is the angle of the north line relative to image up (0 = up, positive CW).
+                // If image Y-axis is 10° CW from true north, then north is 10° CCW from image up → northAngle = -10°
+                val rawAngle = -cal.bearingDegrees.toFloat()
+                // Normalize to -180..180 then clamp to -45..45
+                val normalizedAngle = ((rawAngle + 180f) % 360f).let {
+                    if (it < 0) it + 360f else it
+                } - 180f
+                viewModel.updateNorthAngle(normalizedAngle.coerceIn(-45f, 45f))
+            }
+            
+            infoMessage = "Масштаб карты и линия севера скорректированы"
             isInfoVisible = true
         } else {
             // Fallback: just bind finish GPS if no original start stored
@@ -523,9 +539,15 @@ fun MainScreen(
                         icon = StartIcon,
                         isActive = mapState.placingMode == PlacingMode.PLACING_START,
                         onClick = {
-                            viewModel.setPlacingMode(PlacingMode.PLACING_START)
-                            infoMessage = "Нажмите на карту чтобы поставить СТАРТ"
-                            isInfoVisible = true
+                            if (mapState.placingMode == PlacingMode.PLACING_START) {
+                                viewModel.setPlacingMode(PlacingMode.NONE)
+                                infoMessage = "Режим выбора СТАРТ отключен"
+                                isInfoVisible = true
+                            } else {
+                                viewModel.setPlacingMode(PlacingMode.PLACING_START)
+                                infoMessage = "Нажмите на карту чтобы поставить СТАРТ"
+                                isInfoVisible = true
+                            }
                         }
                     ),
                     PanelButton(
@@ -534,9 +556,15 @@ fun MainScreen(
                         icon = FinishIcon,
                         isActive = mapState.placingMode == PlacingMode.PLACING_FINISH,
                         onClick = {
-                            viewModel.setPlacingMode(PlacingMode.PLACING_FINISH)
-                            infoMessage = "Нажмите на карту чтобы поставить ФИНИШ"
-                            isInfoVisible = true
+                            if (mapState.placingMode == PlacingMode.PLACING_FINISH) {
+                                viewModel.setPlacingMode(PlacingMode.NONE)
+                                infoMessage = "Режим выбора ФИНИШ отключен"
+                                isInfoVisible = true
+                            } else {
+                                viewModel.setPlacingMode(PlacingMode.PLACING_FINISH)
+                                infoMessage = "Нажмите на карту чтобы поставить ФИНИШ"
+                                isInfoVisible = true
+                            }
                         }
                     )
                 )
@@ -700,6 +728,7 @@ fun MainScreen(
                 gpsState = gpsState,
                 routeDistance = routeDistance,
                 mapScale = mapScale,
+                magneticBearing = gpsState.currentFix?.bearing,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .padding(top = 16.dp)

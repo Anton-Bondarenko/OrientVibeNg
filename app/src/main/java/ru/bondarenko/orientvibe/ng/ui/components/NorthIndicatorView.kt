@@ -17,7 +17,7 @@ private const val NORTH_DOT_HIT_RADIUS = 60f
 private const val NORTH_LINE_LENGTH = 160f
 private const val NORTH_DOT_RADIUS = 10f
 private const val NORTH_ANCHOR_X = 150f // left offset from view edge
-private const val NORTH_ANCHOR_Y = 250f  // top offset from view edge
+private const val NORTH_ANCHOR_Y = 350f  // top offset from view edge
 
 private const val ZERO_ANGLE = 180
 
