@@ -83,15 +83,36 @@ class TrackOverlay {
 
     /**
      * Convert a GPS coordinate to image coordinates (absolute pixels).
-     * The calibration bearing correctly maps GPS north to the image orientation,
-     * so no additional rotation is needed.
+     * Uses full calibration (scale + bearing rotation) plus optional northAngle adjustment.
      */
     private fun gpsToImageAbs(gps: GpsCoordinate): PointF? {
         val cal = calibration ?: return null
         val (sWidth, sHeight) = imageDimensions ?: return null
         if (sWidth <= 0 || sHeight <= 0) return null
+
+        // Step 1: GPS -> relative image coords using calibration bearing
         val imageCoords = MapCalibrationUtils.gpsToImage(gps, cal) ?: return null
-        return PointF(imageCoords.first * sWidth, imageCoords.second * sHeight)
+        var x = imageCoords.first * sWidth
+        var y = imageCoords.second * sHeight
+
+        // Step 2: Apply northAngle rotation around a pivot (first track point or current fix)
+        if (northAngle != 0f) {
+            val pivotGps = trackPoints.firstOrNull()?.gpsFix?.coordinate ?: currentFix?.coordinate
+            val pivotImg = pivotGps?.let { MapCalibrationUtils.gpsToImage(it, cal) }
+            if (pivotImg != null) {
+                val px = pivotImg.first * sWidth
+                val py = pivotImg.second * sHeight
+                val angleRad = Math.toRadians(northAngle.toDouble())
+                val cosA = cos(angleRad).toFloat()
+                val sinA = sin(angleRad).toFloat()
+                val dx = x - px
+                val dy = y - py
+                x = px + dx * cosA - dy * sinA
+                y = py + dx * sinA + dy * cosA
+            }
+        }
+
+        return PointF(x, y)
     }
 
     /**
@@ -133,6 +154,10 @@ class TrackOverlay {
         if (trackPoints.size >= 2) {
             val path = Path()
             var first = true
+            var firstGps: GpsCoordinate? = null
+            var lastGps: GpsCoordinate? = null
+            var firstView: PointF? = null
+            var lastView: PointF? = null
             for (point in trackPoints) {
                 val imagePt = gpsToImageAbs(point.gpsFix.coordinate) ?: continue
                 val viewPoint = sourceToViewCoord?.invoke(imagePt.x, imagePt.y)
@@ -140,13 +165,42 @@ class TrackOverlay {
                     if (first) {
                         path.moveTo(viewPoint.x, viewPoint.y)
                         first = false
+                        firstGps = point.gpsFix.coordinate
+                        firstView = viewPoint
                     } else {
                         path.lineTo(viewPoint.x, viewPoint.y)
                     }
+                    lastGps = point.gpsFix.coordinate
+                    lastView = viewPoint
                 }
             }
             if (!first) {
                 canvas.drawPath(path, trackPaint)
+                // Debug: compute track visual angle from first to last point
+                if (firstView != null && lastView != null && firstGps != null && lastGps != null) {
+                    val tdx = lastView.x - firstView.x
+                    val tdy = lastView.y - firstView.y
+                    val trackVisualAngle = if (sqrt((tdx*tdx + tdy*tdy).toDouble()) > 5.0) {
+                        ((Math.toDegrees(atan2(tdx.toDouble(), -tdy.toDouble())) + 360) % 360).toFloat()
+                    } else null
+                    // Compute actual GPS bearing from first to last track point
+                    val gpsTrackBearing = MapCalibrationUtils.bearing(firstGps, lastGps)
+                    // Also compute what gpsToImage says for a due-north offset (for verification)
+                    val northTest = GpsCoordinate(firstGps.latitude + 0.001, firstGps.longitude)
+                    val northImg = gpsToImageAbs(northTest)
+                    val northView = northImg?.let { sourceToViewCoord?.invoke(it.x, it.y) }
+                    val northVisualAngle = if (northView != null && firstView != null) {
+                        val ndx = northView.x - firstView.x
+                        val ndy = northView.y - firstView.y
+                        if (sqrt((ndx*ndx + ndy*ndy).toDouble()) > 5.0) {
+                            ((Math.toDegrees(atan2(ndx.toDouble(), -ndy.toDouble())) + 360) % 360).toFloat()
+                        } else null
+                    } else null
+                    android.util.Log.d(TAG, "TRACK: gpsBearing=${Math.round(gpsTrackBearing * 10.0) / 10.0}, " +
+                            "visualAngle=$trackVisualAngle, northVisual=$northVisualAngle, " +
+                            "northAngle=$northAngle, calBearing=${Math.round(cal.bearingDegrees * 10.0) / 10.0}, " +
+                            "gpsCount=${trackPoints.size}")
+                }
             }
         }
 
@@ -160,17 +214,23 @@ class TrackOverlay {
         canvas.drawCircle(currentView.x, currentView.y, radius, positionPaint)
         canvas.drawCircle(currentView.x, currentView.y, radius, positionStrokePaint)
 
-        // Direction line via GPS coordinates: compute a point ~50m ahead along bearing,
-        // convert to view space, and draw the line. This correctly accounts for calibration.
-        val bearingDeg = fix.bearing % 360f
-        val aheadGps = offsetGps(fix.coordinate, bearingDeg.toDouble(), 200.0)
+        // Direction line: derive bearing from actual track movement (GPS, true north).
+        // This matches the track which uses gpsToImage + northAngle (with declination correction).
+        val bearingDeg = if (trackPoints.size >= 2) {
+            val last = trackPoints.last().gpsFix.coordinate
+            val prev = trackPoints[trackPoints.size - 2].gpsFix.coordinate
+            MapCalibrationUtils.bearing(prev, last)
+        } else {
+            fix.bearing.toDouble()
+        } % 360.0
+        val aheadGps = offsetGps(fix.coordinate, bearingDeg, 200.0)
         val aheadImage = gpsToImageAbs(aheadGps) ?: return
         val aheadView = sourceToViewCoord?.invoke(aheadImage.x, aheadImage.y) ?: return
 
         val dx = aheadView.x - currentView.x
         val dy = aheadView.y - currentView.y
         val visualAngle = ((Math.toDegrees(atan2(dx.toDouble(), -dy.toDouble())) + 360) % 360).toFloat()
-        android.util.Log.d(TAG, "direction: fix.bearing=$bearingDeg, viewAngle=$visualAngle, " +
+        android.util.Log.d(TAG, "DIR: fix.bearing=$bearingDeg, viewAngle=$visualAngle, " +
                 "northAngle=$northAngle, calBearing=${cal.bearingDegrees}")
 
         canvas.drawLine(currentView.x, currentView.y, aheadView.x, aheadView.y, directionPaint)

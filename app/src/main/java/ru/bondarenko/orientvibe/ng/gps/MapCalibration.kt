@@ -1,6 +1,7 @@
 package ru.bondarenko.orientvibe.ng.gps
 
 import kotlin.math.*
+import android.graphics.PointF
 
 /**
  * Utility for computing map calibration from two GPS/image point pairs,
@@ -143,7 +144,7 @@ object MapCalibrationUtils {
     /**
      * North-south distance between two points in meters (positive = north).
      */
-    private fun northDistance(from: GpsCoordinate, to: GpsCoordinate): Double {
+    fun northDistance(from: GpsCoordinate, to: GpsCoordinate): Double {
         return (to.latitude - from.latitude) * (Math.PI / 180.0) * EARTH_RADIUS_METERS
     }
 
@@ -151,7 +152,7 @@ object MapCalibrationUtils {
      * East-west distance between two points in meters (positive = east).
      * Uses the average latitude for the conversion.
      */
-    private fun eastDistance(from: GpsCoordinate, to: GpsCoordinate): Double {
+    fun eastDistance(from: GpsCoordinate, to: GpsCoordinate): Double {
         val avgLat = Math.toRadians((from.latitude + to.latitude) / 2.0)
         return (to.longitude - from.longitude) * (Math.PI / 180.0) * EARTH_RADIUS_METERS * cos(avgLat)
     }
