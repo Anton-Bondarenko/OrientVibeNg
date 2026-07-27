@@ -1,7 +1,9 @@
 package ru.bondarenko.orientvibe.ng.gps
 
-import kotlin.math.*
-import android.graphics.PointF
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * Utility for computing map calibration from two GPS/image point pairs,
@@ -106,9 +108,13 @@ object MapCalibrationUtils {
     /**
      * Compute the bearing (degrees from true north) from point A to point B.
      */
-    fun magneticBearing(from: GpsCoordinate, to: GpsCoordinate, magneticDeclination: Double): Double {
+    fun magneticBearing(
+        from: GpsCoordinate,
+        to: GpsCoordinate,
+        magneticDeclination: Double
+    ): Double {
         val trueBearing = bearing(from, to)
-        return trueBearing - magneticDeclination
+        return trueBearing.minus(magneticDeclination)
     }
 
     fun bearing(from: GpsCoordinate, to: GpsCoordinate): Double {
@@ -150,7 +156,9 @@ object MapCalibrationUtils {
      */
     fun eastDistance(from: GpsCoordinate, to: GpsCoordinate): Double {
         val avgLat = Math.toRadians((from.latitude + to.latitude) / 2.0)
-        return (to.longitude - from.longitude) * (Math.PI / 180.0) * EARTH_RADIUS_METERS * cos(avgLat)
+        return (to.longitude - from.longitude) * (Math.PI / 180.0) * EARTH_RADIUS_METERS * cos(
+            avgLat
+        )
     }
 
     /**

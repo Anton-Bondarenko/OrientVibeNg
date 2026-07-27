@@ -184,7 +184,7 @@ class TrackOverlay {
                         ((Math.toDegrees(atan2(tdx.toDouble(), -tdy.toDouble())) + 360) % 360).toFloat()
                     } else null
                     // Compute actual GPS bearing from first to last track point
-                    val gpsTrackBearing = MapCalibrationUtils.bearing(firstGps, lastGps)
+                    val gpsTrackBearing = MapCalibrationUtils.magneticBearing(firstGps, lastGps, calibration!!.magneticDeclination)
                     // Also compute what gpsToImage says for a due-north offset (for verification)
                     val northTest = GpsCoordinate(firstGps.latitude + 0.001, firstGps.longitude)
                     val northImg = gpsToImageAbs(northTest)

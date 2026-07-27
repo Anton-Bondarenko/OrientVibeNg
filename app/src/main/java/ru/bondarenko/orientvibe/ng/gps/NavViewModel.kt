@@ -14,7 +14,7 @@ import kotlinx.coroutines.launch
  * ViewModel that combines GpsManager, TrackRecorder, and calibration state.
  * Exposes a unified GpsState for the UI.
  */
-class GpsViewModel(
+class NavViewModel(
     private val context: Context
 ) : ViewModel() {
 
@@ -290,7 +290,7 @@ class GpsViewModel(
         fun Factory(context: Context) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return GpsViewModel(context) as T
+                return NavViewModel(context) as T
             }
         }
     }

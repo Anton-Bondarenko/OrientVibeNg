@@ -46,7 +46,8 @@ data class MapState(
     val startPoint: RoutePoint? = null,
     val finishPoint: RoutePoint? = null,
     val placingMode: PlacingMode = PlacingMode.NONE,
-    val northAngle: Float = 0f // degrees, 0 = up, positive = CW, range -45..45
+    val northAngle: Float = 0f, // degrees, 0 = up, positive = CW, range -45..45
+    val azimuth: Float = 0f
 )
 
 class MapViewModel(
@@ -132,8 +133,10 @@ class MapViewModel(
                 val filteredDetections = detections.filter { it.classId == 0 }
 
                 val boundingBoxes = filteredDetections.map { detection ->
-                    val bw = (detection.boundingBox.right - detection.boundingBox.left) / bitmap.width
-                    val bh = (detection.boundingBox.bottom - detection.boundingBox.top) / bitmap.height
+                    val bw =
+                        (detection.boundingBox.right - detection.boundingBox.left) / bitmap.width
+                    val bh =
+                        (detection.boundingBox.bottom - detection.boundingBox.top) / bitmap.height
                     val cx = detection.boundingBox.left / bitmap.width + bw / 2f
                     val cy = detection.boundingBox.top / bitmap.height + bh / 2f
                     BoundingBox(
@@ -223,6 +226,20 @@ class MapViewModel(
 
     fun resetNorthAngle() {
         _mapState.value = _mapState.value.copy(northAngle = 0f)
+    }
+
+    fun updateAzimuth() {
+        val sp = _mapState.value.startPoint
+        val fp = _mapState.value.finishPoint
+        val bmp = _mapState.value.bitmap
+        if (sp != null && fp != null && bmp != null) {
+            val dx = (fp.x - sp.x) * bmp.width
+            val dy = (fp.y - sp.y) * bmp.height
+            val routeDir =
+                (Math.toDegrees(Math.atan2(dx.toDouble(), -dy.toDouble())) + 360) % 360
+            val angle = ((routeDir + _mapState.value.northAngle + 360) % 360).toFloat()
+            _mapState.value = _mapState.value.copy(azimuth = angle)
+        }
     }
 
     fun clearError() {

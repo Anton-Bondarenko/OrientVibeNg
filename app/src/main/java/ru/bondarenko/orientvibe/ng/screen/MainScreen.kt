@@ -1,18 +1,23 @@
 package ru.bondarenko.orientvibe.ng.screen
 
 import android.net.Uri
-import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -27,15 +32,14 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.compose.material3.Button
-import androidx.compose.material3.Text
-import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import ru.bondarenko.orientvibe.ng.gps.GpsFix
-import ru.bondarenko.orientvibe.ng.gps.GpsViewModel
+import ru.bondarenko.orientvibe.ng.gps.NavViewModel
 import ru.bondarenko.orientvibe.ng.model.PanelButton
 import ru.bondarenko.orientvibe.ng.model.PanelStep
 import ru.bondarenko.orientvibe.ng.ui.components.BottomButtonPanel
@@ -191,11 +195,11 @@ private val FinishIcon: ImageVector
 @Composable
 fun MainScreen(
     viewModel: MapViewModel = viewModel(),
-    gpsViewModel: GpsViewModel = viewModel(factory = GpsViewModel.Factory(LocalContext.current))
+    navViewModel: NavViewModel = viewModel(factory = NavViewModel.Factory(LocalContext.current))
 ) {
     val context = LocalContext.current
     val mapState by viewModel.mapState.collectAsState()
-    val gpsState by gpsViewModel.gpsState.collectAsState()
+    val gpsState by navViewModel.gpsState.collectAsState()
 
     var currentStepIndex by remember { mutableStateOf(0) }
     var infoMessage by remember { mutableStateOf("Добро пожаловать в OrientVibe") }
@@ -207,7 +211,11 @@ fun MainScreen(
     var finishCalibrated by remember { mutableStateOf(false) }
     var routeDistance by remember { mutableStateOf<Double?>(null) }
     var mapScale by remember { mutableStateOf<Double?>(null) }
-    var originalStartGps by remember { mutableStateOf<ru.bondarenko.orientvibe.ng.gps.GpsCoordinate?>(null) }
+    var originalStartGps by remember {
+        mutableStateOf<ru.bondarenko.orientvibe.ng.gps.GpsCoordinate?>(
+            null
+        )
+    }
 
     // Reset auto-placement flag when a new image starts loading
     LaunchedEffect(mapState.isProcessing) {
@@ -240,38 +248,31 @@ fun MainScreen(
 //    }
 
     // Compute azimuth: angle from north line to route line, clockwise in degrees
-    val azimuth = remember(mapState.startPoint, mapState.finishPoint, mapState.northAngle, mapState.bitmap) {
-        val sp = mapState.startPoint
-        val fp = mapState.finishPoint
-        val bmp = mapState.bitmap
-        if (sp != null && fp != null && bmp != null) {
-            val dx = (fp.x - sp.x) * bmp.width
-            val dy = (fp.y - sp.y) * bmp.height
-            val routeDir = (Math.toDegrees(Math.atan2(dx.toDouble(), -dy.toDouble())) + 360) % 360
-            ((routeDir + mapState.northAngle + 360) % 360).toFloat()
-        } else {
-            null
+    val azimuth =
+        remember(mapState.azimuth) {
+            mapState.azimuth
         }
-    }
 
     // Compute map rotation: rotate image so route line is vertical (bottom-to-top)
-    val mapRotation = remember(mapState.startPoint, mapState.finishPoint, mapState.bitmap, currentStepIndex) {
-        if (currentStepIndex == 2) {
-            val sp = mapState.startPoint
-            val fp = mapState.finishPoint
-            val bmp = mapState.bitmap
-            if (sp != null && fp != null && bmp != null) {
-                val dx = (fp.x - sp.x) * bmp.width
-                val dy = (fp.y - sp.y) * bmp.height
-                val routeAngle = Math.toDegrees(Math.atan2(dx.toDouble(), -dy.toDouble())).toFloat()
-                (-routeAngle).toFloat()
+    val mapRotation =
+        remember(mapState.startPoint, mapState.finishPoint, mapState.bitmap, currentStepIndex) {
+            if (currentStepIndex == 2) {
+                val sp = mapState.startPoint
+                val fp = mapState.finishPoint
+                val bmp = mapState.bitmap
+                if (sp != null && fp != null && bmp != null) {
+                    val dx = (fp.x - sp.x) * bmp.width
+                    val dy = (fp.y - sp.y) * bmp.height
+                    val routeAngle =
+                        Math.toDegrees(Math.atan2(dx.toDouble(), -dy.toDouble())).toFloat()
+                    (-routeAngle).toFloat()
+                } else {
+                    0f
+                }
             } else {
                 0f
             }
-        } else {
-            0f
         }
-    }
 
     // Gallery picker
     val galleryLauncher = rememberLauncherForActivityResult(
@@ -301,6 +302,9 @@ fun MainScreen(
             infoMessage = "Фото сделано"
             isInfoVisible = true
         }
+    }
+    LaunchedEffect(mapState.startPoint, mapState.finishPoint, mapState.northAngle, mapState.bitmap) {
+        viewModel.updateAzimuth()
     }
 
     // Update info message based on state
@@ -369,28 +373,28 @@ fun MainScreen(
 
     // Helper: bind current GPS position to a calibration point
     val bindGpsToStart: () -> Unit = bindStart@{
-        
+
         val fix = gpsState.currentFix ?: return@bindStart
         // Store original start GPS for later recalibration
         originalStartGps = fix.coordinate
-        
-        gpsViewModel.addCalibrationPoint(
+
+        navViewModel.addCalibrationPoint(
             gpsFix = fix,
             imageX = mapState.startPoint?.x ?: 0f,
             imageY = mapState.startPoint?.y ?: 0f
         )
-        gpsViewModel.startTracking()
+        navViewModel.startTracking()
         startCalibrated = true
         infoMessage = "Старт привязан к GPS"
         isInfoVisible = true
-        
+
         // Calculate finish coordinates 1km away using magnetic bearing
-        val finishCoordinate = gpsViewModel.calculateDestinationCoordinate(
+        val finishCoordinate = navViewModel.calculateDestinationCoordinate(
             start = fix.coordinate,
             bearingMagnetic = fix.bearing.toDouble(),
             distanceMeters = 1000.0 // 1km default distance
         )
-        
+
         // Create synthetic GPS fix for finish point
         val finishFix = GpsFix(
             coordinate = finishCoordinate,
@@ -400,9 +404,9 @@ fun MainScreen(
             timestamp = System.currentTimeMillis(),
             altitude = fix.altitude
         )
-        
+
         // Bind finish GPS to image finish point
-        gpsViewModel.addCalibrationPoint(
+        navViewModel.addCalibrationPoint(
             gpsFix = finishFix,
             imageX = mapState.finishPoint?.x ?: 0f,
             imageY = mapState.finishPoint?.y ?: 0f
@@ -415,14 +419,14 @@ fun MainScreen(
     val bindGpsToFinish: () -> Unit = bindFinish@{
 
         val fix = gpsState.currentFix ?: return@bindFinish
-        
+
         // Recalibrate with real finish GPS to get actual map scale
         if (originalStartGps != null) {
             // Clear existing calibration
-            gpsViewModel.clearCalibration()
+            navViewModel.clearCalibration()
             startCalibrated = false
             finishCalibrated = false
-            
+
             // Recalibrate using original start GPS and real finish GPS
             val startFix = GpsFix(
                 coordinate = originalStartGps!!,
@@ -432,40 +436,34 @@ fun MainScreen(
                 timestamp = System.currentTimeMillis(),
                 altitude = fix.altitude
             )
-            
-            gpsViewModel.addCalibrationPoint(
+
+            navViewModel.addCalibrationPoint(
                 gpsFix = startFix,
                 imageX = mapState.startPoint?.x ?: 0f,
                 imageY = mapState.startPoint?.y ?: 0f
             )
             startCalibrated = true
-            
-            gpsViewModel.addCalibrationPoint(
+
+            navViewModel.addCalibrationPoint(
                 gpsFix = fix,
                 imageX = mapState.finishPoint?.x ?: 0f,
                 imageY = mapState.finishPoint?.y ?: 0f
             )
             finishCalibrated = true
-            
+
             // Update north angle from calibration bearing
-            val cal = gpsViewModel.getCalibration()
+            val cal = navViewModel.getCalibration()
             if (cal != null) {
-                // bearingDegrees is the angle of image Y-axis to true north.
-                // northAngle is the angle of the north line relative to image up (0 = up, positive CW).
-                // If image Y-axis is 10° CW from true north, then north is 10° CCW from image up → northAngle = -10°
-                val rawAngle = -cal.bearingDegrees.toFloat()
-                // Normalize to -180..180 then clamp to -45..45
-                val normalizedAngle = ((rawAngle + 180f) % 360f).let {
-                    if (it < 0) it + 360f else it
-                } - 180f
-                viewModel.updateNorthAngle(normalizedAngle.coerceIn(-45f, 45f))
+                val currentAngle =
+                    navViewModel.magneticBearingBetween(startFix.coordinate, fix.coordinate)
+                viewModel.updateNorthAngle(currentAngle.minus(mapState.azimuth).toFloat())
             }
-            
+
             infoMessage = "Масштаб карты и линия севера скорректированы"
             isInfoVisible = true
         } else {
             // Fallback: just bind finish GPS if no original start stored
-            gpsViewModel.addCalibrationPoint(
+            navViewModel.addCalibrationPoint(
                 gpsFix = fix,
                 imageX = mapState.finishPoint?.x ?: 0f,
                 imageY = mapState.finishPoint?.y ?: 0f
@@ -479,24 +477,24 @@ fun MainScreen(
     // When both start and finish are calibrated, compute distance and scale
     LaunchedEffect(startCalibrated, finishCalibrated) {
         if (startCalibrated && finishCalibrated) {
-            val cal = gpsViewModel.getCalibration()
+            val cal = navViewModel.getCalibration()
             if (cal != null) {
                 val sp = mapState.startPoint
                 val fp = mapState.finishPoint
                 if (sp != null && fp != null) {
                     // Compute route distance in meters
-                    val startGps = gpsViewModel.imageToGps(sp.x, sp.y)
-                    val finishGps = gpsViewModel.imageToGps(fp.x, fp.y)
+                    val startGps = navViewModel.imageToGps(sp.x, sp.y)
+                    val finishGps = navViewModel.imageToGps(fp.x, fp.y)
                     if (startGps != null && finishGps != null) {
-                        routeDistance = gpsViewModel.distanceBetween(startGps, finishGps)
+                        routeDistance = navViewModel.distanceBetween(startGps, finishGps)
                     }
                     // Map scale from calibration
                     mapScale = cal.scaleMetersPerPixel
                 }
             }
             // Return to step 2 (route selection) after calibration
-            currentStepIndex = 1
-            infoMessage = "Калибровка завершена. Расстояние: ${String.format("%.0f", routeDistance ?: 0.0)} м"
+            infoMessage =
+                "Привязка: ${String.format("%.0f", routeDistance ?: 0.0)} м"
             isInfoVisible = true
         }
     }
@@ -615,8 +613,9 @@ fun MainScreen(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         if (permissions.getOrDefault(android.Manifest.permission.ACCESS_FINE_LOCATION, false) ||
-            permissions.getOrDefault(android.Manifest.permission.ACCESS_COARSE_LOCATION, false)) {
-            gpsViewModel.startGps()
+            permissions.getOrDefault(android.Manifest.permission.ACCESS_COARSE_LOCATION, false)
+        ) {
+            navViewModel.startGps()
         }
     }
 
@@ -641,7 +640,12 @@ fun MainScreen(
     }
 
     // Auto-advance to step 2 after processing completes
-    LaunchedEffect(mapState.isProcessing, mapState.boundingBoxes, mapState.startPoint, mapState.finishPoint) {
+    LaunchedEffect(
+        mapState.isProcessing,
+        mapState.boundingBoxes,
+        mapState.startPoint,
+        mapState.finishPoint
+    ) {
         if (!mapState.isProcessing && mapState.boundingBoxes.isNotEmpty() && currentStepIndex == 0) {
             currentStepIndex = 1
             infoMessage = "Шаг 2: ${steps[1].title}"
@@ -728,7 +732,9 @@ fun MainScreen(
                 gpsState = gpsState,
                 routeDistance = routeDistance,
                 mapScale = mapScale,
-                magneticBearing = gpsState.currentFix?.bearing,
+                magneticBearing = gpsState.currentFix?.bearing?.minus(
+                    gpsState.calibration?.bearingDegrees?.toFloat() ?: 0f
+                ),
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .padding(top = 16.dp)
