@@ -21,7 +21,8 @@ object MapCalibrationUtils {
      */
     fun calibrate(
         pointA: CalibrationPoint,
-        pointB: CalibrationPoint
+        pointB: CalibrationPoint,
+        magneticDeclination: Double
     ): MapCalibration? {
         // Distance between the two GPS points in meters
         val gpsDistance = haversineDistance(pointA.gps, pointB.gps)
@@ -36,22 +37,12 @@ object MapCalibrationUtils {
         // Scale: meters per relative image unit
         val scaleMetersPerUnit = gpsDistance / imageDistance
 
-        // Bearing: angle from image Y-axis to true north
-        // First, compute the bearing from A to B on the ground
-        val gpsBearing = bearing(pointA.gps, pointB.gps) // degrees from true north
-
-        // Compute the angle of the vector (B - A) in image space
-        // Image Y points down, so we negate dy
-        val imageAngle = Math.toDegrees(atan2(dx, -dy))
-
-        // The bearing of the image Y-axis relative to true north
-        val bearingDegrees = (gpsBearing - imageAngle + 360.0) % 360.0
-
         return MapCalibration(
             pointA = pointA,
             pointB = pointB,
             scaleMetersPerPixel = scaleMetersPerUnit,
-            bearingDegrees = bearingDegrees
+            bearingDegrees = magneticDeclination,
+            magneticDeclination = magneticDeclination
         )
     }
 
@@ -115,6 +106,11 @@ object MapCalibrationUtils {
     /**
      * Compute the bearing (degrees from true north) from point A to point B.
      */
+    fun magneticBearing(from: GpsCoordinate, to: GpsCoordinate, magneticDeclination: Double): Double {
+        val trueBearing = bearing(from, to)
+        return trueBearing - magneticDeclination
+    }
+
     fun bearing(from: GpsCoordinate, to: GpsCoordinate): Double {
         val lat1 = Math.toRadians(from.latitude)
         val lat2 = Math.toRadians(to.latitude)

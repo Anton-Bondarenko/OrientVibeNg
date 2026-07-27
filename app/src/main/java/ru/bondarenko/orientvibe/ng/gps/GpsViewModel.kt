@@ -1,6 +1,7 @@
 package ru.bondarenko.orientvibe.ng.gps
 
 import android.content.Context
+import android.hardware.GeomagneticField
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -107,7 +108,16 @@ class GpsViewModel(
         if (pendingCalibrationPoints.size >= 2) {
             val pointA = pendingCalibrationPoints[0]
             val pointB = pendingCalibrationPoints[1]
-            val result = MapCalibrationUtils.calibrate(pointA, pointB)
+            
+            // Get magnetic declination at start point (once during calibration)
+            val magneticDeclination = getMagneticDeclination(
+                latitude = pointA.gps.latitude,
+                longitude = pointA.gps.longitude,
+                altitude = gpsFix.altitude,
+                timestamp = gpsFix.timestamp
+            )
+            
+            val result = MapCalibrationUtils.calibrate(pointA, pointB, magneticDeclination)
             if (result != null) {
                 calibration = result
                 _gpsState.value = _gpsState.value.copy(
@@ -137,6 +147,16 @@ class GpsViewModel(
      * Returns the current calibration, or null if not calibrated.
      */
     fun getCalibration(): MapCalibration? = calibration
+
+    fun getMagneticDeclination(latitude: Double, longitude: Double, altitude: Double, timestamp: Long): Double {
+        val geomagneticField = GeomagneticField(
+            latitude.toFloat(),
+            longitude.toFloat(),
+            altitude.toFloat(),
+            timestamp
+        )
+        return geomagneticField.declination.toDouble()
+    }
 
     // ──────────────────────────────────────────────
     // Coordinate Conversion
@@ -171,6 +191,12 @@ class GpsViewModel(
     /**
      * Compute bearing from one GPS coordinate to another (degrees from true north).
      */
+    fun magneticBearingBetween(from: GpsCoordinate, to: GpsCoordinate): Double {
+        val declination = _gpsState.value.calibration?.magneticDeclination ?: 0.0
+        return MapCalibrationUtils.magneticBearing(from, to, declination)
+    }
+
+    @Deprecated("Use magneticBearingBetween instead")
     fun bearingBetween(from: GpsCoordinate, to: GpsCoordinate): Double {
         return MapCalibrationUtils.bearing(from, to)
     }
