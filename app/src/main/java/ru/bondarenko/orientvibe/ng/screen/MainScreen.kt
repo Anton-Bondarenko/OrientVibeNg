@@ -217,6 +217,15 @@ fun MainScreen(
         )
     }
 
+    // Current distance from start point to current GPS position
+    val currentDistanceFromStart = remember(originalStartGps, gpsState.currentFix) {
+        if (originalStartGps != null && gpsState.currentFix != null) {
+            navViewModel.distanceBetween(originalStartGps!!, gpsState.currentFix!!.coordinate)
+        } else {
+            null
+        }
+    }
+
     // Reset auto-placement flag when a new image starts loading
     LaunchedEffect(mapState.isProcessing) {
         if (mapState.isProcessing) {
@@ -731,6 +740,7 @@ fun MainScreen(
                 azimuth = azimuth,
                 gpsState = gpsState,
                 routeDistance = routeDistance,
+                currentDistanceFromStart = currentDistanceFromStart,
                 mapScale = mapScale,
                 magneticBearing = gpsState.currentFix?.bearing?.minus(
                     gpsState.calibration?.bearingDegrees?.toFloat() ?: 0f

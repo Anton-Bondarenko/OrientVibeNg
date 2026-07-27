@@ -36,6 +36,7 @@ fun TopInfoPanel(
     azimuth: Float? = null,
     gpsState: GpsState? = null,
     routeDistance: Double? = null,  // meters
+    currentDistanceFromStart: Double? = null, // meters from start point
     mapScale: Double? = null,       // meters per pixel
     magneticBearing: Float? = null, // current magnetic heading from GPS
     modifier: Modifier = Modifier
@@ -139,11 +140,11 @@ fun TopInfoPanel(
                         Spacer(modifier = Modifier.height(2.dp))
                     }
 
-                    // Route distance
-                    routeDistance?.let { dist ->
+                    // Current distance from start point
+                    currentDistanceFromStart?.let { dist ->
                         Text(
                             text = "Дист: ${String.format("%.0f", dist)} м",
-                            color = MaterialTheme.colorScheme.onPrimary,
+                            color = DataGreen,
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Bold,
                             textAlign = TextAlign.Center
@@ -179,7 +180,7 @@ fun TopInfoPanel(
                         Spacer(modifier = Modifier.height(2.dp))
                     }
                     // Azimuth placeholder to keep columns balanced
-                    if (azimuth != null && routeDistance == null) {
+                    if (azimuth != null && currentDistanceFromStart == null) {
                         Text(
                             text = " ",
                             style = MaterialTheme.typography.bodySmall,
