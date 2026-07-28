@@ -39,7 +39,7 @@ import androidx.compose.ui.unit.sp
 import ru.bondarenko.orientvibe.ng.model.PanelButton
 import ru.bondarenko.orientvibe.ng.model.PanelStep
 import ru.bondarenko.orientvibe.ng.ui.theme.ControlsRed
-import ru.bondarenko.orientvibe.ng.viewmodel.PlacingMode
+import ru.bondarenko.orientvibe.ng.model.PlacingMode
 
 // Fixed dark colors — independent of theme
 private val DarkPanelBg = Color(0xFF1E1E1E)

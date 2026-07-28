@@ -49,7 +49,7 @@ import ru.bondarenko.orientvibe.ng.ui.components.MapTapListener
 import ru.bondarenko.orientvibe.ng.ui.components.SubsamplingMapView
 import ru.bondarenko.orientvibe.ng.ui.components.TopInfoPanel
 import ru.bondarenko.orientvibe.ng.viewmodel.MapViewModel
-import ru.bondarenko.orientvibe.ng.viewmodel.PlacingMode
+import ru.bondarenko.orientvibe.ng.model.PlacingMode
 import java.io.File
 
 // Equilateral triangle pointing up (orienteering start symbol)
@@ -216,6 +216,8 @@ fun MainScreen(
             null
         )
     }
+    var autoMode by remember { mutableStateOf(false) }
+    var autoCycleActive by remember { mutableStateOf(false) }
 
     // Current distance from start point to current GPS position
     val currentDistanceFromStart = remember(originalStartGps, gpsState.currentFix) {
@@ -481,6 +483,30 @@ fun MainScreen(
             infoMessage = "Финиш привязан к GPS"
             isInfoVisible = true
         }
+
+        // Auto-mode: exit navigation, set start = old finish, activate finish placement
+        if (autoMode && autoCycleActive) {
+            autoCycleActive = false
+            // Exit navigation step back to step 2
+            currentStepIndex = 1
+            // Move start point to where finish was
+            mapState.finishPoint?.let { fp ->
+                viewModel.moveStartPoint(fp.x, fp.y)
+            }
+            // Calibration still valid, just need a new finish
+            viewModel.setPlacingMode(PlacingMode.PLACING_FINISH)
+            infoMessage = "Авто: Старт перемещен. Выберите новый финиш."
+            isInfoVisible = true
+        }
+    }
+
+    // Auto-cycle: when new finish is placed during auto-cycle, navigate to it
+    LaunchedEffect(mapState.finishPoint) {
+        if (autoMode && autoCycleActive && mapState.finishPoint != null && currentStepIndex == 1) {
+            currentStepIndex = 2
+            infoMessage = "Авто: Маршрут обновлен. Навигация."
+            isInfoVisible = true
+        }
     }
 
     // When both start and finish are calibrated, compute distance and scale
@@ -601,6 +627,9 @@ fun MainScreen(
                         icon = TargetIcon,
                         isActive = finishCalibrated,
                         onClick = {
+                            if (autoMode && finishCalibrated) {
+                                autoCycleActive = true
+                            }
                             val fix = gpsState.currentFix
                             if (fix != null && fix.accuracy < 30f) {
                                 bindGpsToFinish()
@@ -608,6 +637,17 @@ fun MainScreen(
                                 lowAccuracyCallback = bindGpsToFinish
                                 showLowAccuracyDialog = true
                             }
+                        }
+                    ),
+                    PanelButton(
+                        id = "auto",
+                        text = "Авто",
+                        icon = null,
+                        isActive = autoMode,
+                        onClick = {
+                            autoMode = !autoMode
+                            infoMessage = if (autoMode) "Авто-режим включен" else "Авто-режим выключен"
+                            isInfoVisible = true
                         }
                     )
                 )

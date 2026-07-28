@@ -6,7 +6,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.view.MotionEvent
 import ru.bondarenko.orientvibe.ng.ui.theme.ControlsRed
-import ru.bondarenko.orientvibe.ng.viewmodel.RoutePoint
+import ru.bondarenko.orientvibe.ng.model.RoutePoint
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin

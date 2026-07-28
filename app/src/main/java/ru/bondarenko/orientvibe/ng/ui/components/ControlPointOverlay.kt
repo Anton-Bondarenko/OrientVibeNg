@@ -1,11 +1,10 @@
 package ru.bondarenko.orientvibe.ng.ui.components
 
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
-import kotlin.math.sqrt
+import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.ui.theme.ControlsRed
-import ru.bondarenko.orientvibe.ng.viewmodel.BoundingBox
+import kotlin.math.sqrt
 
 class ControlPointOverlay {
 

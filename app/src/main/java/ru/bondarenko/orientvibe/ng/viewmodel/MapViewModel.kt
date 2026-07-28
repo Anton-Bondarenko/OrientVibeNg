@@ -12,43 +12,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import ru.bondarenko.orientvibe.ng.model.BoundingBox
+import ru.bondarenko.orientvibe.ng.model.MapState
+import ru.bondarenko.orientvibe.ng.model.PlacingMode
+import ru.bondarenko.orientvibe.ng.model.RoutePoint
 import ru.bondarenko.orientvibe.ng.yolo.OnnxObjectDetector
 import java.io.InputStream
-
-data class BoundingBox(
-    val centerX: Float,
-    val centerY: Float,
-    val width: Float,
-    val height: Float,
-    val confidence: Float,
-    val label: String
-)
-
-data class RoutePoint(
-    val x: Float, // relative 0..1
-    val y: Float  // relative 0..1
-)
-
-enum class PlacingMode {
-    NONE,
-    PLACING_START,
-    PLACING_FINISH
-}
-
-data class MapState(
-    val imageUri: Uri? = null,
-    val bitmap: Bitmap? = null,
-    val boundingBoxes: List<BoundingBox> = emptyList(),
-    val isProcessing: Boolean = false,
-    val errorMessage: String? = null,
-    val progress: Float = 0f,
-    val progressMessage: String? = null,
-    val startPoint: RoutePoint? = null,
-    val finishPoint: RoutePoint? = null,
-    val placingMode: PlacingMode = PlacingMode.NONE,
-    val northAngle: Float = 0f, // degrees, 0 = up, positive = CW, range -45..45
-    val azimuth: Float = 0f
-)
 
 class MapViewModel(
     private val context: Context
@@ -107,11 +76,8 @@ class MapViewModel(
                     BitmapFactory.decodeStream(inputStream)
                 }
 
-                _mapState.value = _mapState.value.copy(
-                    bitmap = bitmap
-                )
+                _mapState.value = _mapState.value.copy(bitmap = bitmap)
 
-                // Run detection
                 detectObjects(bitmap)
             } catch (e: Exception) {
                 _mapState.value = _mapState.value.copy(
@@ -129,14 +95,11 @@ class MapViewModel(
                     detector?.detect(bitmap) ?: emptyList()
                 }
 
-                // Filter only class 0 (control points)
                 val filteredDetections = detections.filter { it.classId == 0 }
 
                 val boundingBoxes = filteredDetections.map { detection ->
-                    val bw =
-                        (detection.boundingBox.right - detection.boundingBox.left) / bitmap.width
-                    val bh =
-                        (detection.boundingBox.bottom - detection.boundingBox.top) / bitmap.height
+                    val bw = (detection.boundingBox.right - detection.boundingBox.left) / bitmap.width
+                    val bh = (detection.boundingBox.bottom - detection.boundingBox.top) / bitmap.height
                     val cx = detection.boundingBox.left / bitmap.width + bw / 2f
                     val cy = detection.boundingBox.top / bitmap.height + bh / 2f
                     BoundingBox(
@@ -174,7 +137,7 @@ class MapViewModel(
             dx * dx + dy * dy
         }
 
-        val threshold = 0.03f // 3% of image dimension
+        val threshold = 0.03f
         if (snapped != null) {
             val dx = snapped.centerX - relativeX
             val dy = snapped.centerY - relativeY
@@ -198,26 +161,22 @@ class MapViewModel(
                     placingMode = PlacingMode.NONE
                 )
             }
-
             PlacingMode.PLACING_FINISH -> {
                 _mapState.value = state.copy(
                     finishPoint = finalPoint,
                     placingMode = PlacingMode.NONE
                 )
             }
-
             else -> {}
         }
     }
 
     fun moveStartPoint(relativeX: Float, relativeY: Float) {
-        _mapState.value =
-            _mapState.value.copy(startPoint = snapToControlPoint(relativeX, relativeY))
+        _mapState.value = _mapState.value.copy(startPoint = snapToControlPoint(relativeX, relativeY))
     }
 
     fun moveFinishPoint(relativeX: Float, relativeY: Float) {
-        _mapState.value =
-            _mapState.value.copy(finishPoint = snapToControlPoint(relativeX, relativeY))
+        _mapState.value = _mapState.value.copy(finishPoint = snapToControlPoint(relativeX, relativeY))
     }
 
     fun updateNorthAngle(angle: Float) {
@@ -235,8 +194,7 @@ class MapViewModel(
         if (sp != null && fp != null && bmp != null) {
             val dx = (fp.x - sp.x) * bmp.width
             val dy = (fp.y - sp.y) * bmp.height
-            val routeDir =
-                (Math.toDegrees(Math.atan2(dx.toDouble(), -dy.toDouble())) + 360) % 360
+            val routeDir = (Math.toDegrees(Math.atan2(dx.toDouble(), -dy.toDouble())) + 360) % 360
             val angle = ((routeDir + _mapState.value.northAngle + 360) % 360).toFloat()
             _mapState.value = _mapState.value.copy(azimuth = angle)
         }

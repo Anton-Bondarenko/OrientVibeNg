@@ -14,8 +14,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import ru.bondarenko.orientvibe.ng.gps.GpsFix
 import ru.bondarenko.orientvibe.ng.gps.MapCalibration
 import ru.bondarenko.orientvibe.ng.gps.TrackPoint
-import ru.bondarenko.orientvibe.ng.viewmodel.BoundingBox
-import ru.bondarenko.orientvibe.ng.viewmodel.RoutePoint
+import ru.bondarenko.orientvibe.ng.model.BoundingBox
+import ru.bondarenko.orientvibe.ng.model.RoutePoint
 import kotlin.math.atan2
 import kotlin.math.pow
 import kotlin.math.sqrt
