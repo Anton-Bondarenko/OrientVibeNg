@@ -8,7 +8,8 @@ import kotlin.math.sqrt
 
 class ControlPointOverlay {
 
-    var boundingBoxes: List<BoundingBox> = emptyList()
+    var controlsboundingBoxes: List<BoundingBox> = emptyList()
+    var numbersBoundingBoxes: List<BoundingBox> = emptyList()
 
     // Source-to-view coordinate conversion — set externally
     var sourceToViewCoord: ((Float, Float) -> android.graphics.PointF?)? = null
@@ -27,7 +28,7 @@ class ControlPointOverlay {
     }
 
     fun draw(canvas: Canvas) {
-        if (boundingBoxes.isEmpty()) return
+        if (controlsboundingBoxes.isEmpty()) return
 
         val (sWidth, sHeight) = imageDimensions ?: return
         if (sWidth <= 0 || sHeight <= 0) return
@@ -40,7 +41,7 @@ class ControlPointOverlay {
 //            isAntiAlias = true
 //        }
 
-        for (box in boundingBoxes) {
+        for (box in controlsboundingBoxes) {
             val cx = box.centerX * sWidth
             val cy = box.centerY * sHeight
 

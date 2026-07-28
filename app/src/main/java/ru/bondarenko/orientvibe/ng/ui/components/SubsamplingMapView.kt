@@ -1,4 +1,4 @@
-package ru.bondarenko.orientvibe.ng.ui.components
+﻿package ru.bondarenko.orientvibe.ng.ui.components
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -78,7 +78,8 @@ class OverlayMapView(
 @Composable
 fun SubsamplingMapView(
     bitmap: Bitmap,
-    boundingBoxes: List<BoundingBox> = emptyList(),
+    controlsBoundingBoxes: List<BoundingBox> = emptyList(),
+    numbersBoundingBoxes: List<BoundingBox> = emptyList(),
     startPoint: RoutePoint? = null,
     finishPoint: RoutePoint? = null,
     tapListener: MapTapListener? = null,
@@ -101,8 +102,13 @@ fun SubsamplingMapView(
         onDispose { }
     }
 
-    DisposableEffect(boundingBoxes) {
-        overlayView.updateBoundingBoxes(boundingBoxes)
+    DisposableEffect(controlsBoundingBoxes) {
+        overlayView.updateControlsBoundingBoxes(controlsBoundingBoxes)
+        onDispose { }
+    }
+
+    DisposableEffect(numbersBoundingBoxes) {
+        overlayView.updateNumbersBoundingBoxes(numbersBoundingBoxes)
         onDispose { }
     }
 

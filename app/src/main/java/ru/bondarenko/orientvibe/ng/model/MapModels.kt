@@ -23,7 +23,8 @@ enum class PlacingMode {
 data class MapState(
     val imageUri: android.net.Uri? = null,
     val bitmap: android.graphics.Bitmap? = null,
-    val boundingBoxes: List<BoundingBox> = emptyList(),
+    val controlsBoundingBoxes: List<BoundingBox> = emptyList(),
+    val numbersBoundingBoxes: List<BoundingBox> = emptyList(),
     val isProcessing: Boolean = false,
     val errorMessage: String? = null,
     val progress: Float = 0f,

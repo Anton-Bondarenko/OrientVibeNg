@@ -45,7 +45,7 @@ class MapViewModel(
                         )
                     }
                 })
-                val modelLoaded = newDetector.loadModel("yolov8n.onnx")
+                val modelLoaded = newDetector.loadModel("orientmapv8n.onnx")
                 if (modelLoaded) {
                     detector = newDetector
                 } else {
@@ -95,7 +95,7 @@ class MapViewModel(
                     detector?.detect(bitmap) ?: emptyList()
                 }
 
-                val filteredDetections = detections.filter { it.classId == 0 }
+                val filteredDetections = detections.filter { it.classId == 0}
 
                 val boundingBoxes = filteredDetections.map { detection ->
                     val bw = (detection.boundingBox.right - detection.boundingBox.left) / bitmap.width
@@ -113,7 +113,7 @@ class MapViewModel(
                 }
 
                 _mapState.value = _mapState.value.copy(
-                    boundingBoxes = boundingBoxes,
+                    controlsBoundingBoxes = boundingBoxes,
                     isProcessing = false
                 )
             } catch (e: Exception) {
@@ -130,7 +130,7 @@ class MapViewModel(
     }
 
     private fun snapToControlPoint(relativeX: Float, relativeY: Float): RoutePoint {
-        val boxes = _mapState.value.boundingBoxes
+        val boxes = _mapState.value.controlsBoundingBoxes
         val snapped = boxes.minByOrNull { box ->
             val dx = box.centerX - relativeX
             val dy = box.centerY - relativeY

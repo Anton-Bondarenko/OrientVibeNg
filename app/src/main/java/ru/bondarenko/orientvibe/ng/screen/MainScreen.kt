@@ -236,8 +236,8 @@ fun MainScreen(
     }
 
     // Auto-place start after image load (only once)
-//    LaunchedEffect(mapState.boundingBoxes, mapState.isProcessing) {
-//        if (!autoPlacementDone && !mapState.isProcessing && mapState.boundingBoxes.isNotEmpty() && mapState.placingMode == PlacingMode.NONE && mapState.startPoint == null) {
+//    LaunchedEffect(mapState.controlsBoundingBoxes, mapState.isProcessing) {
+//        if (!autoPlacementDone && !mapState.isProcessing && mapState.controlsBoundingBoxes.isNotEmpty() && mapState.placingMode == PlacingMode.NONE && mapState.startPoint == null) {
 //            viewModel.setPlacingMode(PlacingMode.PLACING_START)
 //        }
 //    }
@@ -348,8 +348,8 @@ fun MainScreen(
                 isInfoVisible = true
             }
 
-            mapState.boundingBoxes.isNotEmpty() && currentStepIndex != 2 -> {
-                infoMessage = "Найдено ${mapState.boundingBoxes.size} контрольных точек"
+            mapState.controlsBoundingBoxes.isNotEmpty() && currentStepIndex != 2 -> {
+                infoMessage = "Найдено ${mapState.controlsBoundingBoxes.size} контрольных точек"
                 isInfoVisible = true
             }
 
@@ -691,11 +691,11 @@ fun MainScreen(
     // Auto-advance to step 2 after processing completes
     LaunchedEffect(
         mapState.isProcessing,
-        mapState.boundingBoxes,
+        mapState.controlsBoundingBoxes,
         mapState.startPoint,
         mapState.finishPoint
     ) {
-        if (!mapState.isProcessing && mapState.boundingBoxes.isNotEmpty() && currentStepIndex == 0) {
+        if (!mapState.isProcessing && mapState.controlsBoundingBoxes.isNotEmpty() && currentStepIndex == 0) {
             currentStepIndex = 1
             infoMessage = "Шаг 2: ${steps[1].title}"
             isInfoVisible = true
@@ -713,7 +713,8 @@ fun MainScreen(
             if (mapState.bitmap != null) {
                 SubsamplingMapView(
                     bitmap = mapState.bitmap!!,
-                    boundingBoxes = mapState.boundingBoxes,
+                    controlsBoundingBoxes = mapState.controlsBoundingBoxes,
+                    numbersBoundingBoxes = mapState.numbersBoundingBoxes,
                     startPoint = mapState.startPoint,
                     finishPoint = mapState.finishPoint,
                     tapListener = tapListener,

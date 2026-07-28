@@ -132,8 +132,13 @@ open class CustomImageView(context: Context) : View(context) {
         return PointF(pts[0], pts[1])
     }
 
-    fun updateBoundingBoxes(boxes: List<BoundingBox>) {
-        controlPointOverlay.boundingBoxes = boxes
+    fun updateControlsBoundingBoxes(boxes: List<BoundingBox>) {
+        controlPointOverlay.controlsboundingBoxes = boxes
+        invalidate()
+    }
+
+    fun updateNumbersBoundingBoxes(boxes: List<BoundingBox>) {
+        controlPointOverlay.numbersBoundingBoxes = boxes
         invalidate()
     }
 
@@ -315,7 +320,7 @@ open class CustomImageView(context: Context) : View(context) {
         }
         canvas.restoreToCount(saved)
 
-        val hasOverlays = controlPointOverlay.boundingBoxes.isNotEmpty() ||
+        val hasOverlays = controlPointOverlay.controlsboundingBoxes.isNotEmpty() ||
                 routeOverlay.startPoint != null ||
                 routeOverlay.finishPoint != null ||
                 trackOverlay.trackPoints.isNotEmpty() ||
