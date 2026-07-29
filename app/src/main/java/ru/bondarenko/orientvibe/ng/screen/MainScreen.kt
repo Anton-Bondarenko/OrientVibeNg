@@ -52,6 +52,9 @@ import ru.bondarenko.orientvibe.ng.viewmodel.MapViewModel
 import ru.bondarenko.orientvibe.ng.model.PlacingMode
 import java.io.File
 
+// Минимальная точность GPS для привязки к карте (30 метров)
+private const val GPS_ACCURACY_LOW_THRESHOLD = 30f
+
 // Equilateral triangle pointing up (orienteering start symbol)
 // Side length = 30, centered at (24, 24)
 private val StartIcon: ImageVector
@@ -204,29 +207,21 @@ fun MainScreen(
     var currentStepIndex by remember { mutableStateOf(0) }
     var infoMessage by remember { mutableStateOf("Добро пожаловать в OrientVibe") }
     var isInfoVisible by remember { mutableStateOf(true) }
-    var autoPlacementDone by remember { mutableStateOf(false) }
     var showLowAccuracyDialog by remember { mutableStateOf(false) }
     var lowAccuracyCallback by remember { mutableStateOf<(() -> Unit)?>(null) }
-    var startCalibrated by remember { mutableStateOf(false) }
-    var finishCalibrated by remember { mutableStateOf(false) }
-    var routeDistance by remember { mutableStateOf<Double?>(null) }
-    var mapScale by remember { mutableStateOf<Double?>(null) }
-    var originalStartGps by remember {
-        mutableStateOf<ru.bondarenko.orientvibe.ng.gps.GpsCoordinate?>(
-            null
-        )
-    }
-    var autoMode by remember { mutableStateOf(false) }
-    var autoCycleActive by remember { mutableStateOf(false) }
 
-    // Current distance from start point to current GPS position
-    val currentDistanceFromStart = remember(originalStartGps, gpsState.currentFix) {
-        if (originalStartGps != null && gpsState.currentFix != null) {
-            navViewModel.distanceBetween(originalStartGps!!, gpsState.currentFix!!.coordinate)
+    // Состояние навигации читаем из gpsState (канонический источник — NavViewModel)
+
+    // Current distance from start point to current GPS position (используем канонический source из NavViewModel)
+    val currentDistanceFromStart = remember(gpsState.originalStartGps, gpsState.currentFix) {
+        if (gpsState.originalStartGps != null && gpsState.currentFix != null) {
+            navViewModel.distanceBetween(gpsState.originalStartGps!!, gpsState.currentFix!!.coordinate)
         } else {
             null
         }
     }
+
+    var autoPlacementDone by remember { mutableStateOf(false) }
 
     // Reset auto-placement flag when a new image starts loading
     LaunchedEffect(mapState.isProcessing) {
@@ -236,29 +231,6 @@ fun MainScreen(
     }
 
     // Auto-place start after image load (only once)
-//    LaunchedEffect(mapState.controlsBoundingBoxes, mapState.isProcessing) {
-//        if (!autoPlacementDone && !mapState.isProcessing && mapState.controlsBoundingBoxes.isNotEmpty() && mapState.placingMode == PlacingMode.NONE && mapState.startPoint == null) {
-//            viewModel.setPlacingMode(PlacingMode.PLACING_START)
-//        }
-//    }
-
-    // Auto-place finish after start (only once)
-//    LaunchedEffect(mapState.startPoint) {
-//        val start = mapState.startPoint
-//        if (!autoPlacementDone && start != null && mapState.placingMode != PlacingMode.PLACING_FINISH && mapState.finishPoint == null) {
-//            viewModel.setPlacingMode(PlacingMode.PLACING_FINISH)
-//        }
-//    }
-
-    // Auto-enter navigation after finish (only once — guards against drag re-triggering)
-//    LaunchedEffect(mapState.finishPoint) {
-//        if (!autoPlacementDone && mapState.finishPoint != null) {
-//            autoPlacementDone = true
-//            currentStepIndex = 2
-//        }
-//    }
-
-    // Compute azimuth: angle from north line to route line, clockwise in degrees
     val azimuth =
         remember(mapState.azimuth) {
             mapState.azimuth
@@ -310,6 +282,7 @@ fun MainScreen(
     ) { success ->
         if (success) {
             viewModel.loadImageFromUri(cameraUri)
+            photoFile.delete()  // S5: очистка временного фото-файла
             infoMessage = "Фото сделано"
             isInfoVisible = true
         }
@@ -386,8 +359,8 @@ fun MainScreen(
     val bindGpsToStart: () -> Unit = bindStart@{
 
         val fix = gpsState.currentFix ?: return@bindStart
-        // Store original start GPS for later recalibration
-        originalStartGps = fix.coordinate
+        // Store original start GPS for later recalibration — канонический source в NavViewModel
+        navViewModel.setOriginalStartGps(fix.coordinate)
 
         navViewModel.addCalibrationPoint(
             gpsFix = fix,
@@ -395,7 +368,6 @@ fun MainScreen(
             imageY = mapState.startPoint?.y ?: 0f
         )
         navViewModel.startTracking()
-        startCalibrated = true
         infoMessage = "Старт привязан к GPS"
         isInfoVisible = true
 
@@ -416,13 +388,12 @@ fun MainScreen(
             altitude = fix.altitude
         )
 
-        // Bind finish GPS to image finish point
+        // Bind finish GPS to image finish point — addCalibrationPoint синхронизирует флаги через GpsState
         navViewModel.addCalibrationPoint(
             gpsFix = finishFix,
             imageX = mapState.finishPoint?.x ?: 0f,
             imageY = mapState.finishPoint?.y ?: 0f
         )
-        finishCalibrated = true
         infoMessage = "Финиш привязан к GPS (расчетный, 1км)"
         isInfoVisible = true
     }
@@ -432,15 +403,13 @@ fun MainScreen(
         val fix = gpsState.currentFix ?: return@bindFinish
 
         // Recalibrate with real finish GPS to get actual map scale
-        if (originalStartGps != null) {
+        if (navViewModel.getOriginalStartGps() != null) {
             // Clear existing calibration
             navViewModel.clearCalibration()
-            startCalibrated = false
-            finishCalibrated = false
 
             // Recalibrate using original start GPS and real finish GPS
             val startFix = GpsFix(
-                coordinate = originalStartGps!!,
+                coordinate = navViewModel.getOriginalStartGps()!!,
                 accuracy = fix.accuracy,
                 bearing = fix.bearing,
                 speed = 0f,
@@ -453,14 +422,12 @@ fun MainScreen(
                 imageX = mapState.startPoint?.x ?: 0f,
                 imageY = mapState.startPoint?.y ?: 0f
             )
-            startCalibrated = true
 
             navViewModel.addCalibrationPoint(
                 gpsFix = fix,
                 imageX = mapState.finishPoint?.x ?: 0f,
                 imageY = mapState.finishPoint?.y ?: 0f
             )
-            finishCalibrated = true
 
             // Update north angle from calibration bearing
             val cal = navViewModel.getCalibration()
@@ -479,14 +446,13 @@ fun MainScreen(
                 imageX = mapState.finishPoint?.x ?: 0f,
                 imageY = mapState.finishPoint?.y ?: 0f
             )
-            finishCalibrated = true
             infoMessage = "Финиш привязан к GPS"
             isInfoVisible = true
         }
 
         // Auto-mode: exit navigation, set start = old finish, activate finish placement
-        if (autoMode && autoCycleActive) {
-            autoCycleActive = false
+        if (gpsState.autoMode && gpsState.autoCycleActive) {
+            navViewModel.setAutoCycleActive(false)
             // Exit navigation step back to step 2
             currentStepIndex = 1
             // Move start point to where finish was
@@ -502,34 +468,18 @@ fun MainScreen(
 
     // Auto-cycle: when new finish is placed during auto-cycle, navigate to it
     LaunchedEffect(mapState.finishPoint) {
-        if (autoMode && autoCycleActive && mapState.finishPoint != null && currentStepIndex == 1) {
+        if (gpsState.autoMode && gpsState.autoCycleActive && mapState.finishPoint != null && currentStepIndex == 1) {
             currentStepIndex = 2
             infoMessage = "Авто: Маршрут обновлен. Навигация."
             isInfoVisible = true
         }
     }
 
-    // When both start and finish are calibrated, compute distance and scale
-    LaunchedEffect(startCalibrated, finishCalibrated) {
-        if (startCalibrated && finishCalibrated) {
-            val cal = navViewModel.getCalibration()
-            if (cal != null) {
-                val sp = mapState.startPoint
-                val fp = mapState.finishPoint
-                if (sp != null && fp != null) {
-                    // Compute route distance in meters
-                    val startGps = navViewModel.imageToGps(sp.x, sp.y)
-                    val finishGps = navViewModel.imageToGps(fp.x, fp.y)
-                    if (startGps != null && finishGps != null) {
-                        routeDistance = navViewModel.distanceBetween(startGps, finishGps)
-                    }
-                    // Map scale from calibration
-                    mapScale = cal.scaleMetersPerPixel
-                }
-            }
+    // Когда обе привязки выполнены, показываем дистанцию и масштаб из gpsState
+    LaunchedEffect(gpsState.startCalibrated, gpsState.finishCalibrated) {
+        if (gpsState.startCalibrated && gpsState.finishCalibrated) {
             // Return to step 2 (route selection) after calibration
-            infoMessage =
-                "Привязка: ${String.format("%.0f", routeDistance ?: 0.0)} м"
+            infoMessage = "Привязка: ${String.format("%.0f", gpsState.routeDistance ?: 0.0)} м"
             isInfoVisible = true
         }
     }
@@ -610,10 +560,10 @@ fun MainScreen(
                         id = "here_start",
                         text = "Здесь старт",
                         icon = TargetIcon,
-                        isActive = startCalibrated,
+                        isActive = gpsState.startCalibrated,
                         onClick = {
                             val fix = gpsState.currentFix
-                            if (fix != null && fix.accuracy < 30f) {
+                            if (fix != null && fix.accuracy < GPS_ACCURACY_LOW_THRESHOLD) {
                                 bindGpsToStart()
                             } else {
                                 lowAccuracyCallback = bindGpsToStart
@@ -625,13 +575,11 @@ fun MainScreen(
                         id = "here_finish",
                         text = "Здесь финиш",
                         icon = TargetIcon,
-                        isActive = finishCalibrated,
+                        isActive = gpsState.finishCalibrated,
                         onClick = {
-                            if (autoMode && finishCalibrated) {
-                                autoCycleActive = true
-                            }
+                            navViewModel.setAutoCycleActive(gpsState.autoMode && gpsState.finishCalibrated)
                             val fix = gpsState.currentFix
-                            if (fix != null && fix.accuracy < 30f) {
+                            if (fix != null && fix.accuracy < GPS_ACCURACY_LOW_THRESHOLD) {
                                 bindGpsToFinish()
                             } else {
                                 lowAccuracyCallback = bindGpsToFinish
@@ -643,10 +591,11 @@ fun MainScreen(
                         id = "auto",
                         text = "Авто",
                         icon = null,
-                        isActive = autoMode,
+                        isActive = gpsState.autoMode,
                         onClick = {
-                            autoMode = !autoMode
-                            infoMessage = if (autoMode) "Авто-режим включен" else "Авто-режим выключен"
+                            val newMode = !gpsState.autoMode
+                            navViewModel.setAutoMode(newMode)
+                            infoMessage = if (newMode) "Авто-режим включен" else "Авто-режим выключен"
                             isInfoVisible = true
                         }
                     )
@@ -780,9 +729,9 @@ fun MainScreen(
                 progressMessage = mapState.progressMessage,
                 azimuth = azimuth,
                 gpsState = gpsState,
-                routeDistance = routeDistance,
+                routeDistance = gpsState.routeDistance,
                 currentDistanceFromStart = currentDistanceFromStart,
-                mapScale = mapScale,
+                mapScale = gpsState.mapScale,
                 magneticBearing = gpsState.currentFix?.bearing?.minus(
                     gpsState.calibration?.bearingDegrees?.toFloat() ?: 0f
                 ),

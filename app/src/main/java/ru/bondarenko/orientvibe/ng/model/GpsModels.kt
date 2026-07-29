@@ -69,9 +69,17 @@ data class GpsState(
     val currentFix: GpsFix? = null,
     val calibration: MapCalibration? = null,
     val isCalibrated: Boolean = false,
+    val startCalibrated: Boolean = false,
+    val finishCalibrated: Boolean = false,
+    val autoMode: Boolean = false,
+    val autoCycleActive: Boolean = false,
     val trackPoints: List<TrackPoint> = emptyList(),
     val totalDistance: Double = 0.0,  // meters
-    val isTracking: Boolean = false
+    val isTracking: Boolean = false,
+    // Производные поля — вычисляются при привязке GPS к карте
+    val routeDistance: Double? = null,       // расстояние маршрута в метрах (масштаб карты)
+    val mapScale: Double? = null,            // масштаб карты (метры на пиксель)
+    val originalStartGps: GpsCoordinate? = null  // исходная GPS точка старта для повторной калибровки
 ) {
     /**
      * Current accuracy level derived from the latest GPS fix.

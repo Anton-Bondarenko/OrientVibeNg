@@ -31,11 +31,16 @@ object MapCalibrationUtils {
 
         val scaleMetersPerUnit = gpsDistance / imageDistance
 
+        // bearingDegrees = магнитный азимут от точки A к точке B
+        // (направление, которое нужно показать компасом чтобы двигаться с A к B на карте)
+        val trueBearing = bearing(pointA.gps, pointB.gps)
+        val magneticBearingDeg = trueBearing - magneticDeclination
+
         return MapCalibration(
             pointA = pointA,
             pointB = pointB,
             scaleMetersPerPixel = scaleMetersPerUnit,
-            bearingDegrees = magneticDeclination,
+            bearingDegrees = magneticBearingDeg,
             magneticDeclination = magneticDeclination
         )
     }

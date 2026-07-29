@@ -21,9 +21,7 @@ open class CustomImageView(context: Context) : View(context) {
 
     var bitmap: Bitmap? = null
         set(value) {
-            if (field?.isRecycled == true) {
-                field = null
-            }
+            if (field != null && !field!!.isRecycled) field!!.recycle()
             field = value
             invalidate()
         }

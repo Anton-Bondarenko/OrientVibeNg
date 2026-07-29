@@ -10,56 +10,62 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.model.MapState
 import ru.bondarenko.orientvibe.ng.model.PlacingMode
 import ru.bondarenko.orientvibe.ng.model.RoutePoint
-import ru.bondarenko.orientvibe.ng.yolo.OnnxObjectDetector
+import ru.bondarenko.orientvibe.ng.yolo.MapDetectionProgressListener
+import ru.bondarenko.orientvibe.ng.yolo.MapDetector
+import ru.bondarenko.orientvibe.ng.yolo.CONTROL_POINT_SNAP_THRESHOLD
+import android.util.Log
 import java.io.InputStream
 
+/**
+ * ViewModel for map image loading, detection results, and route management.
+ * All detection logic is delegated to [MapDetector].
+ */
 class MapViewModel(
     private val context: Context
-) : ViewModel() {
+) : ViewModel(), MapDetectionProgressListener {
 
-    private val _mapState = MutableStateFlow(MapState())
-    val mapState: StateFlow<MapState> = _mapState
-
-    private var detector: OnnxObjectDetector? = null
-
-    init {
-        initializeDetector()
+    companion object {
+        fun Factory(context: Context) = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                return MapViewModel(context) as T
+            }
+        }
     }
 
-    private fun initializeDetector() {
+    private val _mapState = MutableStateFlow(MapState())
+    val mapState: StateFlow<MapState> = _mapState.asStateFlow()
+
+    private val mapDetector = MapDetector(context).also { it.setProgressListener(this) }
+
+    init {
         viewModelScope.launch {
-            try {
-                val newDetector = OnnxObjectDetector(context)
-                newDetector.setProgressListener(object :
-                    ru.bondarenko.orientvibe.ng.yolo.DetectionProgressListener {
-                    override fun onProgressUpdate(current: Int, total: Int, message: String) {
-                        _mapState.value = _mapState.value.copy(
-                            progress = current.toFloat() / total.toFloat(),
-                            progressMessage = message
-                        )
-                    }
-                })
-                val modelLoaded = newDetector.loadModel("orientmapv8n.onnx")
-                if (modelLoaded) {
-                    detector = newDetector
-                } else {
-                    _mapState.value = _mapState.value.copy(
-                        errorMessage = "Failed to load ONNX model"
-                    )
-                }
-            } catch (e: Exception) {
+            val ok = mapDetector.init()
+            if (!ok) {
                 _mapState.value = _mapState.value.copy(
-                    errorMessage = "Failed to initialize detector: ${e.message}"
+                    errorMessage = "Failed to load orientmapv8n.onnx model"
                 )
             }
         }
     }
+
+    // ── Progress (from MapDetectionProgressListener) ───────────────────────
+
+    override fun onProgressUpdate(current: Int, total: Int, message: String) {
+        _mapState.value = _mapState.value.copy(
+            progress = current.toFloat() / total.toFloat(),
+            progressMessage = message
+        )
+    }
+
+    // ── Image loading + detection entry point ──────────────────────────────
 
     fun loadImageFromUri(uri: Uri) {
         viewModelScope.launch {
@@ -73,13 +79,23 @@ class MapViewModel(
                 val bitmap = withContext(Dispatchers.IO) {
                     val inputStream: InputStream = context.contentResolver.openInputStream(uri)
                         ?: throw Exception("Unable to open image")
-                    BitmapFactory.decodeStream(inputStream)
+                    try {
+                        BitmapFactory.decodeStream(inputStream)
+                    } finally {
+                        inputStream.close()
+                    }
                 }
 
                 _mapState.value = _mapState.value.copy(bitmap = bitmap)
 
-                detectObjects(bitmap)
+                val result = mapDetector.detect(bitmap)
+                _mapState.value = _mapState.value.copy(
+                    controlsBoundingBoxes = result.controlsBoundingBoxes,
+                    numbersBoundingBoxes = result.numbersBoundingBoxes,
+                    isProcessing = false
+                )
             } catch (e: Exception) {
+                Log.e("MapViewModel", "Failed to load image", e)
                 _mapState.value = _mapState.value.copy(
                     isProcessing = false,
                     errorMessage = "Failed to load image: ${e.message}"
@@ -88,42 +104,7 @@ class MapViewModel(
         }
     }
 
-    private fun detectObjects(bitmap: Bitmap) {
-        viewModelScope.launch {
-            try {
-                val detections = withContext(Dispatchers.IO) {
-                    detector?.detect(bitmap) ?: emptyList()
-                }
-
-                val filteredDetections = detections.filter { it.classId == 0}
-
-                val boundingBoxes = filteredDetections.map { detection ->
-                    val bw = (detection.boundingBox.right - detection.boundingBox.left) / bitmap.width
-                    val bh = (detection.boundingBox.bottom - detection.boundingBox.top) / bitmap.height
-                    val cx = detection.boundingBox.left / bitmap.width + bw / 2f
-                    val cy = detection.boundingBox.top / bitmap.height + bh / 2f
-                    BoundingBox(
-                        centerX = cx,
-                        centerY = cy,
-                        width = bw,
-                        height = bh,
-                        confidence = detection.confidence,
-                        label = "control_point"
-                    )
-                }
-
-                _mapState.value = _mapState.value.copy(
-                    controlsBoundingBoxes = boundingBoxes,
-                    isProcessing = false
-                )
-            } catch (e: Exception) {
-                _mapState.value = _mapState.value.copy(
-                    isProcessing = false,
-                    errorMessage = "Detection failed: ${e.message}"
-                )
-            }
-        }
-    }
+    // ── Route management ───────────────────────────────────────────────────
 
     fun setPlacingMode(mode: PlacingMode) {
         _mapState.value = _mapState.value.copy(placingMode = mode)
@@ -137,11 +118,10 @@ class MapViewModel(
             dx * dx + dy * dy
         }
 
-        val threshold = 0.03f
         if (snapped != null) {
             val dx = snapped.centerX - relativeX
             val dy = snapped.centerY - relativeY
-            if (dx * dx + dy * dy < threshold * threshold) {
+            if (dx * dx + dy * dy < CONTROL_POINT_SNAP_THRESHOLD * CONTROL_POINT_SNAP_THRESHOLD) {
                 return RoutePoint(snapped.centerX, snapped.centerY)
             }
         }
@@ -179,6 +159,8 @@ class MapViewModel(
         _mapState.value = _mapState.value.copy(finishPoint = snapToControlPoint(relativeX, relativeY))
     }
 
+    // ── Map orientation ────────────────────────────────────────────────────
+
     fun updateNorthAngle(angle: Float) {
         _mapState.value = _mapState.value.copy(northAngle = angle.coerceIn(-45f, 45f))
     }
@@ -200,21 +182,14 @@ class MapViewModel(
         }
     }
 
+    // ── Utilities ──────────────────────────────────────────────────────────
+
     fun clearError() {
         _mapState.value = _mapState.value.copy(errorMessage = null)
     }
 
     override fun onCleared() {
         super.onCleared()
-        detector?.close()
-    }
-
-    companion object {
-        fun Factory(context: Context) = object : ViewModelProvider.Factory {
-            @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return MapViewModel(context) as T
-            }
-        }
+        mapDetector.close()
     }
 }

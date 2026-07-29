@@ -17,7 +17,7 @@ import ru.bondarenko.orientvibe.ng.model.MapCalibration
 
 /**
  * ViewModel that combines GpsManager, TrackRecorder, and calibration state.
- * Exposes a unified GpsState for the UI.
+ * All fields are canonical in GpsState — no standalone copies.
  */
 class NavViewModel(
     private val context: Context
@@ -25,47 +25,71 @@ class NavViewModel(
 
     private val gpsManager = GpsManager(context)
     private val trackRecorder = TrackRecorder()
+    private val pendingCalibrationPoints = mutableListOf<CalibrationPoint>()
+    private var calibration: MapCalibration? = null
+    // Внутренние поля для калибровки (не в StateFlow — управляются через методы)
+    private var _autoMode = false
+    private var _autoCycleActive = false
 
     private val _gpsState = MutableStateFlow(GpsState())
     val gpsState: StateFlow<GpsState> = _gpsState.asStateFlow()
 
-    /** Calibration points waiting to be set (0, 1, or 2). */
-    private val pendingCalibrationPoints = mutableListOf<CalibrationPoint>()
-    private var calibration: MapCalibration? = null
-
-    // Calibration state
-    var originalStartGps: GpsCoordinate? = null
-        private set
-    var startCalibrated: Boolean = false
-        private set
-    var finishCalibrated: Boolean = false
-        private set
-    var autoMode: Boolean = false
-        private set
-    var autoCycleActive: Boolean = false
-        private set
-
     init {
         viewModelScope.launch {
             gpsManager.gpsState.collect { managerState ->
-                _gpsState.value = _gpsState.value.copy(
-                    isGpsEnabled = managerState.isGpsEnabled,
-                    currentFix = managerState.currentFix
-                )
-                if (trackRecorder.getTrackData().isTracking && managerState.currentFix != null) {
+                val state = _gpsState.value
+                val hasBothCalibrations = state.startCalibrated && state.finishCalibrated
+                // Обновляем трек при каждом GPS-обновлении
+                val newTrackPoints = if (trackRecorder.getTrackData().isTracking && managerState.currentFix != null) {
                     trackRecorder.recordPoint(managerState.currentFix, calibration)
+                    trackRecorder.getTrackData().trackPoints
+                } else {
+                    state.trackPoints
                 }
+                _gpsState.value = state.copy(
+                    isGpsEnabled = managerState.isGpsEnabled,
+                    currentFix = managerState.currentFix,
+                    trackPoints = newTrackPoints,
+                    totalDistance = if (trackRecorder.getTrackData().isTracking) {
+                        trackRecorder.getTrackData().totalDistance
+                    } else {
+                        state.totalDistance
+                    },
+                    isTracking = trackRecorder.getTrackData().isTracking
+                )
             }
         }
 
         viewModelScope.launch {
             trackRecorder.trackState.collect { trackState ->
-                _gpsState.value = _gpsState.value.copy(
+                val state = _gpsState.value
+                val hasBothCalibrations = state.startCalibrated && state.finishCalibrated
+                // Вычисляем производные поля из калибровки
+                val derivedRouteDistance = if (hasBothCalibrations) {
+                    routeDistanceFromTrack(state.originalStartGps)
+                } else {
+                    0.0
+                }
+                val derivedMapScale = if (calibration != null) calibration!!.scaleMetersPerPixel else 0.0
+
+                _gpsState.value = state.copy(
                     trackPoints = trackState.trackPoints,
                     totalDistance = trackState.totalDistance,
-                    isTracking = trackState.isTracking
+                    isTracking = trackState.isTracking,
+                    routeDistance = derivedRouteDistance.takeIf { it > 0.0 },
+                    mapScale = derivedMapScale.takeIf { it > 0.0 }
                 )
             }
+        }
+    }
+
+    /** Вычисляет расстояние между originalStartGps и текущей точкой трека */
+    private fun routeDistanceFromTrack(originalStart: GpsCoordinate?): Double {
+        val track = trackRecorder.getTrackData().trackPoints
+        return if (originalStart != null && track.isNotEmpty()) {
+            MapCalibrationUtils.haversineDistance(originalStart, track.last().gpsFix.coordinate)
+        } else {
+            0.0
         }
     }
 
@@ -76,6 +100,14 @@ class NavViewModel(
     fun isGpsEnabled(): Boolean = gpsManager.isGpsEnabled()
 
     // ── Calibration ──
+
+    /** Возвращает originalStartGps для сохранения в MainScreen */
+    fun getOriginalStartGps(): GpsCoordinate? = _gpsState.value.originalStartGps
+
+    /** Сохраняет originalStartGps (вызывается при привязке старта) */
+    fun setOriginalStartGps(coord: GpsCoordinate) {
+        _gpsState.value = _gpsState.value.copy(originalStartGps = coord)
+    }
 
     fun addCalibrationPoint(gpsFix: GpsFix, imageX: Float, imageY: Float): Boolean {
         val calPoint = CalibrationPoint(gps = gpsFix.coordinate, imageX = imageX, imageY = imageY)
@@ -93,7 +125,17 @@ class NavViewModel(
             val result = MapCalibrationUtils.calibrate(pointA, pointB, magneticDeclination)
             if (result != null) {
                 calibration = result
-                _gpsState.value = _gpsState.value.copy(calibration = result, isCalibrated = true)
+                _gpsState.value = _gpsState.value.copy(
+                    calibration = result,
+                    isCalibrated = true,
+                    startCalibrated = true,
+                    finishCalibrated = true
+                )
+            } else {
+                _gpsState.value = _gpsState.value.copy(
+                    startCalibrated = false,
+                    finishCalibrated = false
+                )
             }
             pendingCalibrationPoints.clear()
             return true
@@ -104,7 +146,12 @@ class NavViewModel(
     fun clearCalibration() {
         calibration = null
         pendingCalibrationPoints.clear()
-        _gpsState.value = _gpsState.value.copy(calibration = null, isCalibrated = false)
+        _gpsState.value = _gpsState.value.copy(
+            calibration = null,
+            isCalibrated = false,
+            startCalibrated = false,
+            finishCalibrated = false
+        )
     }
 
     fun getCalibration(): MapCalibration? = calibration
@@ -116,61 +163,16 @@ class NavViewModel(
         return geomagneticField.declination.toDouble()
     }
 
-    // ── Calibration Logic (moved from MainScreen) ──
+    // ── Mode Control (синхронизировано с GpsState) ──
 
-    fun bindGpsToStart(fix: GpsFix, startImageX: Float, startImageY: Float, finishImageX: Float, finishImageY: Float) {
-        originalStartGps = fix.coordinate
-        addCalibrationPoint(gpsFix = fix, imageX = startImageX, imageY = startImageY)
-        startTracking()
-        startCalibrated = true
-
-        val finishCoordinate = calculateDestinationCoordinate(
-            start = fix.coordinate,
-            bearingMagnetic = fix.bearing.toDouble(),
-            distanceMeters = 1000.0
-        )
-        val finishFix = GpsFix(
-            coordinate = finishCoordinate,
-            accuracy = fix.accuracy,
-            bearing = fix.bearing,
-            speed = 0f,
-            timestamp = System.currentTimeMillis(),
-            altitude = fix.altitude
-        )
-        addCalibrationPoint(gpsFix = finishFix, imageX = finishImageX, imageY = finishImageY)
-        finishCalibrated = true
+    fun setAutoMode(enabled: Boolean) {
+        _autoMode = enabled
+        _gpsState.value = _gpsState.value.copy(autoMode = enabled)
     }
 
-    fun bindGpsToFinish(fix: GpsFix, startImageX: Float, startImageY: Float, finishImageX: Float, finishImageY: Float) {
-        if (originalStartGps != null) {
-            clearCalibration()
-            startCalibrated = false
-            finishCalibrated = false
-
-            val startFix = GpsFix(
-                coordinate = originalStartGps!!,
-                accuracy = fix.accuracy,
-                bearing = fix.bearing,
-                speed = 0f,
-                timestamp = System.currentTimeMillis(),
-                altitude = fix.altitude
-            )
-            addCalibrationPoint(gpsFix = startFix, imageX = startImageX, imageY = startImageY)
-            startCalibrated = true
-            addCalibrationPoint(gpsFix = fix, imageX = finishImageX, imageY = finishImageY)
-            finishCalibrated = true
-        } else {
-            addCalibrationPoint(gpsFix = fix, imageX = finishImageX, imageY = finishImageY)
-            finishCalibrated = true
-        }
-    }
-
-    fun setAutoMode(enabled: Boolean) { autoMode = enabled }
-    fun setAutoCycleActive(active: Boolean) { autoCycleActive = active }
-
-    fun getMagneticBearingBetween(from: GpsCoordinate, to: GpsCoordinate): Double {
-        val declination = _gpsState.value.calibration?.magneticDeclination ?: 0.0
-        return MapCalibrationUtils.magneticBearing(from, to, declination)
+    fun setAutoCycleActive(active: Boolean) {
+        _autoCycleActive = active
+        _gpsState.value = _gpsState.value.copy(autoCycleActive = active)
     }
 
     // ── Coordinate Conversion ──
@@ -191,7 +193,7 @@ class NavViewModel(
     }
 
     fun magneticBearingBetween(from: GpsCoordinate, to: GpsCoordinate): Double {
-        val declination = _gpsState.value.calibration?.magneticDeclination ?: 0.0
+        val declination = calibration?.magneticDeclination ?: 0.0
         return MapCalibrationUtils.magneticBearing(from, to, declination)
     }
 
@@ -230,6 +232,8 @@ class NavViewModel(
     }
 
     companion object {
+        const val GPS_ACCURACY_LOW_THRESHOLD = 30f
+
         fun Factory(context: Context) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {

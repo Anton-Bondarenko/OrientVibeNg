@@ -2,6 +2,7 @@ package ru.bondarenko.orientvibe.ng.ui.components
 
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Typeface
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.ui.theme.ControlsRed
 import kotlin.math.sqrt
@@ -27,19 +28,49 @@ class ControlPointOverlay {
         style = Paint.Style.FILL
     }
 
+    // Прямоугольники для боксов номеров (отрисовка границ)
+    private val numberBoxPaint = Paint().apply {
+        color = android.graphics.Color.rgb(255, 160, 0)  // оранжевый
+        style = Paint.Style.STROKE
+        strokeWidth = 4f
+        isAntiAlias = true
+    }
+
     fun draw(canvas: Canvas) {
-        if (controlsboundingBoxes.isEmpty()) return
+        if (controlsboundingBoxes.isEmpty() && numbersBoundingBoxes.isEmpty()) return
 
         val (sWidth, sHeight) = imageDimensions ?: return
         if (sWidth <= 0 || sHeight <= 0) return
 
         val toView = sourceToViewCoord ?: return
-//        val boxPaint = Paint().apply {
-//            style = Paint.Style.STROKE
-//            strokeWidth = 6f
-//            color = Color.GREEN
-//            isAntiAlias = true
-//        }
+
+        // ── Прямоугольники для боксов номеров ──
+        for (box in numbersBoundingBoxes) {
+            val left   = box.centerX * sWidth - box.width * sWidth / 2f
+            val top    = box.centerY * sHeight - box.height * sHeight / 2f
+            val right  = box.centerX * sWidth + box.width * sWidth / 2f
+            val bottom = box.centerY * sHeight + box.height * sHeight / 2f
+
+            val corner = toView(left, top) ?: continue
+            val cornerBR = toView(right, bottom) ?: continue
+
+            canvas.drawRect(corner.x, corner.y, cornerBR.x, cornerBR.y, numberBoxPaint)
+
+            // Отрисовка распознанного числа внутри/над боксом
+            box.number?.let { num ->
+                val textPaint = Paint().apply {
+                    color = android.graphics.Color.rgb(255, 160, 0)
+                    this.textSize = 36f
+                    style = Paint.Style.FILL_AND_STROKE
+                    isAntiAlias = true
+                    textAlign = Paint.Align.CENTER
+                }
+                val textY = corner.y + textPaint.textSize * 1.2f
+                canvas.drawText(num.toString(), corner.x + (cornerBR.x - corner.x) / 2f, textY, textPaint)
+            }
+        }
+
+        // ── Круги контрольных пунктов ──
 
         for (box in controlsboundingBoxes) {
             val cx = box.centerX * sWidth
@@ -54,14 +85,6 @@ class ControlPointOverlay {
             val dxY = viewEdgeY.x - viewCenter.x
             val dyY = viewEdgeY.y - viewCenter.y
             val radiusY = sqrt((dxY * dxY + dyY * dyY).toDouble()).toFloat()
-
-//            canvas.drawRect(
-//                viewCenter.x - radiusX,
-//                viewCenter.y - radiusY,
-//                viewCenter.x + radiusX,
-//                viewCenter.y + radiusY,
-//                boxPaint
-//            )
 
             val radius = minOf(radiusX, radiusY).coerceAtLeast(4f)
             canvas.drawCircle(viewCenter.x, viewCenter.y, radius, controlFillPaint)
