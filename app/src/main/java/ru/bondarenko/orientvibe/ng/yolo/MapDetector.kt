@@ -13,7 +13,7 @@ import kotlin.math.sqrt
  * Constants shared between MapDetector and MapViewModel (snap-to-point threshold, OCR ROI expansion, etc.).
  */
 const val CONTROL_POINT_SNAP_THRESHOLD = 0.03f
-const val DIGIT_ROI_EXPANSION_FACTOR = 3f
+const val DIGIT_ROI_EXPANSION_FACTOR = 1.5f
 const val NUMBER_CORRELATION_THRESHOLD_MULT = 1.5f
 
 /** Result of the full detection pipeline (YOLO + OCR + correlation). */
@@ -122,7 +122,7 @@ class MapDetector(private val context: Context) {
             val matchedControls = correlateNumbersWithControls(controlsBoxes, detectedNumbers)
 
             Log.d(tag, "Detection: controls=${matchedControls.size}, numbers=${detectedNumbers.size}")
-            MapDetectionResult(matchedControls, detectedNumbers)
+            MapDetectionResult(matchedControls, numbersBoxes)
         } catch (e: Exception) {
             Log.e(tag, "Detection error", e)
             MapDetectionResult(emptyList(), emptyList())
@@ -197,19 +197,21 @@ class MapDetector(private val context: Context) {
                 }
 
                 if (validDigits.isEmpty()) {
-                    results.add(makeEmptyBox(numberBox))
+                    // Не добавляем bbox — только жёлтая рамка для области с цифрами
                     continue
                 }
 
-                // Assemble digits left→right into a single number
+                // Assemble digits left→right into a single number value.
                 val sorted = validDigits.sortedBy { p -> p.first.centerX }
                 var number = 0
                 for ((_, digitNum) in sorted) {
                     number = number * 10 + digitNum
                 }
 
+                // Create one merged bbox for the entire number (not individual digits).
                 val leftest = sorted.first().first
                 val rightest = sorted.last().first
+                numberBox.number = number
                 results.add(
                     BoundingBox(
                         centerX = (leftest.centerX + rightest.centerX) / 2f,

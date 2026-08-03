@@ -46,26 +46,26 @@ class ControlPointOverlay {
 
         // ── Прямоугольники для боксов номеров ──
         for (box in numbersBoundingBoxes) {
-            val left   = box.centerX * sWidth - box.width * sWidth / 2f
-            val top    = box.centerY * sHeight - box.height * sHeight / 2f
-            val right  = box.centerX * sWidth + box.width * sWidth / 2f
-            val bottom = box.centerY * sHeight + box.height * sHeight / 2f
+            val left   = (box.centerX - box.width/ 2f) * sWidth
+            val top    = (box.centerY - box.height/ 2f) * sHeight
+            val right  = (box.centerX + box.width/ 2f) * sWidth
+            val bottom = (box.centerY + box.height/ 2f) * sHeight
 
             val corner = toView(left, top) ?: continue
             val cornerBR = toView(right, bottom) ?: continue
 
             canvas.drawRect(corner.x, corner.y, cornerBR.x, cornerBR.y, numberBoxPaint)
 
-            // Отрисовка распознанного числа внутри/над боксом
+            // Отрисовка распознанного числа внутри бокса
             box.number?.let { num ->
                 val textPaint = Paint().apply {
                     color = android.graphics.Color.rgb(255, 160, 0)
-                    this.textSize = 36f
+                    this.textSize = (cornerBR.y - corner.y) * 0.7f
                     style = Paint.Style.FILL_AND_STROKE
                     isAntiAlias = true
                     textAlign = Paint.Align.CENTER
                 }
-                val textY = corner.y + textPaint.textSize * 1.2f
+                val textY = corner.y + (cornerBR.y - corner.y) / 2f + textPaint.textSize / 3f
                 canvas.drawText(num.toString(), corner.x + (cornerBR.x - corner.x) / 2f, textY, textPaint)
             }
         }

@@ -147,7 +147,7 @@ class OnnxObjectDetector(private val context: Context) {
                 val sliceY2 = (sliceY1 + sliceSize).coerceAtMost(originalHeight)
 
                 // Skip if slice is too small
-                if (sliceX2 - sliceX1 < 100 || sliceY2 - sliceY1 < 100) {
+                if ((sliceX2 - sliceX1 < 100 || sliceY2 - sliceY1 < 100) && (numSlicesY != 1 || numSlicesX != 1)) {
                     continue
                 }
 
@@ -281,9 +281,9 @@ class OnnxObjectDetector(private val context: Context) {
                             (ortSession?.outputInfo?.values?.first()?.info as? ai.onnxruntime.TensorInfo)?.shape
                         } catch (e: Exception) {
                             Log.w(tag, "Could not get output shape from info, using default", e)
-                            longArrayOf(1, 6, 8400) // Default for custom model with 2 classes
+                            longArrayOf(1, 14, 8400) // Default: [batch, 4_bbox + 10_classes, detections]
                         }
-                        val numValues = outputShape?.getOrNull(1)?.toInt() ?: 6
+                        val numValues = outputShape?.getOrNull(1)?.toInt() ?: 14
                         val numDetections = outputShape?.getOrNull(2)?.toInt() ?: 8400
                         val expectedSize = 1 * numValues * numDetections
                         Log.d(

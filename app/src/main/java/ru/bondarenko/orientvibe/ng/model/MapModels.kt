@@ -7,7 +7,7 @@ data class BoundingBox(
     val height: Float,
     val confidence: Float,
     val label: String,
-    val number: Int? = null // распознанное значение (1-3 цифры), если найдено
+    var number: Int? = null // распознанное значение (1-3 цифры), если найдено
 )
 
 data class RoutePoint(
