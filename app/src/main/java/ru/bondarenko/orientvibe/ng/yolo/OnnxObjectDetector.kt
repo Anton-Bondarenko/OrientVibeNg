@@ -558,11 +558,12 @@ class OnnxObjectDetector(private val context: Context) {
 
     private fun applyNMSWithMerging(
         results: List<DetectionResult>,
-        iouThreshold: Float
+        iouThreshold: Float,
+        iomThreshold: Float = 0.65f // Порог поглощения одного бокса другим
     ): List<DetectionResult> {
         if (results.isEmpty()) return results
 
-        // Sort by confidence (descending)
+        // Сортируем по confidence, чтобы начинать сборку с наиболее уверенного центра объекта
         val sorted = results.sortedByDescending { it.confidence }
         val merged = mutableListOf<DetectionResult>()
         val used = BooleanArray(sorted.size) { false }
@@ -575,98 +576,83 @@ class OnnxObjectDetector(private val context: Context) {
             overlapping.add(current)
             used[i] = true
 
-            // Find all overlapping detections
             for (j in (i + 1) until sorted.size) {
                 if (used[j]) continue
-
                 val candidate = sorted[j]
-                val iou = calculateIoU(current.boundingBox, candidate.boundingBox)
 
-                // Check if same class and either high IoU, one box is inside another, 3 sides match, or corner matches
                 if (current.classId == candidate.classId) {
-                    if (iou > iouThreshold ||
-                        isBoxInside(current.boundingBox, candidate.boundingBox) ||
-                        isBoxInside(candidate.boundingBox, current.boundingBox) ||
-                        hasThreeSidesMatching(current.boundingBox, candidate.boundingBox) ||
-                        hasCornerMatching(current.boundingBox, candidate.boundingBox)
-                    ) {
+                    val iou = calculateIoU(current.boundingBox, candidate.boundingBox)
+                    val iom = calculateIoM(current.boundingBox, candidate.boundingBox)
+
+                    // Если боксы пересекаются по IoU или один является частью другого (IoM)
+                    if (iou > iouThreshold || iom > iomThreshold) {
                         overlapping.add(candidate)
                         used[j] = true
                     }
                 }
             }
 
-            // Merge overlapping detections
             if (overlapping.size > 1) {
-                val mergedDetection = mergeDetections(overlapping)
+                // Используем стратегию объединения внешних границ
+                val mergedDetection = mergeDetectionsByUnion(overlapping)
                 merged.add(mergedDetection)
             } else {
                 merged.add(current)
             }
         }
-
         return merged
     }
 
-    private fun isBoxInside(inner: RectF, outer: RectF): Boolean {
-        return inner.left >= outer.left &&
-                inner.top >= outer.top &&
-                inner.right <= outer.right &&
-                inner.bottom <= outer.bottom
-    }
+    // Новая функция слияния: Растягивает рамку по максимальным внешним границам
+    private fun mergeDetectionsByUnion(detections: List<DetectionResult>): DetectionResult {
+        var minLeft = Float.MAX_VALUE
+        var minTop = Float.MAX_VALUE
+        var maxRight = Float.MIN_VALUE
+        var maxBottom = Float.MIN_VALUE
 
-    private fun hasThreeSidesMatching(box1: RectF, box2: RectF): Boolean {
-        val tolerance = 10f // pixels tolerance for side matching
-        var matchingSides = 0
+        var maxConfidence = 0f
 
-        // Check left sides
-        if (abs(box1.left - box2.left) < tolerance) matchingSides++
-        // Check right sides
-        if (abs(box1.right - box2.right) < tolerance) matchingSides++
-        // Check top sides
-        if (abs(box1.top - box2.top) < tolerance) matchingSides++
-        // Check bottom sides
-        if (abs(box1.bottom - box2.bottom) < tolerance) matchingSides++
+        for (d in detections) {
+            val box = d.boundingBox
 
-        return matchingSides >= 3
-    }
+            // Ищем самые крайние внешние точки среди всех дубликатов
+            if (box.left < minLeft) minLeft = box.left
+            if (box.top < minTop) minTop = box.top
+            if (box.right > maxRight) maxRight = box.right
+            if (box.bottom > maxBottom) maxBottom = box.bottom
 
-    private fun hasCornerMatching(box1: RectF, box2: RectF): Boolean {
-        val tolerance = 10f // pixels tolerance for corner matching
+            // Сохраняем максимальную уверенность
+            if (d.confidence > maxConfidence) {
+                maxConfidence = d.confidence
+            }
+        }
 
-        // Check if any corner coordinates match
-        val topLeftMatch = abs(box1.left - box2.left) < tolerance &&
-                abs(box1.top - box2.top) < tolerance
-        val topRightMatch = abs(box1.right - box2.right) < tolerance &&
-                abs(box1.top - box2.top) < tolerance
-        val bottomLeftMatch = abs(box1.left - box2.left) < tolerance &&
-                abs(box1.bottom - box2.bottom) < tolerance
-        val bottomRightMatch = abs(box1.right - box2.right) < tolerance &&
-                abs(box1.bottom - box2.bottom) < tolerance
-
-        return topLeftMatch || topRightMatch || bottomLeftMatch || bottomRightMatch
-    }
-
-    private fun mergeDetections(detections: List<DetectionResult>): DetectionResult {
-        // Find the detection with the largest bounding box area
-        val largestDetection = detections.maxByOrNull {
-            (it.boundingBox.right - it.boundingBox.left) * (it.boundingBox.bottom - it.boundingBox.top)
-        } ?: detections[0]
-
-        // Use the largest bounding box
-        val mergedBox = largestDetection.boundingBox
-
-        // Use the highest confidence
-        val maxConfidence = detections.maxOfOrNull { it.confidence } ?: 0.5f
-
-        // Use the class ID from the largest detection
-        val classId = largestDetection.classId
+        val unionBox = RectF(minLeft, minTop, maxRight, maxBottom)
 
         return DetectionResult(
-            mergedBox,
-            maxConfidence,
-            classId
+            boundingBox = unionBox,
+            confidence = maxConfidence,
+            classId = detections.first().classId
         )
+    }
+
+    // Расчет IoM (Intersection over Minimum) — необходим для склейки кусков на краях
+    private fun calculateIoM(boxA: RectF, boxB: RectF): Float {
+        val intersectionX1 = maxOf(boxA.left, boxB.left)
+        val intersectionY1 = maxOf(boxA.top, boxB.top)
+        val intersectionX2 = minOf(boxA.right, boxB.right)
+        val intersectionY2 = minOf(boxA.bottom, boxB.bottom)
+
+        val intersectionWidth = maxOf(0f, intersectionX2 - intersectionX1)
+        val intersectionHeight = maxOf(0f, intersectionY2 - intersectionY1)
+        val intersectionArea = intersectionWidth * intersectionHeight
+
+        if (intersectionArea == 0f) return 0f
+
+        val areaA = (boxA.right - boxA.left) * (boxA.bottom - boxA.top)
+        val areaB = (boxB.right - boxB.left) * (boxB.bottom - boxB.top)
+
+        return intersectionArea / minOf(areaA, areaB)
     }
 
     private fun calculateIoU(box1: RectF, box2: RectF): Float {
