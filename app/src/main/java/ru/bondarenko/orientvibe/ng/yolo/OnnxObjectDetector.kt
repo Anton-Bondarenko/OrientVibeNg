@@ -559,11 +559,10 @@ class OnnxObjectDetector(private val context: Context) {
     private fun applyNMSWithMerging(
         results: List<DetectionResult>,
         iouThreshold: Float,
-        iomThreshold: Float = 0.65f // Порог поглощения одного бокса другим
+        iomThreshold: Float = 0.65f
     ): List<DetectionResult> {
         if (results.isEmpty()) return results
 
-        // Сортируем по confidence, чтобы начинать сборку с наиболее уверенного центра объекта
         val sorted = results.sortedByDescending { it.confidence }
         val merged = mutableListOf<DetectionResult>()
         val used = BooleanArray(sorted.size) { false }
@@ -584,8 +583,11 @@ class OnnxObjectDetector(private val context: Context) {
                     val iou = calculateIoU(current.boundingBox, candidate.boundingBox)
                     val iom = calculateIoM(current.boundingBox, candidate.boundingBox)
 
-                    // Если боксы пересекаются по IoU или один является частью другого (IoM)
-                    if (iou > iouThreshold || iom > iomThreshold) {
+                    // Проверяем проекционное совпадение по осям (решает проблему сдвинутых боксов)
+                    val hasAxisOverlap = checkAxisOverlap(current.boundingBox, candidate.boundingBox)
+
+                    // Объединяем по классическим метрикам ИЛИ по строгому осевому совпадению
+                    if (iou > iouThreshold || iom > iomThreshold || hasAxisOverlap) {
                         overlapping.add(candidate)
                         used[j] = true
                     }
@@ -593,7 +595,6 @@ class OnnxObjectDetector(private val context: Context) {
             }
 
             if (overlapping.size > 1) {
-                // Используем стратегию объединения внешних границ
                 val mergedDetection = mergeDetectionsByUnion(overlapping)
                 merged.add(mergedDetection)
             } else {
@@ -603,40 +604,66 @@ class OnnxObjectDetector(private val context: Context) {
         return merged
     }
 
-    // Новая функция слияния: Растягивает рамку по максимальным внешним границам
+    // НОВАЯ ФУНКЦИЯ: Проверяет, являются ли боксы частями одного объекта,
+// у которого совпадает одна из осей (например, идеальный верх/низ, но сдвиг по бокам)
+    private fun checkAxisOverlap(boxA: RectF, boxB: RectF): Boolean {
+        // 1. Вычисляем перекрытие по вертикали (Y) и горизонтали (X)
+        val overlapY = maxOf(0f, minOf(boxA.bottom, boxB.bottom) - maxOf(boxA.top, boxB.top))
+        val overlapX = maxOf(0f, minOf(boxA.right, boxB.right) - maxOf(boxA.left, boxB.left))
+
+        val heightA = boxA.bottom - boxA.top
+        val heightB = boxB.bottom - boxB.top
+        val widthA = boxA.right - boxA.left
+        val widthB = boxB.right - boxB.left
+
+        // 2. Считаем, какую долю высоты/ширины занимает перекрытие для меньшего из боксов
+        val minHeight = minOf(heightA, heightB)
+        val minWidth = minOf(widthA, widthB)
+
+        val verticalRatio = if (minHeight > 0f) overlapY / minHeight else 0f
+        val horizontalRatio = if (minWidth > 0f) overlapX / minWidth else 0f
+
+        // Порог строгости совпадения осей (85% и выше)
+        val axisThreshold = 0.85f
+
+        // СЛУЧАЙ 1: Вертикальные границы (верх/низ) почти идеально совпадают (как в вашей проблеме),
+        // и при этом боксы имеют хоть какое-то физическое пересечение по горизонтали
+        if (verticalRatio > axisThreshold && overlapX > 0f) {
+            return true
+        }
+
+        // СЛУЧАЙ 2: Горизонтальные границы (лево/право) почти идеально совпадают,
+        // и есть пересечение по вертикали (для объектов, разрезанных горизонтальным стыком тайлов)
+        if (horizontalRatio > axisThreshold && overlapY > 0f) {
+            return true
+        }
+
+        return false
+    }
+
     private fun mergeDetectionsByUnion(detections: List<DetectionResult>): DetectionResult {
         var minLeft = Float.MAX_VALUE
         var minTop = Float.MAX_VALUE
         var maxRight = Float.MIN_VALUE
         var maxBottom = Float.MIN_VALUE
-
         var maxConfidence = 0f
 
         for (d in detections) {
             val box = d.boundingBox
-
-            // Ищем самые крайние внешние точки среди всех дубликатов
             if (box.left < minLeft) minLeft = box.left
             if (box.top < minTop) minTop = box.top
             if (box.right > maxRight) maxRight = box.right
             if (box.bottom > maxBottom) maxBottom = box.bottom
-
-            // Сохраняем максимальную уверенность
-            if (d.confidence > maxConfidence) {
-                maxConfidence = d.confidence
-            }
+            if (d.confidence > maxConfidence) maxConfidence = d.confidence
         }
 
-        val unionBox = RectF(minLeft, minTop, maxRight, maxBottom)
-
         return DetectionResult(
-            boundingBox = unionBox,
+            boundingBox = RectF(minLeft, minTop, maxRight, maxBottom),
             confidence = maxConfidence,
             classId = detections.first().classId
         )
     }
 
-    // Расчет IoM (Intersection over Minimum) — необходим для склейки кусков на краях
     private fun calculateIoM(boxA: RectF, boxB: RectF): Float {
         val intersectionX1 = maxOf(boxA.left, boxB.left)
         val intersectionY1 = maxOf(boxA.top, boxB.top)
@@ -654,6 +681,7 @@ class OnnxObjectDetector(private val context: Context) {
 
         return intersectionArea / minOf(areaA, areaB)
     }
+
 
     private fun calculateIoU(box1: RectF, box2: RectF): Float {
         val intersectionLeft = maxOf(box1.left, box2.left)
