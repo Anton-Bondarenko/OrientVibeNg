@@ -237,8 +237,26 @@ open class CustomImageView(context: Context) : View(context) {
             }
 
             override fun onScale(detector: ScaleGestureDetector): Boolean {
+                val sWidth = bitmap?.width?.toFloat() ?: 0f
+                val sHeight = bitmap?.height?.toFloat() ?: 0f
+                if (sWidth <= 0 || sHeight <= 0) return false
+
+                val oldScale = mapScale
                 mapScale *= detector.scaleFactor
                 mapScale = mapScale.coerceIn(scaleMin, scaleMax)
+
+                // 1. ПРАВИЛЬНЫЙ ПЕРЕВОД: Из экранных координат фокуса в координаты картинки (Source)
+                // Формула: screenX = (sourceX * oldScale) + (width / 2f) + mapPanX
+                // Отсюда выражаем sourceX:
+                val focusSrcX = (detector.focusX - width / 2f - mapPanX) / oldScale
+                val focusSrcY = (detector.focusY - height / 2f - mapPanY) / oldScale
+
+                // 2. ИСПРАВЛЕННОЕ СМЕЩЕНИЕ: Чтобы точка под пальцами осталась на том же месте экрана,
+                // новое смещение должно компенсировать изменение масштаба для этой точки:
+                // Изменение расстояния от центра картинки до фокуса * разница масштабов
+                mapPanX -= focusSrcX * (mapScale - oldScale)
+                mapPanY -= focusSrcY * (mapScale - oldScale)
+
                 invalidate()
                 return true
             }
