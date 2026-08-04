@@ -23,6 +23,22 @@ open class CustomImageView(context: Context) : View(context) {
         set(value) {
             if (field != null && !field!!.isRecycled) field!!.recycle()
             field = value
+
+            // Сброс состояния при загрузке нового изображения карты
+            mapScale = 1f
+            currentRotation = 0f
+            mapPanX = 0f
+            mapPanY = 0f
+            routeOverlay.startPoint = null
+            routeOverlay.finishPoint = null
+            routeOverlay.tapListener = null
+            routeOverlay.dragListener = null
+            controlPointOverlay.controlsboundingBoxes = emptyList()
+            controlPointOverlay.numbersBoundingBoxes = emptyList()
+            trackOverlay.trackPoints = emptyList()
+            trackOverlay.calibration = null
+            trackOverlay.currentFix = null
+
             invalidate()
         }
 

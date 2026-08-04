@@ -7,14 +7,18 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.sqrt
 
 /**
  * Constants shared between MapDetector and MapViewModel (snap-to-point threshold, OCR ROI expansion, etc.).
  */
 const val CONTROL_POINT_SNAP_THRESHOLD = 0.03f
-const val DIGIT_ROI_EXPANSION_FACTOR = 1.5f
+const val DIGIT_ROI_EXPANSION_FACTOR = 1.1f
 const val NUMBER_CORRELATION_THRESHOLD_MULT = 1.5f
+const val MIN_ROI_WIDTH = 100
+const val MIN_ROI_HEIGHT = 100
+const val DIG_CONFIDENCE = 0.5f
 
 /** Result of the full detection pipeline (YOLO + OCR + correlation). */
 data class MapDetectionResult(
@@ -171,7 +175,7 @@ class MapDetector(private val context: Context) {
                 continue
             }
 
-            val roiBitmap = Bitmap.createBitmap(bitmap, roiX1, roiY1, roiX2 - roiX1, roiY2 - roiY1) ?: run {
+            val roiBitmap = Bitmap.createBitmap(bitmap, roiX1, roiY1, max(roiX2 - roiX1, MIN_ROI_WIDTH), max(roiY2 - roiY1, MIN_ROI_HEIGHT)) ?: run {
                 results.add(makeEmptyBox(numberBox))
                 continue
             }
@@ -183,7 +187,7 @@ class MapDetector(private val context: Context) {
                 // Filter valid digits (classId 0-9) and convert ROI coords → original image coords
                 val validDigits = mutableListOf<Pair<BoundingBox, Int>>()
                 for (dr in digitDetections) {
-                    if (dr.confidence < 0.5f || dr.classId !in 0..9) continue
+                    if (dr.confidence < DIG_CONFIDENCE || dr.classId !in 0..9) continue
 
                     val scaleX = bitmap.width.toFloat() / roiBitmap.width.toFloat()
                     val scaleY = bitmap.height.toFloat() / roiBitmap.height.toFloat()

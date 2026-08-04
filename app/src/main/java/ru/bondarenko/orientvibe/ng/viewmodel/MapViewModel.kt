@@ -69,6 +69,9 @@ class MapViewModel(
 
     fun loadImageFromUri(uri: Uri) {
         viewModelScope.launch {
+            // Сброс всех данных старой карты перед загрузкой новой
+            _mapState.value = MapState()
+
             _mapState.value = _mapState.value.copy(
                 imageUri = uri,
                 isProcessing = true,
