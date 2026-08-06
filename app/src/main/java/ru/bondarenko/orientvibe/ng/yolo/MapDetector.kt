@@ -16,8 +16,8 @@ import kotlin.math.sqrt
 const val CONTROL_POINT_SNAP_THRESHOLD = 0.03f
 const val DIGIT_ROI_EXPANSION_FACTOR = 1.1f
 const val NUMBER_CORRELATION_THRESHOLD_MULT = 1.5f
-const val MIN_ROI_WIDTH = 100
-const val MIN_ROI_HEIGHT = 100
+const val MIN_ROI_WIDTH = 200
+const val MIN_ROI_HEIGHT = 200
 const val DIG_CONFIDENCE = 0.5f
 
 /** Result of the full detection pipeline (YOLO + OCR + correlation). */

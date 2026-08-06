@@ -20,8 +20,16 @@ import ru.bondarenko.orientvibe.ng.model.RoutePoint
 import ru.bondarenko.orientvibe.ng.yolo.MapDetectionProgressListener
 import ru.bondarenko.orientvibe.ng.yolo.MapDetector
 import ru.bondarenko.orientvibe.ng.yolo.CONTROL_POINT_SNAP_THRESHOLD
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.util.Log
-import java.io.InputStream
+
+/** Поворачивает bitmap на заданный угол. */
+private fun Bitmap.rotateBitmap(degrees: Float): Bitmap {
+    val matrix = Matrix()
+    matrix.postRotate(degrees)
+    return Bitmap.createBitmap(this, 0, 0, width, height, matrix, true)
+}
 
 /**
  * ViewModel for map image loading, detection results, and route management.
@@ -69,41 +77,85 @@ class MapViewModel(
 
     fun loadImageFromUri(uri: Uri) {
         viewModelScope.launch {
-            // Сброс всех данных старой карты перед загрузкой новой
+            val bitmap = withContext(Dispatchers.IO) {
+                // Читаем EXIF orientation до декодирования чтобы повернуть правильно
+                val inputStream1 = context.contentResolver.openInputStream(uri)
+                    ?: throw Exception("Unable to open image")
+                val exif = ExifInterface(inputStream1)
+
+                val inputStream2 = context.contentResolver.openInputStream(uri)
+                    ?: throw Exception("Unable to re-open image")
+                val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+
+                try {
+                    val bm = BitmapFactory.decodeStream(inputStream2)
+                        ?: throw Exception("Bitmap decode failed")
+
+                    // Применяем коррекцию ориентации если нужно
+                    when (orientation) {
+                        ExifInterface.ORIENTATION_ROTATE_90,
+                        ExifInterface.ORIENTATION_TRANSPOSE -> bm.rotateBitmap(90f)
+                        ExifInterface.ORIENTATION_ROTATE_180,
+                        ExifInterface.ORIENTATION_FLIP_VERTICAL -> bm.rotateBitmap(180f)
+                        ExifInterface.ORIENTATION_ROTATE_270,
+                        ExifInterface.ORIENTATION_TRANSVERSE -> bm.rotateBitmap(270f)
+                        else -> bm
+                    }
+                } finally {
+                    inputStream2.close()
+                }
+            }
+
+            loadImageFromBitmap(bitmap)
+        }
+    }
+
+    /** Загрузка Bitmap напрямую (для TakePicturePreview — без FileProvider). */
+    fun loadImageFromBitmap(bitmap: android.graphics.Bitmap, imageUri: Uri? = null) {
+        var displayBitmap = bitmap.copy(bitmap.config ?: android.graphics.Bitmap.Config.ARGB_8888, false)
+
+        // Корректируем ориентацию если передан URI с EXIF metadata
+        if (imageUri != null) {
+            try {
+                val inputStream = context.contentResolver.openInputStream(imageUri)
+                    ?: throw Exception("Cannot open URI for EXIF read")
+                val exif = ExifInterface(inputStream)
+                val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+
+                when (orientation) {
+                    ExifInterface.ORIENTATION_ROTATE_90,
+                    ExifInterface.ORIENTATION_TRANSPOSE -> displayBitmap = displayBitmap.rotateBitmap(90f)
+                    ExifInterface.ORIENTATION_ROTATE_180,
+                    ExifInterface.ORIENTATION_FLIP_VERTICAL -> displayBitmap = displayBitmap.rotateBitmap(180f)
+                    ExifInterface.ORIENTATION_ROTATE_270,
+                    ExifInterface.ORIENTATION_TRANSVERSE -> displayBitmap = displayBitmap.rotateBitmap(270f)
+                    else -> { /* Ориентация корректная */ }
+                }
+                inputStream.close()
+            } catch (e: Exception) {
+                Log.w("MapViewModel", "Failed to read EXIF for orientation correction", e)
+            }
+        }
+
+        viewModelScope.launch {
             _mapState.value = MapState()
 
             _mapState.value = _mapState.value.copy(
-                imageUri = uri,
+                bitmap = displayBitmap,
                 isProcessing = true,
-                errorMessage = null
+                progressMessage = "Запуск детекции..."
             )
 
-            try {
-                val bitmap = withContext(Dispatchers.IO) {
-                    val inputStream: InputStream = context.contentResolver.openInputStream(uri)
-                        ?: throw Exception("Unable to open image")
-                    try {
-                        BitmapFactory.decodeStream(inputStream)
-                    } finally {
-                        inputStream.close()
-                    }
-                }
-
-                _mapState.value = _mapState.value.copy(bitmap = bitmap)
-
-                val result = mapDetector.detect(bitmap)
-                _mapState.value = _mapState.value.copy(
-                    controlsBoundingBoxes = result.controlsBoundingBoxes,
-                    numbersBoundingBoxes = result.numbersBoundingBoxes,
-                    isProcessing = false
-                )
-            } catch (e: Exception) {
-                Log.e("MapViewModel", "Failed to load image", e)
-                _mapState.value = _mapState.value.copy(
-                    isProcessing = false,
-                    errorMessage = "Failed to load image: ${e.message}"
-                )
+            val result = withContext(Dispatchers.IO) {
+                mapDetector.detect(displayBitmap)
             }
+
+            _mapState.value = _mapState.value.copy(
+                controlsBoundingBoxes = result.controlsBoundingBoxes,
+                numbersBoundingBoxes = result.numbersBoundingBoxes,
+                isProcessing = false,
+                progressMessage = null
+            )
         }
     }
 

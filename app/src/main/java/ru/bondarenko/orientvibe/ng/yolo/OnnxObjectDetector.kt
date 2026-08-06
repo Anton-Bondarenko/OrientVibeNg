@@ -40,8 +40,8 @@ class OnnxObjectDetector(private val context: Context) {
     private val tag = "OnnxObjectDetector"
     private var ortSession: OrtSession? = null
     private val ortEnvironment = OrtEnvironment.getEnvironment()
-    private val inputImageWidth = 640
-    private val inputImageHeight = 640
+    private var inputImageWidth = 640
+    private var inputImageHeight = 640
     private val labels = listOf("control_point")
 
     fun loadModel(modelPath: String): Boolean {
@@ -54,6 +54,16 @@ class OnnxObjectDetector(private val context: Context) {
                 setExecutionMode(OrtSession.SessionOptions.ExecutionMode.SEQUENTIAL)
             }
             ortSession = ortEnvironment.createSession(tempFile.absolutePath, sessionOptions)
+
+            // Читаем входной размер из модели (например 640 или 320)
+            val inputShape = try {
+                (ortSession?.inputInfo?.values?.first()?.info as? ai.onnxruntime.TensorInfo)?.shape
+            } catch (e: Exception) {
+                null
+            }
+            inputImageWidth = (inputShape?.getOrNull(3) ?: 640).toInt()
+            inputImageHeight = (inputShape?.getOrNull(2) ?: 640).toInt()
+            Log.d(tag, "Model input size: ${inputImageWidth}x${inputImageHeight}")
 
             // Clean up temp file
             tempFile.delete()
@@ -113,8 +123,8 @@ class OnnxObjectDetector(private val context: Context) {
 
         Log.d(tag, "Sliced inference: Original image ${originalWidth}x${originalHeight}")
 
-        // Slicing parameters
-        val sliceSize = 640
+        // Slicing parameters — совпадают с входным размером модели (640 или 320)
+        val sliceSize = inputImageWidth
         val overlapRatio = 0.2f
         val overlap = (sliceSize * overlapRatio).toInt()
         val step = sliceSize - overlap
@@ -273,10 +283,9 @@ class OnnxObjectDetector(private val context: Context) {
 
                     is Array<*> -> {
                         Log.d(tag, "Output is array type: ${outputValue.javaClass}")
-                        // [[[F structure: Array<Array<FloatArray>>
-                        // Shape: [1, 6, 8400] where 6 = 4 bbox + 2 classes, 8400 = detections
-                        // We need to flatten as: [det0_val0, det0_val1, ..., det0_val5, det1_val0, ...]
-                        // This means: iterate over values (6), then detections (8400)
+                        // [[[F structure: Array<Array<FloatArray>> — shape читается динамически из модели
+                        // [1, numValues, numDetections] где numValues=4_bbox+classes, numDetections зависит от imgsz (640→8400, 320→2100)
+                        // Мы flatten'им как: [det0_val0, det0_val1, ..., det0_valN, det1_val0, ...]
                         val outputShape = try {
                             (ortSession?.outputInfo?.values?.first()?.info as? ai.onnxruntime.TensorInfo)?.shape
                         } catch (e: Exception) {
@@ -443,8 +452,8 @@ class OnnxObjectDetector(private val context: Context) {
         val results = mutableListOf<DetectionResult>()
         val confidenceThreshold = 0.5f
 
-        // YOLOv8 output format: [1, 84, 8400] where 84 = 4 (bbox) + 80 (classes) for COCO
-        // For custom model with 2 classes: [1, 6, 8400] where 6 = 4 (bbox) + 2 (classes: control_point, number)
+        // YOLOv8 output format: [1, numValues, numDetections]
+        // numValues = 4(bbox) + классы, numDetections зависит от imgsz: 640→8400, 320→2100
 
         // Get output shape from session
         val outputShape = try {

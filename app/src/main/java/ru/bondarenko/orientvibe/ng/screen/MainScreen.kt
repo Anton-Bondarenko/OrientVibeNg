@@ -1,8 +1,5 @@
 package ru.bondarenko.orientvibe.ng.screen
 
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,7 +33,9 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.core.content.FileProvider
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import ru.bondarenko.orientvibe.ng.camera.rememberCameraSource
 import androidx.lifecycle.viewmodel.compose.viewModel
 import ru.bondarenko.orientvibe.ng.gps.GpsFix
 import ru.bondarenko.orientvibe.ng.gps.NavViewModel
@@ -50,7 +49,6 @@ import ru.bondarenko.orientvibe.ng.ui.components.SubsamplingMapView
 import ru.bondarenko.orientvibe.ng.ui.components.TopInfoPanel
 import ru.bondarenko.orientvibe.ng.viewmodel.MapViewModel
 import ru.bondarenko.orientvibe.ng.model.PlacingMode
-import java.io.File
 
 // Минимальная точность GPS для привязки к карте (30 метров)
 private const val GPS_ACCURACY_LOW_THRESHOLD = 30f
@@ -200,7 +198,6 @@ fun MainScreen(
     viewModel: MapViewModel = viewModel(),
     navViewModel: NavViewModel = viewModel(factory = NavViewModel.Factory(LocalContext.current))
 ) {
-    val context = LocalContext.current
     val mapState by viewModel.mapState.collectAsState()
     val gpsState by navViewModel.gpsState.collectAsState()
 
@@ -257,36 +254,21 @@ fun MainScreen(
             }
         }
 
-    // Gallery picker
-    val galleryLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let {
-            viewModel.loadImageFromUri(it)
+    // Камера и галерея — инкапсулированы в CameraSource
+    val camera = rememberCameraSource(
+        context = LocalContext.current,
+        onImageCaptured = { imageCapture ->
+            viewModel.loadImageFromBitmap(imageCapture.bitmap, imageCapture.imageUri)
+            infoMessage = "Фото сделано"
+            isInfoVisible = true
+        },
+        onImageSelected = { uri ->
+            viewModel.loadImageFromUri(uri)
             infoMessage = "Загрузка изображения..."
             isInfoVisible = true
         }
-    }
+    )
 
-    // Camera URI
-    val photoFile = remember {
-        File(context.cacheDir, "temp_photo_${System.currentTimeMillis()}.jpg")
-    }
-    val cameraUri = remember {
-        FileProvider.getUriForFile(context, "${context.packageName}.provider", photoFile)
-    }
-
-    // Camera launcher
-    val cameraLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicture()
-    ) { success ->
-        if (success) {
-            viewModel.loadImageFromUri(cameraUri)
-            photoFile.delete()  // S5: очистка временного фото-файла
-            infoMessage = "Фото сделано"
-            isInfoVisible = true
-        }
-    }
     LaunchedEffect(mapState.startPoint, mapState.finishPoint, mapState.northAngle, mapState.bitmap) {
         viewModel.updateAzimuth()
     }
@@ -497,7 +479,7 @@ fun MainScreen(
                         onClick = {
                             infoMessage = "Запуск камеры..."
                             isInfoVisible = true
-                            cameraLauncher.launch(cameraUri)
+                            camera.launchCamera()
                         }
                     ),
                     PanelButton(
@@ -507,7 +489,7 @@ fun MainScreen(
                         onClick = {
                             infoMessage = "Открытие галереи..."
                             isInfoVisible = true
-                            galleryLauncher.launch("image/*")
+                            camera.launchGallery()
                         }
                     )
                 )
@@ -688,14 +670,14 @@ fun MainScreen(
                 MapDisplayArea(
                     mapImageUri = mapState.imageUri?.toString(),
                     onCameraClick = {
-                        infoMessage = "Запуск камеры..."
+                        infoMessage = "Запрос разрешения камеры..."
                         isInfoVisible = true
-                        cameraLauncher.launch(cameraUri)
+                        camera.launchCamera()
                     },
                     onGalleryClick = {
                         infoMessage = "Открытие галереи..."
                         isInfoVisible = true
-                        galleryLauncher.launch("image/*")
+                        camera.launchGallery()
                     },
                     modifier = Modifier
                         .fillMaxSize()
