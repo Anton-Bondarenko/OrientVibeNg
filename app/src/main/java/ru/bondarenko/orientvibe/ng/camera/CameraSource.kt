@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import java.io.File
@@ -36,7 +37,9 @@ fun rememberCameraSource(
     onImageSelected: (Uri) -> Unit,
 ): CameraSource {
     // Храним пару: сам файл и его валидный Content URI для FileProvider
-    var pendingCapture by remember { mutableStateOf<Pair<File, Uri>?>(null) }
+
+// 1. Используем rememberSaveable и храним только абсолютный путь к файлу в виде String
+    var pendingFilePath by rememberSaveable { mutableStateOf<String?>(null) }
 
     fun prepareCaptureTarget(): Uri {
         val tempFile = File(context.cacheDir, "camera_fullres_${System.currentTimeMillis()}.jpg")
@@ -45,7 +48,8 @@ fun rememberCameraSource(
             "${context.packageName}.provider",
             tempFile
         )
-        pendingCapture = Pair(tempFile, contentUri)
+        // Сохраняем строку пути — она гарантированно выживет при повороте экрана
+        pendingFilePath = tempFile.absolutePath
         return contentUri
     }
 
@@ -53,12 +57,20 @@ fun rememberCameraSource(
     val cameraLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.TakePicture()
     ) { success ->
-        val captureData = pendingCapture
-        if (success && captureData != null) {
-            val (file, contentUri) = captureData
+        // Восстанавливаем путь, который выжил после пересоздания Activity
+        val localPath = pendingFilePath
+        if (success && localPath != null) {
+            val file = File(localPath)
             if (file.exists()) {
+                // Воссоздаем Content URI из сохраненного файла
+                val contentUri = FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.provider",
+                    file
+                )
+
                 try {
-                    // ИСПРАВЛЕНИЕ 1 и 2: Читаем EXIF через правильный contentUri и автоматически закрываем поток через .use
+                    // Читаем EXIF через воссозданный contentUri
                     val orientation = context.contentResolver.openInputStream(contentUri).use { inputStream ->
                         if (inputStream != null) {
                             val exif = ExifInterface(inputStream)
@@ -68,35 +80,33 @@ fun rememberCameraSource(
                         }
                     }
 
-                    // ИСПРАВЛЕНИЕ 3: Декодируем bitmap, также безопасно закрывая поток
+                    // Декодируем bitmap
                     val bitmap = context.contentResolver.openInputStream(contentUri).use { inputStream ->
                         if (inputStream != null) {
                             BitmapFactory.decodeStream(inputStream)
                         } else null
                     } ?: throw Exception("Bitmap decode failed")
 
-                    // Корректируем поворот на основе EXIF
-                    val correctedBitmap = when (orientation) {
-                        ExifInterface.ORIENTATION_ROTATE_90 -> bitmap.rotateBitmap(90f, flipHorizontal = false)
-                        ExifInterface.ORIENTATION_ROTATE_180 -> bitmap.rotateBitmap(180f, flipHorizontal = false)
-                        ExifInterface.ORIENTATION_ROTATE_270 -> bitmap.rotateBitmap(270f, flipHorizontal = false)
+                    // Корректируем поворот
+//                    val correctedBitmap = when (orientation) {
+//                        ExifInterface.ORIENTATION_ROTATE_90 -> bitmap.rotateBitmap(0f, flipHorizontal = false)
+//                        ExifInterface.ORIENTATION_NORMAL -> bitmap.rotateBitmap(90f, flipHorizontal = false)
+//                        ExifInterface.ORIENTATION_ROTATE_180 -> bitmap.rotateBitmap(180f, flipHorizontal = false)
+//                        ExifInterface.ORIENTATION_ROTATE_270 -> bitmap.rotateBitmap(270f, flipHorizontal = false)
+//                        ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> bitmap.rotateBitmap(0f, flipHorizontal = true)
+//                        ExifInterface.ORIENTATION_TRANSPOSE -> bitmap.rotateBitmap(90f, flipHorizontal = true)
+//                        ExifInterface.ORIENTATION_FLIP_VERTICAL -> bitmap.rotateBitmap(180f, flipHorizontal = true)
+//                        ExifInterface.ORIENTATION_TRANSVERSE -> bitmap.rotateBitmap(270f, flipHorizontal = true)
+//                        else -> bitmap
+//                    }
 
-                        // Обработка редких случаев зеркалирования (фронтальная камера)
-                        ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> bitmap.rotateBitmap(0f, flipHorizontal = true)
-                        ExifInterface.ORIENTATION_TRANSPOSE -> bitmap.rotateBitmap(90f, flipHorizontal = true)
-                        ExifInterface.ORIENTATION_FLIP_VERTICAL -> bitmap.rotateBitmap(180f, flipHorizontal = true)
-                        ExifInterface.ORIENTATION_TRANSVERSE -> bitmap.rotateBitmap(270f, flipHorizontal = true)
-                        else -> bitmap
-                    }
-
-                    // Передаем правильный contentUri, а не file://
-                    onImageCaptured(ImageCapture(correctedBitmap, contentUri))
+                    onImageCaptured(ImageCapture(bitmap, contentUri))
 
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
             }
-            pendingCapture = null
+            pendingFilePath = null // Очищаем состояние
         }
     }
 

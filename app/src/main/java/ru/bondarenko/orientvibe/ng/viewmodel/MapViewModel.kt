@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -52,6 +53,7 @@ class MapViewModel(
     val mapState: StateFlow<MapState> = _mapState.asStateFlow()
 
     private val mapDetector = MapDetector(context).also { it.setProgressListener(this) }
+    private var detectJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -137,18 +139,24 @@ class MapViewModel(
             }
         }
 
-        viewModelScope.launch {
-            _mapState.value = MapState()
+        // Отменяем предыдущую детекцию, если она ещё идёт
+        detectJob?.cancel()
 
-            _mapState.value = _mapState.value.copy(
-                bitmap = displayBitmap,
-                isProcessing = true,
-                progressMessage = "Запуск детекции..."
-            )
+        _mapState.value = MapState()
 
+        _mapState.value = _mapState.value.copy(
+            bitmap = displayBitmap,
+            isProcessing = true,
+            progressMessage = "Запуск детекции..."
+        )
+
+        detectJob = viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 mapDetector.detect(displayBitmap)
             }
+
+            // Если за время детекции загрузили новое фото — не применяем старый результат
+            if (detectJob?.isCancelled == true) return@launch
 
             _mapState.value = _mapState.value.copy(
                 controlsBoundingBoxes = result.controlsBoundingBoxes,
