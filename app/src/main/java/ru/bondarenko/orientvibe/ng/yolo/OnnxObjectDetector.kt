@@ -11,6 +11,9 @@ import android.graphics.RectF
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
@@ -90,7 +93,7 @@ class OnnxObjectDetector(private val context: Context) {
         return tempFile
     }
 
-    fun detect(bitmap: Bitmap): List<DetectionResult> {
+    suspend fun detect(bitmap: Bitmap): List<DetectionResult> {
         val session = this.ortSession ?: run {
             Log.e(tag, "ONNX session not initialized")
             return emptyList()
@@ -107,12 +110,15 @@ class OnnxObjectDetector(private val context: Context) {
             // Use sliced inference for better detection on high-resolution images
             detectWithSlicing(source, session)
         } catch (e: Exception) {
+            if (e is CancellationException) {
+                throw e
+            }
             Log.e(tag, "Error during detection", e)
             emptyList()
         }
     }
 
-    private fun detectWithSlicing(original: Bitmap, session: OrtSession): List<DetectionResult> {
+    private suspend fun detectWithSlicing(original: Bitmap, session: OrtSession): List<DetectionResult> {
         if (original.isRecycled) {
             Log.w(tag, "Skipping sliced inference: recycled bitmap")
             return emptyList()
@@ -149,6 +155,11 @@ class OnnxObjectDetector(private val context: Context) {
         // Process each slice
         for (y in 0 until numSlicesY) {
             for (x in 0 until numSlicesX) {
+                // ТОЧКА ОТМЕНЫ 1: Проверяем перед обработкой каждого тайла.
+                // Если задача отменена через shared AtomicReference в MapDetector, этот метод выбросит CancellationException,
+                // выполнение цикла прекратится, а блок catch/finally утилизирует 'source' bitmap.
+                currentCoroutineContext().ensureActive()
+
                 val maxStartX = (originalWidth - sliceSize).coerceAtLeast(0)
                 val maxStartY = (originalHeight - sliceSize).coerceAtLeast(0)
                 val sliceX1 = (x * step).coerceAtMost(maxStartX)
@@ -214,7 +225,7 @@ class OnnxObjectDetector(private val context: Context) {
         return finalDetections
     }
 
-    private fun detectSingleImage(bitmap: Bitmap, session: OrtSession): List<DetectionResult> {
+    private suspend fun detectSingleImage(bitmap: Bitmap, session: OrtSession): List<DetectionResult> {
         return try {
             // Preprocess image
             val inputBuffer = preprocessImage(bitmap)
@@ -321,6 +332,7 @@ class OnnxObjectDetector(private val context: Context) {
                                 // Iterate over detections first (8400), then values (6)
                                 for (detIdx in 0 until detectionSize) {
                                     for (valIdx in 0 until valuesArray.size) {
+                                        currentCoroutineContext().ensureActive()
                                         if (index < expectedSize) {
                                             byteBuffer.putFloat(
                                                 index * 4,
@@ -358,6 +370,9 @@ class OnnxObjectDetector(private val context: Context) {
 
             results
         } catch (e: Exception) {
+            if (e is CancellationException) {
+                throw e
+            }
             Log.e(tag, "Error during single image detection", e)
             emptyList()
         }

@@ -2,28 +2,26 @@ package ru.bondarenko.orientvibe.ng.viewmodel
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.model.MapState
 import ru.bondarenko.orientvibe.ng.model.PlacingMode
 import ru.bondarenko.orientvibe.ng.model.RoutePoint
+import ru.bondarenko.orientvibe.ng.yolo.CONTROL_POINT_SNAP_THRESHOLD
 import ru.bondarenko.orientvibe.ng.yolo.MapDetectionProgressListener
 import ru.bondarenko.orientvibe.ng.yolo.MapDetector
-import ru.bondarenko.orientvibe.ng.yolo.CONTROL_POINT_SNAP_THRESHOLD
-import android.graphics.Matrix
-import android.media.ExifInterface
-import android.util.Log
 
 /** Поворачивает bitmap на заданный угол. */
 private fun Bitmap.rotateBitmap(degrees: Float): Bitmap {
@@ -53,7 +51,18 @@ class MapViewModel(
     val mapState: StateFlow<MapState> = _mapState.asStateFlow()
 
     private val mapDetector = MapDetector(context).also { it.setProgressListener(this) }
-    private var detectJob: Job? = null
+
+    /** Экспонирует детектор для ImageLoader. */
+    val detector: MapDetector = mapDetector
+
+    fun updateDetectionResults(result: ru.bondarenko.orientvibe.ng.yolo.MapDetectionResult) {
+        _mapState.value = _mapState.value.copy(
+            controlsBoundingBoxes = result.controlsBoundingBoxes,
+            numbersBoundingBoxes = result.numbersBoundingBoxes,
+            isProcessing = false,
+            progressMessage = null
+        )
+    }
 
     init {
         viewModelScope.launch {
@@ -69,52 +78,33 @@ class MapViewModel(
     // ── Progress (from MapDetectionProgressListener) ───────────────────────
 
     override fun onProgressUpdate(current: Int, total: Int, message: String) {
-        _mapState.value = _mapState.value.copy(
-            progress = current.toFloat() / total.toFloat(),
-            progressMessage = message
-        )
+        viewModelScope.launch {
+            try {
+                // Check if any active task is still alive via the shared atomic reference.
+                val currentHandle = mapDetector.currentTaskRef.get()
+                if (currentHandle != null && !currentHandle.job.isCancelled) {
+                    currentHandle.job.ensureActive()
+                } else {
+                    return@launch  // No active task — progress update is stale
+                }
+
+                _mapState.value = _mapState.value.copy(
+                    progress = current.toFloat() / total.toFloat(),
+                    progressMessage = message
+                )
+            } catch (e: Exception) {
+                // Перехватываем отмену корутины, чтобы логика внутри MapDetector тоже прервалась
+                Log.d("MapViewModel", "Detection cancellation requested via progress update")
+            }
+        }
     }
 
     // ── Image loading + detection entry point ──────────────────────────────
 
-    fun loadImageFromUri(uri: Uri) {
-        viewModelScope.launch {
-            val bitmap = withContext(Dispatchers.IO) {
-                // Читаем EXIF orientation до декодирования чтобы повернуть правильно
-                val inputStream1 = context.contentResolver.openInputStream(uri)
-                    ?: throw Exception("Unable to open image")
-                val exif = ExifInterface(inputStream1)
-
-                val inputStream2 = context.contentResolver.openInputStream(uri)
-                    ?: throw Exception("Unable to re-open image")
-                val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
-
-                try {
-                    val bm = BitmapFactory.decodeStream(inputStream2)
-                        ?: throw Exception("Bitmap decode failed")
-
-                    // Применяем коррекцию ориентации если нужно
-                    when (orientation) {
-                        ExifInterface.ORIENTATION_ROTATE_90,
-                        ExifInterface.ORIENTATION_TRANSPOSE -> bm.rotateBitmap(90f)
-                        ExifInterface.ORIENTATION_ROTATE_180,
-                        ExifInterface.ORIENTATION_FLIP_VERTICAL -> bm.rotateBitmap(180f)
-                        ExifInterface.ORIENTATION_ROTATE_270,
-                        ExifInterface.ORIENTATION_TRANSVERSE -> bm.rotateBitmap(270f)
-                        else -> bm
-                    }
-                } finally {
-                    inputStream2.close()
-                }
-            }
-
-            loadImageFromBitmap(bitmap)
-        }
-    }
-
     /** Загрузка Bitmap напрямую (для TakePicturePreview — без FileProvider). */
     fun loadImageFromBitmap(bitmap: android.graphics.Bitmap, imageUri: Uri? = null) {
-        var displayBitmap = bitmap.copy(bitmap.config ?: android.graphics.Bitmap.Config.ARGB_8888, false)
+        var displayBitmap =
+            bitmap.copy(bitmap.config ?: android.graphics.Bitmap.Config.ARGB_8888, false)
 
         // Корректируем ориентацию если передан URI с EXIF metadata
         if (imageUri != null) {
@@ -122,25 +112,32 @@ class MapViewModel(
                 val inputStream = context.contentResolver.openInputStream(imageUri)
                     ?: throw Exception("Cannot open URI for EXIF read")
                 val exif = ExifInterface(inputStream)
-                val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+                val orientation = exif.getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL
+                )
 
                 when (orientation) {
                     ExifInterface.ORIENTATION_ROTATE_90,
-                    ExifInterface.ORIENTATION_TRANSPOSE -> displayBitmap = displayBitmap.rotateBitmap(90f)
+                    ExifInterface.ORIENTATION_TRANSPOSE -> displayBitmap =
+                        displayBitmap.rotateBitmap(90f)
+
                     ExifInterface.ORIENTATION_ROTATE_180,
-                    ExifInterface.ORIENTATION_FLIP_VERTICAL -> displayBitmap = displayBitmap.rotateBitmap(180f)
+                    ExifInterface.ORIENTATION_FLIP_VERTICAL -> displayBitmap =
+                        displayBitmap.rotateBitmap(180f)
+
                     ExifInterface.ORIENTATION_ROTATE_270,
-                    ExifInterface.ORIENTATION_TRANSVERSE -> displayBitmap = displayBitmap.rotateBitmap(270f)
-                    else -> { /* Ориентация корректная */ }
+                    ExifInterface.ORIENTATION_TRANSVERSE -> displayBitmap =
+                        displayBitmap.rotateBitmap(270f)
+
+                    else -> { /* Ориентация корректная */
+                    }
                 }
                 inputStream.close()
             } catch (e: Exception) {
                 Log.w("MapViewModel", "Failed to read EXIF for orientation correction", e)
             }
         }
-
-        // Отменяем предыдущую детекцию, если она ещё идёт
-        detectJob?.cancel()
 
         _mapState.value = MapState()
 
@@ -150,20 +147,25 @@ class MapViewModel(
             progressMessage = "Запуск детекции..."
         )
 
-        detectJob = viewModelScope.launch {
+        // Launch via shared atomic task mechanism — any caller cancelling the handle
+        // instantly kills detection launched by any other caller (they share one AtomicReference).
+        val task = mapDetector.launchDetection()
+
+        viewModelScope.launch(task.job) {
             val result = withContext(Dispatchers.IO) {
                 mapDetector.detect(displayBitmap)
             }
 
-            // Если за время детекции загрузили новое фото — не применяем старый результат
-            if (detectJob?.isCancelled == true) return@launch
-
-            _mapState.value = _mapState.value.copy(
-                controlsBoundingBoxes = result.controlsBoundingBoxes,
-                numbersBoundingBoxes = result.numbersBoundingBoxes,
-                isProcessing = false,
-                progressMessage = null
-            )
+            // Only apply results if this task is still the current one — prevents stale updates.
+            mapDetector.currentTaskRef.get()?.takeIf { it.version == task.version }?.let { current ->
+                current.job.ensureActive()  // throw if cancelled
+                _mapState.value = _mapState.value.copy(
+                    controlsBoundingBoxes = result.controlsBoundingBoxes,
+                    numbersBoundingBoxes = result.numbersBoundingBoxes,
+                    isProcessing = false,
+                    progressMessage = null
+                )
+            }
         }
     }
 
@@ -204,22 +206,26 @@ class MapViewModel(
                     placingMode = PlacingMode.NONE
                 )
             }
+
             PlacingMode.PLACING_FINISH -> {
                 _mapState.value = state.copy(
                     finishPoint = finalPoint,
                     placingMode = PlacingMode.NONE
                 )
             }
+
             else -> {}
         }
     }
 
     fun moveStartPoint(relativeX: Float, relativeY: Float) {
-        _mapState.value = _mapState.value.copy(startPoint = snapToControlPoint(relativeX, relativeY))
+        _mapState.value =
+            _mapState.value.copy(startPoint = snapToControlPoint(relativeX, relativeY))
     }
 
     fun moveFinishPoint(relativeX: Float, relativeY: Float) {
-        _mapState.value = _mapState.value.copy(finishPoint = snapToControlPoint(relativeX, relativeY))
+        _mapState.value =
+            _mapState.value.copy(finishPoint = snapToControlPoint(relativeX, relativeY))
     }
 
     // ── Map orientation ────────────────────────────────────────────────────

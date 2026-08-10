@@ -4,8 +4,12 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicReference
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sqrt
@@ -32,6 +36,15 @@ interface MapDetectionProgressListener {
 }
 
 /**
+ * Task handle shared between all detection callers (MapViewModel + ImageLoader).
+ * Cancelled via atomic reference — cancellation is instant and cross-scope.
+ */
+class DetectionTaskHandle(
+    val job: kotlinx.coroutines.Job,
+    val version: Int
+)
+
+/**
  * Encapsulates all YOLO/OCR detection logic for the orienteering map.
  *
  * Lifecycle:
@@ -49,6 +62,24 @@ class MapDetector(private val context: Context) {
     private val tag = "MapDetector"
     private var initialized = false
 
+    /** Shared atomic slot — every caller reads/writes through this single reference. */
+    private val _currentTask = AtomicReference<DetectionTaskHandle?>(null)
+
+    /** Monotonically increasing version for stale-result filtering (thread-safe). */
+    private var nextVersion = 0
+
+    /** Creates a new task handle (atomic). Cancels any previous task first. */
+    fun launchDetection(): DetectionTaskHandle {
+        val version = synchronized(this) { nextVersion++ }
+        val handle = DetectionTaskHandle(kotlinx.coroutines.Job(), version)
+        val prev = _currentTask.getAndSet(handle)
+        prev?.job?.cancel()
+        return handle
+    }
+
+    /** Exposed for callers to read the current handle and verify version validity. */
+    val currentTaskRef: AtomicReference<DetectionTaskHandle?> = _currentTask
+
     fun setProgressListener(listener: MapDetectionProgressListener?) {
         progressListener = listener
     }
@@ -60,11 +91,13 @@ class MapDetector(private val context: Context) {
     suspend fun init(): Boolean = withContext(Dispatchers.IO) {
         // Load primary detection model
         val primaryOk = try {
-            val det = OnnxObjectDetector(context).also { it.setProgressListener(object : DetectionProgressListener {
-                override fun onProgressUpdate(current: Int, total: Int, message: String) {
-                    progressListener?.onProgressUpdate(current, total, message)
-                }
-            }) }
+            val det = OnnxObjectDetector(context).also {
+                it.setProgressListener(object : DetectionProgressListener {
+                    override fun onProgressUpdate(current: Int, total: Int, message: String) {
+                        progressListener?.onProgressUpdate(current, total, message)
+                    }
+                })
+            }
             det.loadModel("orientmapv8n.onnx").also { ok ->
                 if (ok) detector = det else Log.w(tag, "Failed to load orientmapv8n.onnx")
             }
@@ -77,7 +110,10 @@ class MapDetector(private val context: Context) {
         val digitsOk = try {
             val det = OnnxObjectDetector(context)
             det.loadModel("digitsv8n.onnx").also { ok ->
-                if (ok) detectorDigits = det else Log.w(tag, "Failed to load digitsv8n.onnx — digit recognition disabled")
+                if (ok) detectorDigits = det else Log.w(
+                    tag,
+                    "Failed to load digitsv8n.onnx — digit recognition disabled"
+                )
             }
         } catch (e: Exception) {
             Log.w(tag, "Failed to initialize digit detector: ${e.message}")
@@ -103,7 +139,7 @@ class MapDetector(private val context: Context) {
 
             // Split YOLO detections: classId 0 = control points, classId 1 = numbers
             val controlsBoxes = mutableListOf<BoundingBox>()
-            val numbersBoxes   = mutableListOf<BoundingBox>()
+            val numbersBoxes = mutableListOf<BoundingBox>()
 
             for (dr in allDetections) {
                 if (dr.classId < 0 || dr.classId > 9) continue
@@ -114,10 +150,13 @@ class MapDetector(private val context: Context) {
                 }
             }
 
+            // ТОЧКА ОТМЕНЫ 2: Перед запуском тяжелого OCR
+            currentCoroutineContext().ensureActive()
             // Digit OCR on each number box ROI
             val detectedNumbers = if (detectorDigits != null && numbersBoxes.isNotEmpty()) {
                 detectAndAssembleNumbers(bitmap, numbersBoxes)
-                    .takeIf { it.isNotEmpty() } ?: numbersBoxes  // fallback — original boxes when OCR fails
+                    .takeIf { it.isNotEmpty() }
+                    ?: numbersBoxes  // fallback — original boxes when OCR fails
             } else {
                 numbersBoxes  // OCR unavailable — show YOLO boxes without number
             }
@@ -125,9 +164,15 @@ class MapDetector(private val context: Context) {
             // Correlate numbers with control points by proximity
             val matchedControls = correlateNumbersWithControls(controlsBoxes, detectedNumbers)
 
-            Log.d(tag, "Detection: controls=${matchedControls.size}, numbers=${detectedNumbers.size}")
+            Log.d(
+                tag,
+                "Detection: controls=${matchedControls.size}, numbers=${detectedNumbers.size}"
+            )
             MapDetectionResult(matchedControls, numbersBoxes)
         } catch (e: Exception) {
+            if (e is CancellationException) {
+                throw e // Обязательно перебрасываем отмену корутины вверх!
+            }
             Log.e(tag, "Detection error", e)
             MapDetectionResult(emptyList(), emptyList())
         }
@@ -139,10 +184,10 @@ class MapDetector(private val context: Context) {
         bitmapWidth: Int,
         bitmapHeight: Int,
     ): BoundingBox {
-        val left   = dr.boundingBox.left / bitmapWidth
-        val top    = dr.boundingBox.top  / bitmapHeight
-        val width  = (dr.boundingBox.right - dr.boundingBox.left) / bitmapWidth.toFloat()
-        val height = (dr.boundingBox.bottom - dr.boundingBox.top)  / bitmapHeight.toFloat()
+        val left = dr.boundingBox.left / bitmapWidth
+        val top = dr.boundingBox.top / bitmapHeight
+        val width = (dr.boundingBox.right - dr.boundingBox.left) / bitmapWidth.toFloat()
+        val height = (dr.boundingBox.bottom - dr.boundingBox.top) / bitmapHeight.toFloat()
         return BoundingBox(
             centerX = left + width / 2f,
             centerY = top + height / 2f,
@@ -155,10 +200,17 @@ class MapDetector(private val context: Context) {
     }
 
     /** Recognises digits inside each number bounding box via OCR, returns boxes with assembled numbers. */
-    private suspend fun detectAndAssembleNumbers(bitmap: Bitmap, numbersBoxes: List<BoundingBox>): List<BoundingBox> {
+    private suspend fun detectAndAssembleNumbers(
+        bitmap: Bitmap,
+        numbersBoxes: List<BoundingBox>
+    ): List<BoundingBox> {
         val results = mutableListOf<BoundingBox>()
 
         for (numberBox in numbersBoxes) {
+            // ТОЧКА ОТМЕНЫ 3: Проверяем перед обработкой каждого отдельного номера
+            // Если корутина отменена, выполнение прервется, а блок try-finally гарантирует вызов roiBitmap.recycle()
+            currentCoroutineContext().ensureActive()
+
             val cxPx = numberBox.centerX * bitmap.width
             val cyPx = numberBox.centerY * bitmap.height
             val halfW = (numberBox.width * bitmap.width) / 2f
@@ -167,15 +219,25 @@ class MapDetector(private val context: Context) {
             // Expand ROI: ±150% from number bbox — digits live there
             val roiX1 = ((cxPx - halfW * DIGIT_ROI_EXPANSION_FACTOR).coerceAtLeast(0f)).toInt()
             val roiY1 = ((cyPx - halfH * DIGIT_ROI_EXPANSION_FACTOR).coerceAtLeast(0f)).toInt()
-            val roiX2 = (cxPx + halfW * DIGIT_ROI_EXPANSION_FACTOR).coerceAtMost(bitmap.width.toFloat()).toInt()
-            val roiY2 = (cyPx + halfH * DIGIT_ROI_EXPANSION_FACTOR).coerceAtMost(bitmap.height.toFloat()).toInt()
+            val roiX2 =
+                (cxPx + halfW * DIGIT_ROI_EXPANSION_FACTOR).coerceAtMost(bitmap.width.toFloat())
+                    .toInt()
+            val roiY2 =
+                (cyPx + halfH * DIGIT_ROI_EXPANSION_FACTOR).coerceAtMost(bitmap.height.toFloat())
+                    .toInt()
 
             if (roiX2 - roiX1 < 8 || roiY2 - roiY1 < 8) {
                 results.add(makeEmptyBox(numberBox))
                 continue
             }
 
-            val roiBitmap = Bitmap.createBitmap(bitmap, roiX1, roiY1, max(roiX2 - roiX1, MIN_ROI_WIDTH), max(roiY2 - roiY1, MIN_ROI_HEIGHT)) ?: run {
+            val roiBitmap = Bitmap.createBitmap(
+                bitmap,
+                roiX1,
+                roiY1,
+                max(roiX2 - roiX1, MIN_ROI_WIDTH),
+                max(roiY2 - roiY1, MIN_ROI_HEIGHT)
+            ) ?: run {
                 results.add(makeEmptyBox(numberBox))
                 continue
             }
@@ -193,11 +255,25 @@ class MapDetector(private val context: Context) {
                     val scaleY = bitmap.height.toFloat() / roiBitmap.height.toFloat()
 
                     val cx2 = (dr.boundingBox.left * scaleX + roiX1) / bitmap.width.toFloat()
-                    val cy2 = (dr.boundingBox.top  * scaleY + roiY1) / bitmap.height.toFloat()
-                    val bw2 = (dr.boundingBox.right - dr.boundingBox.left) * scaleX / bitmap.width.toFloat()
-                    val bh2 = (dr.boundingBox.bottom - dr.boundingBox.top)  * scaleY / bitmap.height.toFloat()
+                    val cy2 = (dr.boundingBox.top * scaleY + roiY1) / bitmap.height.toFloat()
+                    val bw2 =
+                        (dr.boundingBox.right - dr.boundingBox.left) * scaleX / bitmap.width.toFloat()
+                    val bh2 =
+                        (dr.boundingBox.bottom - dr.boundingBox.top) * scaleY / bitmap.height.toFloat()
 
-                    validDigits.add(Pair(BoundingBox(cx2, cy2, bw2, bh2, dr.confidence, "digit", null), dr.classId))
+                    validDigits.add(
+                        Pair(
+                            BoundingBox(
+                                cx2,
+                                cy2,
+                                bw2,
+                                bh2,
+                                dr.confidence,
+                                "digit",
+                                null
+                            ), dr.classId
+                        )
+                    )
                 }
 
                 if (validDigits.isEmpty()) {
@@ -240,7 +316,10 @@ class MapDetector(private val context: Context) {
     }
 
     /** Correlates detected numbers with control points by proximity within 1.5× number-box width. */
-    private fun correlateNumbersWithControls(controlsBoxes: List<BoundingBox>, detectedNumbers: List<BoundingBox>): List<BoundingBox> {
+    private fun correlateNumbersWithControls(
+        controlsBoxes: List<BoundingBox>,
+        detectedNumbers: List<BoundingBox>
+    ): List<BoundingBox> {
         if (detectedNumbers.isEmpty()) return controlsBoxes
 
         return controlsBoxes.mapNotNull { control ->

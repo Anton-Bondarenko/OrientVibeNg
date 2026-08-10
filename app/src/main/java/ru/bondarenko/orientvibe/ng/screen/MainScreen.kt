@@ -1,4 +1,4 @@
-package ru.bondarenko.orientvibe.ng.screen
+﻿package ru.bondarenko.orientvibe.ng.screen
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -22,12 +22,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
@@ -35,8 +38,11 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import ru.bondarenko.orientvibe.ng.camera.rememberCameraSource
+import ru.bondarenko.orientvibe.ng.image.rememberCameraSource
+import ru.bondarenko.orientvibe.ng.image.rememberGalleryPicker
+import ru.bondarenko.orientvibe.ng.image.ImageCapture
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.runtime.rememberCoroutineScope
 import ru.bondarenko.orientvibe.ng.gps.GpsFix
 import ru.bondarenko.orientvibe.ng.gps.NavViewModel
 import ru.bondarenko.orientvibe.ng.model.PanelButton
@@ -48,9 +54,10 @@ import ru.bondarenko.orientvibe.ng.ui.components.MapTapListener
 import ru.bondarenko.orientvibe.ng.ui.components.SubsamplingMapView
 import ru.bondarenko.orientvibe.ng.ui.components.TopInfoPanel
 import ru.bondarenko.orientvibe.ng.viewmodel.MapViewModel
+import ru.bondarenko.orientvibe.ng.image.ImageLoader
 import ru.bondarenko.orientvibe.ng.model.PlacingMode
 
-// Минимальная точность GPS для привязки к карте (30 метров)
+// РњРёРЅРёРјР°Р»СЊРЅР°СЏ С‚РѕС‡РЅРѕСЃС‚СЊ GPS РґР»СЏ РїСЂРёРІСЏР·РєРё Рє РєР°СЂС‚Рµ (30 РјРµС‚СЂРѕРІ)
 private const val GPS_ACCURACY_LOW_THRESHOLD = 30f
 
 // Equilateral triangle pointing up (orienteering start symbol)
@@ -78,7 +85,7 @@ private val StartIcon: ImageVector
         }
     }.build()
 
-// Target/crosshair icon for "Я здесь" (I am here)
+// Target/crosshair icon for "РЇ Р·РґРµСЃСЊ" (I am here)
 private val TargetIcon: ImageVector
     get() = ImageVector.Builder(
         name = "Target",
@@ -140,7 +147,7 @@ private val TargetIcon: ImageVector
         }
     }.build()
 
-// Double circle (orienteering finish symbol) — outlined style for lighter appearance
+// Double circle (orienteering finish symbol) вЂ” outlined style for lighter appearance
 private val FinishIcon: ImageVector
     get() = ImageVector.Builder(
         name = "Finish",
@@ -254,19 +261,51 @@ fun MainScreen(
             }
         }
 
-    // Камера и галерея — инкапсулированы в CameraSource
+    val imageLoader = ImageLoader(
+        context = LocalContext.current,
+        detector = viewModel.detector,
+    )
+
+    // Состояние выбранного из галереи URI — запускает загрузку через LaunchedEffect
+    var pendingGalleryUri by rememberSaveable { mutableStateOf<android.net.Uri?>(null) }
+    val localContext = LocalContext.current
+
+    // При появлении URI — загружаем в viewModel + запускаем детекцию
+    LaunchedEffect(pendingGalleryUri) {
+        val uri = pendingGalleryUri ?: return@LaunchedEffect
+        infoMessage = "Загрузка изображения..."
+        isInfoVisible = true
+
+        try {
+            // 1. Raw bitmap (без EXIF) — MapViewModel применит коррекцию
+            val rawBm = localContext.contentResolver.openInputStream(uri).use { stream ->
+                BitmapFactory.decodeStream(stream)
+                    ?: throw IllegalStateException("Bitmap decode failed")
+            }
+            viewModel.loadImageFromBitmap(rawBm, uri)
+
+            // 2. EXIF-повёрнутый bitmap для детекции
+            imageLoader.loadImageForGallery(uri, { /* уже обновлён MapState */ }) { result ->
+                viewModel.updateDetectionResults(result)
+            }
+        } catch (e: Exception) {
+            infoMessage = "Ошибка загрузки изображения"
+            isInfoVisible = true
+            e.printStackTrace()
+        } finally {
+            pendingGalleryUri = null
+        }
+    }
+
+    val galleryPicker = rememberGalleryPicker { uri -> pendingGalleryUri = uri }
+    // Камера — только камера, без галереи
     val camera = rememberCameraSource(
         context = LocalContext.current,
         onImageCaptured = { imageCapture ->
-            viewModel.loadImageFromBitmap(imageCapture.bitmap, imageCapture.imageUri)
             infoMessage = "Фото сделано"
             isInfoVisible = true
+            viewModel.loadImageFromBitmap(imageCapture.bitmap, imageCapture.uri)
         },
-        onImageSelected = { uri ->
-            viewModel.loadImageFromUri(uri)
-            infoMessage = "Загрузка изображения..."
-            isInfoVisible = true
-        }
     )
 
     LaunchedEffect(mapState.startPoint, mapState.finishPoint, mapState.northAngle, mapState.bitmap) {
@@ -489,7 +528,7 @@ fun MainScreen(
                         onClick = {
                             infoMessage = "Открытие галереи..."
                             isInfoVisible = true
-                            camera.launchGallery()
+                            galleryPicker()
                         }
                     )
                 )
@@ -677,7 +716,7 @@ fun MainScreen(
                     onGalleryClick = {
                         infoMessage = "Открытие галереи..."
                         isInfoVisible = true
-                        camera.launchGallery()
+                        galleryPicker()
                     },
                     modifier = Modifier
                         .fillMaxSize()
@@ -801,3 +840,4 @@ fun MainScreen(
         }
     }
 }
+
