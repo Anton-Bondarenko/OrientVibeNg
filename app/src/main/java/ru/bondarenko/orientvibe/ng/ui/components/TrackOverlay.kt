@@ -189,7 +189,7 @@ class TrackOverlay {
                     val northTest = GpsCoordinate(firstGps.latitude + 0.001, firstGps.longitude)
                     val northImg = gpsToImageAbs(northTest)
                     val northView = northImg?.let { sourceToViewCoord?.invoke(it.x, it.y) }
-                    val northVisualAngle = if (northView != null && firstView != null) {
+                    val northVisualAngle = if (northView != null) {
                         val ndx = northView.x - firstView.x
                         val ndy = northView.y - firstView.y
                         if (sqrt((ndx*ndx + ndy*ndy).toDouble()) > 5.0) {

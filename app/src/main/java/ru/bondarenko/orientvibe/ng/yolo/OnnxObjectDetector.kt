@@ -19,8 +19,9 @@ import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
-import kotlin.math.abs
 import kotlin.math.ceil
+import androidx.core.graphics.scale
+import androidx.core.graphics.createBitmap
 
 data class DetectionResult(
     val boundingBox: RectF,
@@ -118,7 +119,10 @@ class OnnxObjectDetector(private val context: Context) {
         }
     }
 
-    private suspend fun detectWithSlicing(original: Bitmap, session: OrtSession): List<DetectionResult> {
+    private suspend fun detectWithSlicing(
+        original: Bitmap,
+        session: OrtSession
+    ): List<DetectionResult> {
         if (original.isRecycled) {
             Log.w(tag, "Skipping sliced inference: recycled bitmap")
             return emptyList()
@@ -225,7 +229,10 @@ class OnnxObjectDetector(private val context: Context) {
         return finalDetections
     }
 
-    private suspend fun detectSingleImage(bitmap: Bitmap, session: OrtSession): List<DetectionResult> {
+    private suspend fun detectSingleImage(
+        bitmap: Bitmap,
+        session: OrtSession
+    ): List<DetectionResult> {
         return try {
             // Preprocess image
             val inputBuffer = preprocessImage(bitmap)
@@ -301,7 +308,11 @@ class OnnxObjectDetector(private val context: Context) {
                             (ortSession?.outputInfo?.values?.first()?.info as? ai.onnxruntime.TensorInfo)?.shape
                         } catch (e: Exception) {
                             Log.w(tag, "Could not get output shape from info, using default", e)
-                            longArrayOf(1, 14, 8400) // Default: [batch, 4_bbox + 10_classes, detections]
+                            longArrayOf(
+                                1,
+                                14,
+                                8400
+                            ) // Default: [batch, 4_bbox + 10_classes, detections]
                         }
                         val numValues = outputShape?.getOrNull(1)?.toInt() ?: 14
                         val numDetections = outputShape?.getOrNull(2)?.toInt() ?: 8400
@@ -320,6 +331,8 @@ class OnnxObjectDetector(private val context: Context) {
                         // We need: [det0_val0, det0_val1, ..., det0_val5, det1_val0, ...]
                         // So: for each detection (0..8399), for each value (0..5)
                         var index = 0
+
+                        @Suppress("UNCHECKED_CAST")
                         val batchArray = outputValue as Array<Array<FloatArray>>
                         Log.d(tag, "Batch array size: ${batchArray.size}")
                         if (batchArray.isNotEmpty()) {
@@ -390,11 +403,11 @@ class OnnxObjectDetector(private val context: Context) {
         val newHeight = (originalHeight * scale).toInt()
 
         // Resize with letterbox (preserve aspect ratio)
-        val resizedBitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+        val resizedBitmap = bitmap.scale(newWidth, newHeight)
 
         // Create letterbox bitmap with padding
         val letterboxBitmap =
-            Bitmap.createBitmap(inputImageWidth, inputImageHeight, Bitmap.Config.ARGB_8888)
+            createBitmap(inputImageWidth, inputImageHeight)
         val canvas = Canvas(letterboxBitmap)
         canvas.drawColor(Color.BLACK) // Padding color
         val offsetX = (inputImageWidth - newWidth) / 2
@@ -608,7 +621,8 @@ class OnnxObjectDetector(private val context: Context) {
                     val iom = calculateIoM(current.boundingBox, candidate.boundingBox)
 
                     // Проверяем проекционное совпадение по осям (решает проблему сдвинутых боксов)
-                    val hasAxisOverlap = checkAxisOverlap(current.boundingBox, candidate.boundingBox)
+                    val hasAxisOverlap =
+                        checkAxisOverlap(current.boundingBox, candidate.boundingBox)
 
                     // Объединяем по классическим метрикам ИЛИ по строгому осевому совпадению
                     if (iou > iouThreshold || iom > iomThreshold || hasAxisOverlap) {
