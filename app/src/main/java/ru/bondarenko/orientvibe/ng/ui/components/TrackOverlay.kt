@@ -86,29 +86,38 @@ class TrackOverlay {
      * Uses full calibration (scale + bearing rotation) plus optional northAngle adjustment.
      */
     private fun gpsToImageAbs(gps: GpsCoordinate): PointF? {
-        val cal = calibration ?: return null
-        val (sWidth, sHeight) = imageDimensions ?: return null
-        if (sWidth <= 0 || sHeight <= 0) return null
+        val cal = calibration ?: run { android.util.Log.w(TAG, "gpsToImageAbs CAL NULL") ; return null }
+        val (sWidth, sHeight) = imageDimensions ?: run { android.util.Log.w(TAG, "gpsToImageAbs DIMS null") ; return null }
+        if (sWidth <= 0 || sHeight <= 0) run { android.util.Log.w(TAG, "gpsToImageAbs DIMS<=0 ($sWidth $sHeight)") ; return null }
 
-        // Step 1: GPS -> relative image coords using calibration bearing
-        val imageCoords = MapCalibrationUtils.gpsToImage(gps, cal) ?: return null
-        var x = imageCoords.first * sWidth
-        var y = imageCoords.second * sHeight
+        // gpsToImage returns ABSOLUTE pixels (pointA.imageX + relDx in pixels), NOT normalized 0..1
+        val imageCoords = MapCalibrationUtils.gpsToImage(gps, cal)
+        if (imageCoords == null) { android.util.Log.w(TAG, "gpsToImageRel NULL for lat=${gps.latitude} lon=${gps.longitude}") ; return null }
+        var x = imageCoords.first
+        var y = imageCoords.second
+        android.util.Log.d(TAG, "gpsToImageAbs abs=($x x $y), scale=${cal.scaleMetersPerPixel}, bearing=${cal.bearingDegrees}")
 
         // Step 2: Apply northAngle rotation around a pivot (first track point or current fix)
         if (northAngle != 0f) {
             val pivotGps = trackPoints.firstOrNull()?.gpsFix?.coordinate ?: currentFix?.coordinate
             val pivotImg = pivotGps?.let { MapCalibrationUtils.gpsToImage(it, cal) }
             if (pivotImg != null) {
-                val px = pivotImg.first * sWidth
-                val py = pivotImg.second * sHeight
+                val px = pivotImg.first
+                val py = pivotImg.second
                 val angleRad = Math.toRadians(northAngle.toDouble())
                 val cosA = cos(angleRad).toFloat()
                 val sinA = sin(angleRad).toFloat()
                 val dx = x - px
                 val dy = y - py
+                // Debug: log true north direction in image space for compass heading verification
+                // Positive Y should point toward GPS direction -(90° - magneticDeclination) mod 360
+                if (cal.magneticDeclination != 0.0) {
+                    android.util.Log.d(TAG, "gpsToImageAbs: northAngle=$northAngle pivot=($px x $py) rot=($x x $y), decl=$cal.magneticDeclination, calBearing=${cal.bearingDegrees}")
+                }
                 x = px + dx * cosA - dy * sinA
                 y = py + dx * sinA + dy * cosA
+            } else {
+                android.util.Log.w(TAG, "gpsToImageAbs pivot NULL lat=${gps.latitude}")
             }
         }
 
@@ -146,9 +155,12 @@ class TrackOverlay {
     private val TAG = "TrackOverlay"
 
     fun draw(canvas: Canvas) {
-        val cal = calibration ?: return
-        val (sWidth, sHeight) = imageDimensions ?: return
-        if (sWidth <= 0 || sHeight <= 0) return
+        val cal = calibration ?: run { android.util.Log.w(TAG, "draw() CAL NULL") ; return }
+        val (sWidth, sHeight) = imageDimensions ?: run { android.util.Log.w(TAG, "draw() DIMS null ($imageDimensions)") ; return }
+        if (sWidth <= 0 || sHeight <= 0) run { android.util.Log.w(TAG, "draw() DIMS <= 0 ($sWidth x $sHeight)") ; return }
+
+        // === TAG LOGGING START ===
+        android.util.Log.d(TAG, "== draw() START: calBearing=${cal.bearingDegrees}, scale=${cal.scaleMetersPerPixel}, northAngle=$northAngle, dims=$sWidth x $sHeight, points=${trackPoints.size} ==")
 
         // --- Draw track line ---
         if (trackPoints.size >= 2) {
@@ -158,49 +170,48 @@ class TrackOverlay {
             var lastGps: GpsCoordinate? = null
             var firstView: PointF? = null
             var lastView: PointF? = null
-            for (point in trackPoints) {
-                val imagePt = gpsToImageAbs(point.gpsFix.coordinate) ?: continue
+            var ptsInPath = 0
+            for ((i, point) in trackPoints.withIndex()) {
+                val gp = point.gpsFix.coordinate
+                android.util.Log.d(TAG, "  pt[$i] lat=${gp.latitude} lon=${gp.longitude}")
+
+                val imagePt = gpsToImageAbs(gp)
+                android.util.Log.d(TAG, "  pt[$i] image=($imagePt)")
+                if (imagePt == null) {
+                    android.util.Log.w(TAG, "  pt[$i] gpsToImageAbs returned NULL")
+                    continue
+                }
+
                 val viewPoint = sourceToViewCoord?.invoke(imagePt.x, imagePt.y)
+                android.util.Log.d(TAG, "  pt[$i] view=($viewPoint)")
                 if (viewPoint != null) {
+                    ptsInPath++
                     if (first) {
                         path.moveTo(viewPoint.x, viewPoint.y)
                         first = false
-                        firstGps = point.gpsFix.coordinate
+                        firstGps = gp
                         firstView = viewPoint
                     } else {
                         path.lineTo(viewPoint.x, viewPoint.y)
                     }
-                    lastGps = point.gpsFix.coordinate
+                    lastGps = gp
                     lastView = viewPoint
+                } else {
+                    android.util.Log.w(TAG, "  pt[$i] sourceToViewCoord returned NULL")
                 }
             }
+
             if (!first) {
+                val dlen = if (firstView != null && lastView != null) {
+                    val dx2 = lastView.x - firstView.x
+                    val dy2 = lastView.y - firstView.y
+                    sqrt((dx2*dx2 + dy2*dy2).toDouble())
+                } else 0.0
+                android.util.Log.d(TAG, "  drawn ptsInPath=$ptsInPath, firstView=($firstView), lastView=($lastView), pathLenPx=${dlen}, imgW=${sWidth.toInt()}, imgH=${sHeight.toInt()}")
+                android.util.Log.d(TAG, "  path.moveTo/lineTo within canvas bounds? minX=${minOf(firstView?.x ?: Float.MAX_VALUE, (lastView?.x ?: Float.MAX_VALUE))}, maxX=${maxOf(firstView?.x ?: -Float.MAX_VALUE, (lastView?.x ?: -Float.MAX_VALUE))}, minY=${minOf(firstView?.y ?: Float.MAX_VALUE, (lastView?.y ?: Float.MAX_VALUE))}, maxY=${maxOf(firstView?.y ?: -Float.MAX_VALUE, (lastView?.y ?: -Float.MAX_VALUE))}")
                 canvas.drawPath(path, trackPaint)
-                // Debug: compute track visual angle from first to last point
-                if (firstView != null && lastView != null && firstGps != null && lastGps != null) {
-                    val tdx = lastView.x - firstView.x
-                    val tdy = lastView.y - firstView.y
-                    val trackVisualAngle = if (sqrt((tdx*tdx + tdy*tdy).toDouble()) > 5.0) {
-                        ((Math.toDegrees(atan2(tdx.toDouble(), -tdy.toDouble())) + 360) % 360).toFloat()
-                    } else null
-                    // Compute actual GPS bearing from first to last track point
-                    val gpsTrackBearing = MapCalibrationUtils.magneticBearing(firstGps, lastGps, calibration!!.magneticDeclination)
-                    // Also compute what gpsToImage says for a due-north offset (for verification)
-                    val northTest = GpsCoordinate(firstGps.latitude + 0.001, firstGps.longitude)
-                    val northImg = gpsToImageAbs(northTest)
-                    val northView = northImg?.let { sourceToViewCoord?.invoke(it.x, it.y) }
-                    val northVisualAngle = if (northView != null) {
-                        val ndx = northView.x - firstView.x
-                        val ndy = northView.y - firstView.y
-                        if (sqrt((ndx*ndx + ndy*ndy).toDouble()) > 5.0) {
-                            ((Math.toDegrees(atan2(ndx.toDouble(), -ndy.toDouble())) + 360) % 360).toFloat()
-                        } else null
-                    } else null
-                    android.util.Log.d(TAG, "TRACK: gpsBearing=${Math.round(gpsTrackBearing * 10.0) / 10.0}, " +
-                            "visualAngle=$trackVisualAngle, northVisual=$northVisualAngle, " +
-                            "northAngle=$northAngle, calBearing=${Math.round(cal.bearingDegrees * 10.0) / 10.0}, " +
-                            "gpsCount=${trackPoints.size}")
-                }
+            } else {
+                android.util.Log.w(TAG, "  ptsInPath=0 — no valid points for path")
             }
         }
 
@@ -223,6 +234,12 @@ class TrackOverlay {
         } else {
             fix.bearing.toDouble()
         } % 360.0
+
+        // Log both real GPS device bearing and calculated true-bearing for comparison
+        val realGpsBearing = fix.bearing.toDouble()
+        val calDeclination = if (cal.magneticDeclination != 0.0) MapCalibrationUtils.effectiveDeclination(cal) else 0.0
+        android.util.Log.d(TAG, "DIR: real_gps_bearing=$realGpsBearing calc_bearing=$bearingDeg calDeclination=$calDeclination")
+
         val aheadGps = offsetGps(fix.coordinate, bearingDeg, 200.0)
         val aheadImage = gpsToImageAbs(aheadGps) ?: return
         val aheadView = sourceToViewCoord?.invoke(aheadImage.x, aheadImage.y) ?: return

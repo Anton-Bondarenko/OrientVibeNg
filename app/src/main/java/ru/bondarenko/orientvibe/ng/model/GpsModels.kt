@@ -38,7 +38,9 @@ data class MapCalibration(
     val pointB: CalibrationPoint,
     val scaleMetersPerPixel: Double,  // meters per image-pixel at the map
     val bearingDegrees: Double,       // angle of the image Y-axis relative to true north
-    val magneticDeclination: Double   // magnetic declination at calibration location (degrees, positive = east)
+    val magneticDeclination: Double,   // magnetic declination at calibration location (degrees, positive = east)
+    val physicalDeclination: Double,   // original magnetic declination before any coordinate flip adjustment
+    val hasXYFlip: Boolean = false     // if true, flip both X and Y axes (180°) in gpsToImage/imageToGps
 )
 
 /**
@@ -73,6 +75,7 @@ data class GpsState(
     val finishCalibrated: Boolean = false,
     val autoMode: Boolean = false,
     val autoCycleActive: Boolean = false,
+    val autoBindActive: Boolean = false,
     val trackPoints: List<TrackPoint> = emptyList(),
     val totalDistance: Double = 0.0,  // meters
     val isTracking: Boolean = false,

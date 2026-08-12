@@ -13,6 +13,7 @@ import ru.bondarenko.orientvibe.ng.model.CalibrationPoint
 import ru.bondarenko.orientvibe.ng.model.GpsCoordinate
 import ru.bondarenko.orientvibe.ng.model.GpsFix
 import ru.bondarenko.orientvibe.ng.model.GpsState
+import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.model.MapCalibration
 
 /**
@@ -30,6 +31,14 @@ class NavViewModel(
     // Внутренние поля для калибровки (не в StateFlow — управляются через методы)
     private var _autoMode = false
     private var _autoCycleActive = false
+    private var _autoBindActive = false
+
+    // ── Auto-bind internal state (inlined from AutoBindManager to avoid cross-file incremental compile issues) ──
+
+    private var _autoBindActiveFlag = false
+    private var _kpBoxes: List<BoundingBox> = emptyList()
+    private var _imageDimensions: Pair<Float, Float>? = null
+    private val HIT_TEST_RADIUS_REL = 0.05f
 
     private val _gpsState = MutableStateFlow(GpsState())
     val gpsState: StateFlow<GpsState> = _gpsState.asStateFlow()
@@ -55,7 +64,8 @@ class NavViewModel(
                     } else {
                         state.totalDistance
                     },
-                    isTracking = trackRecorder.getTrackData().isTracking
+                    isTracking = trackRecorder.getTrackData().isTracking,
+                    autoBindActive = _autoBindActive
                 )
             }
         }
@@ -77,7 +87,8 @@ class NavViewModel(
                     totalDistance = trackState.totalDistance,
                     isTracking = trackState.isTracking,
                     routeDistance = derivedRouteDistance.takeIf { it > 0.0 },
-                    mapScale = derivedMapScale.takeIf { it > 0.0 }
+                    mapScale = derivedMapScale.takeIf { it > 0.0 },
+                    autoBindActive = _autoBindActive
                 )
             }
         }
@@ -109,8 +120,13 @@ class NavViewModel(
         _gpsState.value = _gpsState.value.copy(originalStartGps = coord)
     }
 
+    /**
+     * Add a calibration point. [imageX] and [imageY] MUST be absolute pixel coordinates
+     * in the map image (0..bitmapWidth/Height), NOT relative (0..1) coordinates.
+     */
     fun addCalibrationPoint(gpsFix: GpsFix, imageX: Float, imageY: Float): Boolean {
         val calPoint = CalibrationPoint(gps = gpsFix.coordinate, imageX = imageX, imageY = imageY)
+        android.util.Log.d("TRACK_DRAW", "addCalibrationPoint lat=${gpsFix.coordinate.latitude} lon=${gpsFix.coordinate.longitude} image=($imageX x $imageY)")
         pendingCalibrationPoints.add(calPoint)
 
         if (pendingCalibrationPoints.size >= 2) {
@@ -175,6 +191,55 @@ class NavViewModel(
         _gpsState.value = _gpsState.value.copy(autoCycleActive = active)
     }
 
+    // ── Auto-Bind GPS Mode (привязка "Здесь") ──
+
+    fun setAutoBindActive(active: Boolean) {
+        _autoBindActive = active
+        _autoBindActiveFlag = active
+        _gpsState.value = _gpsState.value.copy(autoBindActive = active)
+    }
+
+    fun getAutoBindActive(): Boolean = _autoBindActive
+
+    /** Convert current GPS fix to absolute image-space coordinates (pixels). */
+    fun getCurrentGpsImageAbs(northAngleDeg: Float): Pair<Float, Float>? {
+        val fix = _gpsState.value.currentFix ?: return null
+        val cal = calibration ?: return null
+        val dims = _imageDimensions ?: return null
+        return MapCalibrationUtils.gpsToImageAbs(fix.coordinate, cal, dims, northAngleDeg)
+    }
+
+    /** Check if image-space point is near any KP; returns index or -1. */
+    fun checkKpHit(absX: Float, absY: Float): Int {
+        if (!_autoBindActiveFlag) return -1
+        val dims = _imageDimensions ?: return -1
+        if (dims.first <= 0f || dims.second <= 0f) return -1
+        val relX = absX / dims.first
+        val relY = absY / dims.second
+        var closestIdx = -1
+        var closestDistSq = (HIT_TEST_RADIUS_REL * HIT_TEST_RADIUS_REL).toDouble()
+        for ((i, box) in _kpBoxes.withIndex()) {
+            val dx = box.centerX - relX
+            val dy = box.centerY - relY
+            val d2 = (dx * dx + dy * dy).toDouble()
+            if (d2 < closestDistSq) {
+                closestDistSq = d2
+                closestIdx = i
+            }
+        }
+        return closestIdx
+    }
+
+    // ── Exposed setters for MainScreen LaunchedEffect ──
+
+    fun setAutoBindKpBoxes(boxes: List<BoundingBox>) {
+        _kpBoxes = boxes
+    }
+
+    fun setAutoBindImageDimensions(dims: Pair<Float, Float>) {
+        _imageDimensions = dims
+    }
+
     // ── Coordinate Conversion ──
 
     fun currentGpsToImage(): Pair<Float, Float>? {
@@ -193,7 +258,7 @@ class NavViewModel(
     }
 
     fun magneticBearingBetween(from: GpsCoordinate, to: GpsCoordinate): Double {
-        val declination = calibration?.magneticDeclination ?: 0.0
+        val declination = calibration?.physicalDeclination ?: 0.0
         return MapCalibrationUtils.magneticBearing(from, to, declination)
     }
 

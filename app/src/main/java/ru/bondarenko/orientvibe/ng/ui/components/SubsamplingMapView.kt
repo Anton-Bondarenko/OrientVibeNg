@@ -35,6 +35,16 @@ class OverlayMapView(
         this.dragListener = dragListener
     }
 
+    // ── Auto-bind GPS mode fields ──
+
+    var autoBindActive: Boolean = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+    var gpsFixImagePos: Pair<Float, Float>? = null
+    var onAutoBindTapCallback: ((relX: Float, relY: Float) -> Boolean)? = null
+
     override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
         updateOverlayCoords()
 
@@ -45,6 +55,17 @@ class OverlayMapView(
 
         if (routeOverlay.handleTouchEvent(event)) {
             invalidate()
+            return true
+        }
+
+        // Auto-bind: intercept tap to check proximity to KP circles
+        if (autoBindActive && event.action == android.view.MotionEvent.ACTION_UP) {
+            val sourcePt = viewToSourceCoord(event.x, event.y) ?: return false
+            val bitmapW = bitmap?.width?.toFloat() ?: return false
+            val handled = onAutoBindTapCallback?.invoke(sourcePt.x / bitmapW, sourcePt.y / bitmapW)
+            if (handled == true) {
+                invalidate() // redraw to clear/close overlay
+            }
             return true
         }
 
@@ -67,6 +88,27 @@ class OverlayMapView(
         controlPointOverlay.draw(canvas)
         routeOverlay.draw(canvas)
         trackOverlay.draw(canvas)
+
+        // Green circle indicator for GPS bind mode
+        if (autoBindActive && gpsFixImagePos != null) {
+            val pos = gpsFixImagePos!!
+            val viewPt = sourceToViewCoord(pos.first, pos.second)
+            if (viewPt != null) {
+                val paint = android.graphics.Paint().apply {
+                    color = android.graphics.Color.argb(180, 76, 175, 80)
+                    style = android.graphics.Paint.Style.FILL
+                    isAntiAlias = true
+                }
+                val stroke = android.graphics.Paint().apply {
+                    color = android.graphics.Color.argb(200, 255, 255, 255)
+                    strokeWidth = 2f
+                    style = android.graphics.Paint.Style.STROKE
+                    isAntiAlias = true
+                }
+                canvas.drawCircle(viewPt.x, viewPt.y, 12f, paint)
+                canvas.drawCircle(viewPt.x, viewPt.y, 12f, stroke)
+            }
+        }
 
         val savedAngle = northIndicator.angle
         northIndicator.angle -= mapRotation
@@ -91,7 +133,11 @@ fun SubsamplingMapView(
     trackPoints: List<TrackPoint> = emptyList(),
     calibration: MapCalibration? = null,
     currentFix: GpsFix? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    // ── Auto-bind GPS mode ──
+    autoBindActive: Boolean = false,
+    gpsFixImagePos: Pair<Float, Float>? = null,
+    onAutoBindTap: ((relX: Float, relY: Float) -> Boolean)? = null
 ) {
     val context = LocalContext.current
 
@@ -172,6 +218,18 @@ fun SubsamplingMapView(
     DisposableEffect(northAngle, calibration) {
         overlayView.updateNorthAngle(northAngle)
         onDispose { }
+    }
+
+    // ── Auto-bind GPS mode wiring ──
+    DisposableEffect(autoBindActive) {
+        overlayView.autoBindActive = autoBindActive
+        overlayView.gpsFixImagePos = gpsFixImagePos
+        onDispose { overlayView.autoBindActive = false }
+    }
+
+    DisposableEffect(onAutoBindTap) {
+        overlayView.onAutoBindTapCallback = onAutoBindTap
+        onDispose { overlayView.onAutoBindTapCallback = null }
     }
 
     AndroidView(
