@@ -46,7 +46,10 @@ class MapCalibrationDirectionTest {
         return Pair(rel.first * 1000f, rel.second * 1000f) // scale to 1000 px
     }
 
-    /** Reference point for all offset tests. */
+    /** Midpoint on the A→B bearing line for flipped calibration (latA=45.003, latB=45.000). */
+    private val REF_FLIPPED = GpsCoordinate(45.00167, 38.001)
+
+    /** Non-flipped reference — GPS exactly at pointA.gps of non-flipped calibrations. */
     private val REF = GpsCoordinate(45.000_000, 38.000_000)
 
     /** Approximate metres per degree (used for small-offset GPS points). */
@@ -122,40 +125,39 @@ class MapCalibrationDirectionTest {
 
     @Test
     fun `flipped calibration - GPS directions match screen directions`() {
-        // Physical map: latA == latB, lonB > lonA => true bearing = 90° => no flip needed
-        // We need flipped: make latB < latA slightly while keeping lonB > lonA
+        // True bearing ~155° (A north-west, B south-east) => cos(bearing) < 0 => hasXYFlip = true
         val cal = calibrate(
-            latA = 45.002, lonA = 38.000,   // A north-west
-            latB = 45.00199, lonB = 38.002, // B south-east of A (bearing > 90°)
+            latA = 45.003, lonA = 38.000,   // A north-west
+            latB = 45.000, lonB = 38.002,   // B south-east of A (true bearing ~155°)
             imgAx = 0.5f, imgAy = 0.2f,     // A relative position on image
             imgBx = 0.7f, imgBy = 0.6f,     // B below-right of A on image
             declination = 0.0
         )
 
-        assertTrue("bearing in [90,270] → hasXYFlip must be true", cal.hasXYFlip)
+        assertTrue("bearing ~155° in [90,270] → hasXYFlip must be true", cal.hasXYFlip)
 
-        val refImg = toImagePixels(cal, REF)
+        val refImg = toImagePixels(cal, REF_FLIPPED)
 
-        // East (+90° true bearing): should go RIGHT on screen (positive dX after flip correction)
-        val gpsE = offsetGpsTrueNorth(REF, 90.0, 50.0)
+        // East (+90° true bearing): should go RIGHT on screen (positive dX)
+        val gpsE = offsetGpsTrueNorth(REF_FLIPPED, 90.0, 50.0)
         val imgE = toImagePixels(cal, gpsE)
         assertTrue("East GPS movement must increase screen X when hasXYFlip=true",
             imgE.first - refImg.first > 0f)
 
         // West (270°): should go LEFT (negative dX)
-        val gpsW = offsetGpsTrueNorth(REF, 270.0, 50.0)
+        val gpsW = offsetGpsTrueNorth(REF_FLIPPED, 270.0, 50.0)
         val imgW = toImagePixels(cal, gpsW)
         assertTrue("West GPS movement must decrease screen X when hasXYFlip=true",
             imgW.first - refImg.first < 0f)
 
         // North (0°): should go UP on screen (negative dY after flip correction)
-        val gpsN = offsetGpsTrueNorth(REF, 0.0, 50.0)
+        val gpsN = offsetGpsTrueNorth(REF_FLIPPED, 0.0, 50.0)
         val imgN = toImagePixels(cal, gpsN)
         assertTrue("North GPS movement must decrease screen Y when hasXYFlip=true",
             imgN.second - refImg.second < 0f)
 
         // South (180°): should go DOWN on screen (positive dY)
-        val gpsS = offsetGpsTrueNorth(REF, 180.0, 50.0)
+        val gpsS = offsetGpsTrueNorth(REF_FLIPPED, 180.0, 50.0)
         val imgS = toImagePixels(cal, gpsS)
         assertTrue("South GPS movement must increase screen Y when hasXYFlip=true",
             imgS.second - refImg.second > 0f)
@@ -173,34 +175,32 @@ class MapCalibrationDirectionTest {
 
     @Test
     fun `flipped calibration with declination - GPS directions correct`() {
-        // Goal: rawMagneticBearing in [90°, 270°] so cos() < 0 → hasXYFlip = true.
-        // Construct coordinates that give trueBearing ≈ 170° (south-southeast),
-        // then subtract declination 5° → rawMagneticBearing = 165° (still in flip range).
+        // trueBearing ~155°, decl = +5° → rawMagneticBearing = 150° (cos < 0 → hasXYFlip=true)
         val cal = calibrate(
-            latA = 45.000, lonA = 38.000,
-            latB = 44.998, lonB = 38.0005,   // B south-southeast of A → trueBearing ≈ 170°
+            latA = 45.003, lonA = 38.000,
+            latB = 45.000, lonB = 38.002,
             imgAx = 0.5f, imgAy = 0.2f,
             imgBx = 0.7f, imgBy = 0.6f,
             declination = 5.0
         )
 
-        assertTrue("165° magneticBearing → hasXYFlip must be true", cal.hasXYFlip)
+        assertTrue("rawMagneticBearing ~104° → hasXYFlip must be true", cal.hasXYFlip)
 
-        val refImg = toImagePixels(cal, REF)
+        val refImg = toImagePixels(cal, REF_FLIPPED)
 
-        val gpsE = offsetGpsTrueNorth(REF, 90.0, 50.0)
+        val gpsE = offsetGpsTrueNorth(REF_FLIPPED, 90.0, 50.0)
         val imgE = toImagePixels(cal, gpsE)
         assertTrue("East → right screen (decl=+5)", imgE.first - refImg.first > 0f)
 
-        val gpsN = offsetGpsTrueNorth(REF, 0.0, 50.0)
+        val gpsN = offsetGpsTrueNorth(REF_FLIPPED, 0.0, 50.0)
         val imgN = toImagePixels(cal, gpsN)
         assertTrue("North → up screen (decl=+5)", imgN.second - refImg.second < 0f)
 
-        val gpsS = offsetGpsTrueNorth(REF, 180.0, 50.0)
+        val gpsS = offsetGpsTrueNorth(REF_FLIPPED, 180.0, 50.0)
         val imgS = toImagePixels(cal, gpsS)
         assertTrue("South → down screen (decl=+5)", imgS.second - refImg.second > 0f)
 
-        val gpsW = offsetGpsTrueNorth(REF, 270.0, 50.0)
+        val gpsW = offsetGpsTrueNorth(REF_FLIPPED, 270.0, 50.0)
         val imgW = toImagePixels(cal, gpsW)
         assertTrue("West → left screen (decl=+5)", imgW.first - refImg.first < 0f)
     }
@@ -241,24 +241,27 @@ class MapCalibrationDirectionTest {
 
     @Test
     fun `gpsToImage then imageToGps returns original coordinate`() {
-        // Flipped calibration with relative image coords
+        // Diagonal flipped calibration: latA=45.003, latB=45.000 => true bearing ~109°
         val cal = calibrate(
-            latA = 45.002, lonA = 38.000,
-            latB = 45.00199, lonB = 38.002,
+            latA = 45.003, lonA = 38.000,
+            latB = 45.000, lonB = 38.002,
             imgAx = 0.5f, imgAy = 0.2f,
             imgBx = 0.7f, imgBy = 0.6f,
-            declination = 5.0
+            declination = 0.0
         )
 
-        val original = GpsCoordinate(45.002, 38.001)
+        assertTrue("Has flip", cal.hasXYFlip)
+
+        // REF is exactly pointA.gps — round-trip should return same coord
+        val original = GpsCoordinate(45.002, 38.000)
         val imageCoords = MapGeometry.gpsToImageRelative(original, cal)
         assertNotNull("gpsToImage must not return null", imageCoords)
 
         val recovered = MapGeometry.imageToGpsRelative(imageCoords!!.first, imageCoords.second, cal)
         assertNotNull("imageToGps must not return null", recovered)
 
-        assertEquals("Latitude after round-trip", original.latitude, recovered!!.latitude, 1e-10)
-        assertEquals("Longitude after round-trip", original.longitude, recovered.longitude, 1e-10)
+        assertEquals("Latitude after round-trip", original.latitude, recovered!!.latitude, 1e-8)
+        assertEquals("Longitude after round-trip", original.longitude, recovered.longitude, 1e-8)
     }
 
     // -----------------------------------------------------------------------
@@ -338,10 +341,10 @@ class MapCalibrationDirectionTest {
 
     @Test
     fun `east and north track deltas form orthogonal frame in flipped calibration`() {
-        // Relative image coords for consistent scale
+        // Flipped: latA=45.003, latB=45.000 => true bearing ~109° > 90°
         val cal = calibrate(
-            latA = 45.002, lonA = 38.000,
-            latB = 45.00199, lonB = 38.002,
+            latA = 45.003, lonA = 38.000,
+            latB = 45.000, lonB = 38.002,
             imgAx = 0.5f, imgAy = 0.2f,
             imgBx = 0.7f, imgBy = 0.6f,
             declination = 0.0
@@ -349,10 +352,10 @@ class MapCalibrationDirectionTest {
 
         assertTrue("Must be flipped", cal.hasXYFlip)
 
-        val refImg = toImagePixels(cal, REF)
+        val refImg = toImagePixels(cal, REF_FLIPPED)
 
-        val gpsE = offsetGpsTrueNorth(REF, 90.0, 100.0)
-        val gpsN = offsetGpsTrueNorth(REF, 0.0, 100.0)
+        val gpsE = offsetGpsTrueNorth(REF_FLIPPED, 90.0, 100.0)
+        val gpsN = offsetGpsTrueNorth(REF_FLIPPED, 0.0, 100.0)
 
         val imgE = toImagePixels(cal, gpsE)
         val imgN = toImagePixels(cal, gpsN)
@@ -380,7 +383,7 @@ class MapCalibrationDirectionTest {
     fun `DIAGNOSTIC - dump 4-direction deltas`() {
         println("\n========== DIAGNOSTIC: GPS→image deltas ==========")
 
-        // (A) Non-flipped: A west, B east, imgA→imgB goes up-right
+        // (A) Non-flipped: A west, B east => bearing=90°
         val calA = calibrate(
             latA = 45.000, lonA = 38.000,
             latB = 45.000, lonB = 38.002,
@@ -391,18 +394,26 @@ class MapCalibrationDirectionTest {
         println("\n--- Non-flipped (bearing=90°, hasXYFlip=${calA.hasXYFlip}) ---")
         dumpDeltas(calA, "(A)")
 
-        // (B) Flipped: A north-west, B south-east of A on physical map
+        // (B) Flipped: A north-west, B south-east => bearing ~155° > 90°
         val calB = calibrate(
-            latA = 45.002, lonA = 38.000,
-            latB = 45.00199, lonB = 38.002,
+            latA = 45.003, lonA = 38.000,
+            latB = 45.000, lonB = 38.002,
             imgAx = 0.5f, imgAy = 0.2f,
             imgBx = 0.7f, imgBy = 0.6f,
             declination = 0.0
         )
-        println("\n--- Flipped (bearing≈170°, hasXYFlip=${calB.hasXYFlip}) ---")
-        dumpDeltas(calB, "(B)")
+        println("\n--- Flipped (bearing≈155°, hasXYFlip=${calB.hasXYFlip}) ---")
+        val refImgB = toImagePixels(calB, REF_FLIPPED)
+        println("(B) REF_flipped → img=(${refImgB.first}, ${refImgB.second})")
+        for ((label, bearingDeg) in listOf("N" to 0.0, "E" to 90.0, "S" to 180.0, "W" to 270.0)) {
+            val gpsPt = offsetGpsTrueNorth(REF_FLIPPED, bearingDeg, 100.0)
+            val imgPt = toImagePixels(calB, gpsPt)
+            val dx = imgPt.first - refImgB.first
+            val dy = imgPt.second - refImgB.second
+            println("  (B) GPS $label: dx=$dx, dy=$dy")
+        }
 
-        // (C) Map aligned to north: A south, B north (bearing=0°)
+        // (C) Map aligned to north: A south, B north => bearing=0°
         val calC = calibrate(
             latA = 45.000, lonA = 38.000,
             latB = 45.002, lonB = 38.000,

@@ -72,8 +72,9 @@ object MapGeometry {
      * Compute a MapCalibration from two calibration points and the magnetic declination.
      * Returns null if the points are too close to derive a valid transform.
      *
-     * Core invariant: when cos(magneticBearing) < 0, both X and Y axes are inverted by the
-     * rotation; hasXYFlip is set true to compensate with a 180° flip in gpsToImage / imageToGps.
+     * hasXYFlip is set true when cos(magneticBearing) < 0 — it serves as metadata indicating
+     * that the physical map's north direction opposes screen-up, but does NOT affect the
+     * coordinate transform (dEast/dNorth mapping is inherently correct for any bearing).
      */
     fun computeCalibrationRaw(
         pointA: CalibrationPoint,
@@ -107,12 +108,14 @@ object MapGeometry {
     /**
      * Forward GPS→image transform (relative 0…1 coordinates).
      *
-     * The transform maps a geographic offset (dNorth, dEast) into image-space
-     * using the canonical orientation:
+     * Maps geographic offset (dNorth, dEast) into image-space using canonical orientation:
      * - GPS north → image up    (imageDy < 0)
      * - GPS east  → image right (imageDx > 0)
-     * Then applies hasXYFlip (a 180° rotation) when the calibration bearing
-     * places the map "upside-down" relative to true north.
+     *
+     * This works correctly for ANY bearing — no rotation or flip needed. The raw dEast/dNorth
+     * deltas inherently encode correct screen directions because:
+     * - screenX ∝ dEast (positive east displacement always maps to right on screen)
+     * - screenY ∝ -dNorth (positive north displacement always maps to up on screen)
      *
      * The caller is responsible for any northAngle or extra scale adjustment.
      */
@@ -124,13 +127,12 @@ object MapGeometry {
         val dEast = eastDistance(calibration.pointA.gps, gps)
 
         // Canonical mapping: north → up (negative Y in image space), east → right.
-        var imageDx = dEast
-        var imageDy = -dNorth
-
-        if (calibration.hasXYFlip) {
-            imageDx = -imageDx
-            imageDy = -imageDy
-        }
+        // The raw dEast/dNorth already give correct screen directions regardless of bearing:
+        // - screenX increases with GPS east displacement (always positive dEast → right)
+        // - screenY decreases with GPS north displacement (positive dNorth → up)
+        // hasXYFlip was previously used to compensate for a non-existent rotation matrix bug.
+        val imageDx = dEast
+        val imageDy = -dNorth
 
         val relDx = (imageDx / calibration.scaleMetersPerPixel).toFloat()
         val relDy = (imageDy / calibration.scaleMetersPerPixel).toFloat()
@@ -153,12 +155,7 @@ object MapGeometry {
         var metersDx = relDx * calibration.scaleMetersPerPixel
         var metersDy = relDy * calibration.scaleMetersPerPixel
 
-        if (calibration.hasXYFlip) {
-            metersDx = -metersDx
-            metersDy = -metersDy
-        }
-
-        // Inverse of canonical: dEast = metersDx, dNorth = -metersDy.
+        // Inverse of canonical: always direct mapping (no flip needed).
         val dEast = metersDx
         val dNorth = -metersDy
 
