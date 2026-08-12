@@ -483,10 +483,12 @@ fun MainScreen(
                 imageY = (mapState.finishPoint?.y ?: 0f) * rBmpH
             )
 
-            // Update north angle from physical magnetic declination (not adjusted for bearing flip)
+            // Align map's Y-axis to magnetic direction: northAngle = -(rawMagneticBearing).
+            // The calibration bearing already encodes trueBearing - declination (raw magnetic bearing),
+            // which is the compass direction from A toward B along the physical map's north grid line.
             val cal = navViewModel.getCalibration()
             if (cal != null) {
-                viewModel.updateNorthAngle(-MapCalibrationUtils.effectiveDeclination(cal).toFloat())
+                viewModel.updateNorthAngle(-cal.bearingDegrees.toFloat())
             }
 
             infoMessage = "Масштаб карты и линия севера скорректированы"

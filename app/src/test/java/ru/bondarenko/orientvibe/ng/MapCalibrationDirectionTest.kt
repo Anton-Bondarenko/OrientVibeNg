@@ -4,6 +4,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import kotlin.math.cos
 import kotlin.math.sin
+import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
 import ru.bondarenko.orientvibe.ng.gps.MapGeometry
 import ru.bondarenko.orientvibe.ng.model.CalibrationPoint
 import ru.bondarenko.orientvibe.ng.model.GpsCoordinate
@@ -184,7 +185,7 @@ class MapCalibrationDirectionTest {
             declination = 5.0
         )
 
-        assertTrue("rawMagneticBearing ~104° → hasXYFlip must be true", cal.hasXYFlip)
+        assertTrue("rawMagneticBearing ~150° → hasXYFlip must be true", cal.hasXYFlip)
 
         val refImg = toImagePixels(cal, REF_FLIPPED)
 
@@ -203,6 +204,132 @@ class MapCalibrationDirectionTest {
         val gpsW = offsetGpsTrueNorth(REF_FLIPPED, 270.0, 50.0)
         val imgW = toImagePixels(cal, gpsW)
         assertTrue("West → left screen (decl=+5)", imgW.first - refImg.first < 0f)
+    }
+
+    // -----------------------------------------------------------------------
+    // 3b. northAngle correction accounts for magnetic declination
+    //     Core principle: in orienteering, a physical map's Y axis aligns with
+    //     magnetic north. Walking along magnetic north should give zero east
+    //     displacement after applying northAngle = -declination.
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `northAngle corrects for magnetic declination - track-up aligns with map`() {
+        // Simplified setup: A south, B north (same longitude) => true bearing = 0°.
+        // With declination=+10°: rawMagneticBearing = trueBearing - declination = -10°.
+        // The physical map's Y axis = magnetic direction from A = bearing -10° from true north.
+        // To align rotated frame's Y-axis with magnetic north, northAngle must = -(rawMagneticBearing).
+        // gpsToImageRelative uses true north as base "up"; rotation by northAngle shifts it.
+        // After rotation: new Y-axis points at bearing (0° + northAngle). For magnetic north (-10°):
+        //   northAngle = -10° = -(rawMagneticBearing) = -(trueBearing - declination).
+        // Walking along magnetic north (GPS true bearing = -10°) should give zero east displacement.
+
+        val declination = 10.0
+
+        val cal = calibrate(
+            latA = 50.450_000, lonA = 30.500_000,
+            latB = 50.451_798, lonB = 30.500_000,   // ~200m north of A (same lon)
+            imgAx = 0.5f, imgAy = 0.8f,    // A at bottom
+            imgBx = 0.5f, imgBy = 0.2f,    // B at top
+            declination = declination
+        )
+
+        val trueBearingDeg = MapGeometry.bearing(cal.pointA.gps, cal.pointB.gps)
+        assertEquals("True bearing ~0°", 0.0, trueBearingDeg, 1.0)
+
+        // rawMagneticBearing = trueBearing - declination
+        val rawMagneticBearing = trueBearingDeg - declination
+        // Verify rawMagneticBearing ≈ -10° (equiv to 350°)
+        assertEquals(
+            "rawMagneticBearing = trueBearing - declination",
+            0.0, ((rawMagneticBearing % 360.0 + 360.0) % 360.0 - ( (-10.0) % 360.0 + 360.0) % 360.0).toDouble(),
+            1.0
+        )
+
+        // Magnetic direction from A: true bearing - declination = -10°.
+        // Walking along magnetic north means GPS position at bearing -10° from A (50m).
+        val magneticDir = rawMagneticBearing
+        val walkToMagNorth = offsetGpsTrueNorth(cal.pointA.gps, magneticDir, 50.0)
+
+        // Corrected northAngle: -(rawMagneticBearing) = +10° for this setup
+        val correctNorthAngle = (-rawMagneticBearing).toFloat()
+
+        // With correct northAngle correction: should align Y axis to magnetic direction → zero east displacement.
+        val imgWithCorrection = MapCalibrationUtils.gpsToImageAbs(
+            walkToMagNorth, cal, Pair(1000f, 1000f), correctNorthAngle
+        )!!
+        val refImgAbs = MapCalibrationUtils.gpsToImageAbs(
+            cal.pointA.gps, cal, Pair(1000f, 1000f), correctNorthAngle
+        )!!
+        val (icX, icY) = imgWithCorrection
+        val (rcX, rcY) = refImgAbs
+        val eastDisplacementPx = icX - rcX
+
+        // The correction should zero out the east displacement caused by magnetic declination.
+        assertEquals("northAngle correction should eliminate declination-induced east drift",
+            0f, eastDisplacementPx, 1.0f)
+
+        // Verify north displacement is meaningful (moving along Y axis = up on map)
+        val northDisplacementPx = icY - rcY
+        assertTrue("Moving along magnetic north → going UP on map ($northDisplacementPx px)",
+            northDisplacementPx < -10f)
+    }
+
+    @Test
+    fun `northAngle corrects for magnetic declination with non-flipped calibration`() {
+        // Simplified: A west, B east (same latitude) => true bearing = 90°.
+        // With declination=+10°: rawMagneticBearing = 80°.
+        // The physical map's Y axis = magnetic direction from A = bearing 80° from true north.
+        // To align rotated frame's Y-axis with magnetic north, northAngle must = -(rawMagneticBearing).
+        // gpsToImageRelative uses true north as base "up"; rotation by northAngle shifts it.
+        // After rotation: new Y-axis points at bearing (90° + northAngle). For magnetic direction 80°:
+        //   northAngle = -10°... NO, that's wrong! The base frame's Y-axis is at bearing 90° (not 0°),
+        //   because the calibration X-axis = true east and Y-axis = true north, but point B is EAST of A.
+        //   Wait — gpsToImageRelative ALWAYS uses true north as "up". It doesn't know about the calibration bearing.
+        //   So base frame's Y-axis = true north (bearing 0°). For magnetic direction 80°:
+        //     northAngle = -80° = -(rawMagneticBearing).
+        // Walking along magnetic bearing 80° from A should give zero east displacement after correction.
+
+        val declination = 10.0
+
+        val cal = calibrate(
+            latA = 50.450_000, lonA = 30.500_000,
+            latB = 50.450_000, lonB = 30.501_798,   // ~200m east of A (same lat)
+            imgAx = 0.5f, imgAy = 0.2f,
+            imgBx = 0.5f, imgBy = 0.8f,
+            declination = declination
+        )
+
+        val trueBearingDeg = MapGeometry.bearing(cal.pointA.gps, cal.pointB.gps)
+        assertTrue("True bearing ≈90° (non-flipped)", trueBearingDeg in 85.0..95.0)
+
+        // rawMagneticBearing = trueBearing - declination = ~80°.
+        val rawMagneticBearing = trueBearingDeg - declination
+        assertTrue("magDir ≈80°", kotlin.math.abs(rawMagneticBearing - 80.0) < 2.0)
+
+        // Walking along magnetic bearing from A:
+        val walkToMagDir = offsetGpsTrueNorth(cal.pointA.gps, rawMagneticBearing, 50.0)
+
+        // Correct northAngle: -(rawMagneticBearing) ≈ -80° — aligns rotated frame's Y-axis to magnetic direction.
+        // Note: old formula used -declination = -10°, which only works when trueBearing = 0°.
+        val correctNorthAngle = (-rawMagneticBearing).toFloat()
+
+        // With correct northAngle correction: should align to magnetic direction → zero east displacement.
+        val imgWithCorrection = MapCalibrationUtils.gpsToImageAbs(
+            walkToMagDir, cal, Pair(1000f, 1000f), correctNorthAngle
+        )!!
+        val refImgAbs = MapCalibrationUtils.gpsToImageAbs(
+            cal.pointA.gps, cal, Pair(1000f, 1000f), correctNorthAngle
+        )!!
+        val (icX, icY) = imgWithCorrection
+        val (rcX, rcY) = refImgAbs
+        val eastDisplacementPx = icX - rcX
+
+        assertEquals("northAngle correction with non-flipped cal → zero east",
+            0f, eastDisplacementPx, 1.0f)
+
+        // Moving along Y axis — significant displacement
+        assertTrue("Moving along map X-axis (large north displacement)", kotlin.math.abs(icY - rcY) > 10f)
     }
 
     // -----------------------------------------------------------------------
