@@ -95,11 +95,13 @@ class TrackOverlay {
         if (imageCoords == null) { android.util.Log.w(TAG, "gpsToImageRel NULL for lat=${gps.latitude} lon=${gps.longitude}") ; return null }
         var x = imageCoords.first
         var y = imageCoords.second
-        android.util.Log.d(TAG, "gpsToImageAbs abs=($x x $y), scale=${cal.scaleMetersPerPixel}, bearing=${cal.bearingDegrees}")
 
-        // Step 2: Apply northAngle rotation around a pivot (first track point or current fix)
+        // Step 2: Apply northAngle rotation around a fixed pivot.
+        // Use calibration pointA (the map anchor) as the rotation center, NOT trackPoints.first()
+        // because trim removes old points which changes the first element, causing visual drift.
         if (northAngle != 0f) {
-            val pivotGps = trackPoints.firstOrNull()?.gpsFix?.coordinate ?: currentFix?.coordinate
+            val calAnchorGps = calibration?.pointA?.gps
+            val pivotGps = calAnchorGps ?: currentFix?.coordinate
             val pivotImg = pivotGps?.let { MapCalibrationUtils.gpsToImage(it, cal) }
             if (pivotImg != null) {
                 val px = pivotImg.first
@@ -109,11 +111,6 @@ class TrackOverlay {
                 val sinA = sin(angleRad).toFloat()
                 val dx = x - px
                 val dy = y - py
-                // Debug: log true north direction in image space for compass heading verification
-                // Positive Y should point toward GPS direction -(90° - magneticDeclination) mod 360
-                if (cal.magneticDeclination != 0.0) {
-                    android.util.Log.d(TAG, "gpsToImageAbs: northAngle=$northAngle pivot=($px x $py) rot=($x x $y), decl=$cal.magneticDeclination, calBearing=${cal.bearingDegrees}")
-                }
                 x = px + dx * cosA - dy * sinA
                 y = py + dx * sinA + dy * cosA
             } else {
@@ -173,17 +170,13 @@ class TrackOverlay {
             var ptsInPath = 0
             for ((i, point) in trackPoints.withIndex()) {
                 val gp = point.gpsFix.coordinate
-                android.util.Log.d(TAG, "  pt[$i] lat=${gp.latitude} lon=${gp.longitude}")
-
                 val imagePt = gpsToImageAbs(gp)
-                android.util.Log.d(TAG, "  pt[$i] image=($imagePt)")
                 if (imagePt == null) {
                     android.util.Log.w(TAG, "  pt[$i] gpsToImageAbs returned NULL")
                     continue
                 }
 
                 val viewPoint = sourceToViewCoord?.invoke(imagePt.x, imagePt.y)
-                android.util.Log.d(TAG, "  pt[$i] view=($viewPoint)")
                 if (viewPoint != null) {
                     ptsInPath++
                     if (first) {

@@ -13,6 +13,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import ru.bondarenko.orientvibe.ng.gps.GpsFix
 import ru.bondarenko.orientvibe.ng.gps.MapCalibration
+import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
 import ru.bondarenko.orientvibe.ng.gps.TrackPoint
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.model.RoutePoint
@@ -45,8 +46,21 @@ class OverlayMapView(
     var gpsFixImagePos: Pair<Float, Float>? = null
     var onAutoBindTapCallback: ((relX: Float, relY: Float) -> Boolean)? = null
 
+    /** Calibration point B GPS for purple marker rendering */
+    var calibrationPointBGps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    /** Image dimensions for purple point rendering (absolute pixels) */
+    var calibrationImageDims: Pair<Float, Float>? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
-        updateOverlayCoords()
 
         if (northIndicator.handleTouchEvent(event)) {
             invalidate()
@@ -110,6 +124,30 @@ class OverlayMapView(
             }
         }
 
+        // Purple circle for calibration point B (finish/second calibration point)
+        calibrationPointBGps?.let { gpsB ->
+            val cal = trackOverlay.calibration ?: return@let
+            val imageCoords = MapCalibrationUtils.gpsToImage(
+                gpsB, cal
+            ) ?: return@let
+            val viewPt = sourceToViewCoord(imageCoords.first, imageCoords.second)
+            if (viewPt != null) {
+                val paint = android.graphics.Paint().apply {
+                    color = android.graphics.Color.argb(180, 156, 39, 176) // purple #9C27B0
+                    style = android.graphics.Paint.Style.FILL
+                    isAntiAlias = true
+                }
+                val stroke = android.graphics.Paint().apply {
+                    color = android.graphics.Color.argb(200, 255, 255, 255)
+                    strokeWidth = 2f
+                    style = android.graphics.Paint.Style.STROKE
+                    isAntiAlias = true
+                }
+                canvas.drawCircle(viewPt.x, viewPt.y, 14f, paint)
+                canvas.drawCircle(viewPt.x, viewPt.y, 14f, stroke)
+            }
+        }
+
         val savedAngle = northIndicator.angle
         northIndicator.angle -= mapRotation
         northIndicator.draw(canvas)
@@ -137,6 +175,8 @@ fun SubsamplingMapView(
     // ── Auto-bind GPS mode ──
     autoBindActive: Boolean = false,
     gpsFixImagePos: Pair<Float, Float>? = null,
+    calibrationPointBGps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate? = null,
+    calibrationImageDims: Pair<Float, Float>? = null,
     onAutoBindTap: ((relX: Float, relY: Float) -> Boolean)? = null
 ) {
     val context = LocalContext.current
@@ -225,6 +265,12 @@ fun SubsamplingMapView(
         overlayView.autoBindActive = autoBindActive
         overlayView.gpsFixImagePos = gpsFixImagePos
         onDispose { overlayView.autoBindActive = false }
+    }
+
+    DisposableEffect(calibrationPointBGps) {
+        overlayView.calibrationPointBGps = calibrationPointBGps
+        overlayView.calibrationImageDims = calibrationImageDims
+        onDispose { overlayView.calibrationPointBGps = null }
     }
 
     DisposableEffect(onAutoBindTap) {

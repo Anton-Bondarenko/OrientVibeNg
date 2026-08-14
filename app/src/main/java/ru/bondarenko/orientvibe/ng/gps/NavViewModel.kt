@@ -172,6 +172,37 @@ class NavViewModel(
 
     fun getCalibration(): MapCalibration? = calibration
 
+    /**
+     * Apply a [MapCalibrationUtils.BindResult] returned by [MapCalibrationUtils.bindGpsToFinish].
+     * This is the canonical place for bind-side state effects — clears old calibration, sets
+     * the new one from BindResult.calibration, updates northAngle via gpsState.
+     */
+    /**
+     * Apply a [MapCalibrationUtils.BindResult] returned by [MapCalibrationUtils.bindGpsToFinish].
+     * This is the canonical place for bind-side calibration state effects — sets the new
+     * calibration, updates isCalibrated flags, and clears pending points.
+     *
+     * The northAngle must be applied separately via MapViewModel.updateNorthAngle() because
+     * northAngle lives in MapState, not GpsState.
+     */
+    fun applyBindResult(result: MapCalibrationUtils.BindResult) {
+        calibration = result.calibration
+        _gpsState.value = _gpsState.value.copy(
+            calibration = result.calibration,
+            isCalibrated = true,
+            startCalibrated = true,
+            finishCalibrated = true
+        )
+        pendingCalibrationPoints.clear()
+    }
+
+    /** Returns the northAngle that should be applied to the map after a bind. */
+    fun bindNorthAngle(): Float {
+        // -bearing aligns the image frame's Y-axis with physical (magnetic) north.
+        // For GPS = pointB, displacement from pointA pivot is zero so rotation has no effect.
+        return calibration?.let { -it.bearingDegrees.toFloat() } ?: 0f
+    }
+
     private fun getMagneticDeclination(latitude: Double, longitude: Double, altitude: Double, timestamp: Long): Double {
         val geomagneticField = GeomagneticField(
             latitude.toFloat(), longitude.toFloat(), altitude.toFloat(), timestamp

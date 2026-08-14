@@ -81,7 +81,13 @@ object MapGeometry {
         pointB: CalibrationPoint,
         magneticDeclination: Double
     ): MapCalibration? {
-        val gpsDistance = haversineDistance(pointA.gps, pointB.gps)
+        // Compute Rhumb distance using cos(pointA.gps.lat) for easting — matches offsetCoordinate,
+        // gpsToImageRelative, and imageToGpsRelative which all use pointA (start) as reference.
+        // Using eastDistance (cos(avgLat)) would diverge when dNorth ≠ 0 because avgLat ≠ pointA.lat.
+        val dNorth = northDistance(pointA.gps, pointB.gps)
+        val dEast = (pointB.gps.longitude - pointA.gps.longitude) *
+                (Math.PI / 180.0) * EARTH_RADIUS_METERS * cos(Math.toRadians(pointA.gps.latitude))
+        val gpsDistance = sqrt(dNorth * dNorth + dEast * dEast)
         if (gpsDistance < 1.0) return null
 
         val dx = (pointB.imageX - pointA.imageX).toDouble()
@@ -106,36 +112,32 @@ object MapGeometry {
     }
 
     /**
-     * Forward GPS→image transform (relative 0…1 coordinates).
+     * Forward GPS→image transform (calibrated absolute pixel coordinates anchored at pointA).
      *
-     * Maps geographic offset (dNorth, dEast) into image-space using canonical orientation:
-     * - GPS north → image up    (imageDy < 0)
-     * - GPS east  → image right (imageDx > 0)
+     * Returns coordinates relative to image origin (0, 0) using the map's calibration:
+     * - pointA.imageX/Y serve as the anchor position in calibrated space
+     * - Geographic offset (dNorth, dEast) is converted to pixels using scaleMetersPerPixel
      *
-     * This works correctly for ANY bearing — no rotation or flip needed. The raw dEast/dNorth
-     * deltas inherently encode correct screen directions because:
-     * - screenX ∝ dEast (positive east displacement always maps to right on screen)
-     * - screenY ∝ -dNorth (positive north displacement always maps to up on screen)
-     *
-     * The caller is responsible for any northAngle or extra scale adjustment.
+     * These are NOT [0,1] ratios — they are calibrated image-space coordinates suitable for:
+     * - Direct rendering (with proper scaling by actual image dimensions)
+     * - Rotation around calibration point A in image space
+     * - Distance preservation across different GPS ↔ image transforms
      */
     fun gpsToImageRelative(
         gps: GpsCoordinate,
         calibration: MapCalibration
     ): Pair<Float, Float>? {
         val dNorth = northDistance(calibration.pointA.gps, gps)
-        val dEast = eastDistance(calibration.pointA.gps, gps)
+        // Use cos(startLat) for easting — matches offsetCoordinate's reference.
+        // Using cos(avgLat) (eastDistance) diverges when there's a non-zero dNorth,
+        // because the reference latitude differs between projection and coordinate creation.
+        val dEast = (gps.longitude - calibration.pointA.gps.longitude) *
+                (Math.PI / 180.0) * EARTH_RADIUS_METERS * cos(Math.toRadians(calibration.pointA.gps.latitude))
 
         // Canonical mapping: north → up (negative Y in image space), east → right.
-        // The raw dEast/dNorth already give correct screen directions regardless of bearing:
-        // - screenX increases with GPS east displacement (always positive dEast → right)
-        // - screenY decreases with GPS north displacement (positive dNorth → up)
-        // hasXYFlip was previously used to compensate for a non-existent rotation matrix bug.
-        val imageDx = dEast
-        val imageDy = -dNorth
-
-        val relDx = (imageDx / calibration.scaleMetersPerPixel).toFloat()
-        val relDy = (imageDy / calibration.scaleMetersPerPixel).toFloat()
+        // Convert geographic offsets to calibrated pixel distances.
+        val relDx = (dEast / calibration.scaleMetersPerPixel).toFloat()
+        val relDy = (-dNorth / calibration.scaleMetersPerPixel).toFloat()
 
         return Pair(
             calibration.pointA.imageX + relDx,

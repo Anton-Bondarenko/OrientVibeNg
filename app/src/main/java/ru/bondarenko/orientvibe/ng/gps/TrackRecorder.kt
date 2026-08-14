@@ -4,13 +4,19 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+import java.util.LinkedList
+
 /**
  * Records a track of GPS positions mapped to image coordinates.
  * Tracks total distance and provides per-point distance from start.
  */
+/** Maximum number of track points to retain. Oldest points are removed when exceeded. */
+const val MAX_TRACK_POINTS = 300
+
 class TrackRecorder {
 
-    private val _trackPoints = mutableListOf<TrackPoint>()
+    /** Doubly-linked list for O(1) head removal — we always append at tail and trim from head. */
+    private val _trackPoints = LinkedList<TrackPoint>()
     private var _totalDistance = 0.0
 
     private val _trackState = MutableStateFlow(
@@ -89,9 +95,14 @@ class TrackRecorder {
             timestamp = fix.timestamp
         )
 
-        _trackPoints.add(trackPoint)
+        _trackPoints.addLast(trackPoint)
         _totalDistance = actualDistanceFromStart
         lastTrackPoint = trackPoint
+
+        // Trim oldest points from head when exceeding limit (O(1) removal for LinkedList).
+        while (_trackPoints.size > MAX_TRACK_POINTS) {
+            _trackPoints.removeFirst()
+        }
 
         _trackState.value = TrackRecorderState(
             trackPoints = _trackPoints.toList(),
