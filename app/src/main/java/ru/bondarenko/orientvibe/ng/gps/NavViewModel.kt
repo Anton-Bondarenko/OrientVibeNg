@@ -1,7 +1,6 @@
 package ru.bondarenko.orientvibe.ng.gps
 
 import android.content.Context
-import android.hardware.GeomagneticField
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -9,9 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import ru.bondarenko.orientvibe.ng.model.CalibrationPoint
 import ru.bondarenko.orientvibe.ng.model.GpsCoordinate
-import ru.bondarenko.orientvibe.ng.model.GpsFix
 import ru.bondarenko.orientvibe.ng.model.GpsState
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.model.MapCalibration
@@ -26,11 +23,7 @@ class NavViewModel(
 
     private val gpsManager = GpsManager(context)
     private val trackRecorder = TrackRecorder()
-    private val pendingCalibrationPoints = mutableListOf<CalibrationPoint>()
     private var calibration: MapCalibration? = null
-    // Внутренние поля для калибровки (не в StateFlow — управляются через методы)
-    private var _autoMode = false
-    private var _autoCycleActive = false
     private var _autoBindActive = false
 
     // ── Auto-bind internal state (inlined from AutoBindManager to avoid cross-file incremental compile issues) ──
@@ -120,107 +113,18 @@ class NavViewModel(
         _gpsState.value = _gpsState.value.copy(originalStartGps = coord)
     }
 
-    /**
-     * Add a calibration point. [imageX] and [imageY] MUST be absolute pixel coordinates
-     * in the map image (0..bitmapWidth/Height), NOT relative (0..1) coordinates.
-     */
-    fun addCalibrationPoint(gpsFix: GpsFix, imageX: Float, imageY: Float): Boolean {
-        val calPoint = CalibrationPoint(gps = gpsFix.coordinate, imageX = imageX, imageY = imageY)
-        android.util.Log.d("TRACK_DRAW", "addCalibrationPoint lat=${gpsFix.coordinate.latitude} lon=${gpsFix.coordinate.longitude} image=($imageX x $imageY)")
-        pendingCalibrationPoints.add(calPoint)
-
-        if (pendingCalibrationPoints.size >= 2) {
-            val pointA = pendingCalibrationPoints[0]
-            val pointB = pendingCalibrationPoints[1]
-            val magneticDeclination = getMagneticDeclination(
-                latitude = pointA.gps.latitude,
-                longitude = pointA.gps.longitude,
-                altitude = gpsFix.altitude,
-                timestamp = gpsFix.timestamp
-            )
-            val result = MapCalibrationUtils.calibrate(pointA, pointB, magneticDeclination)
-            if (result != null) {
-                calibration = result
-                _gpsState.value = _gpsState.value.copy(
-                    calibration = result,
-                    isCalibrated = true,
-                    startCalibrated = true,
-                    finishCalibrated = true
-                )
-            } else {
-                _gpsState.value = _gpsState.value.copy(
-                    startCalibrated = false,
-                    finishCalibrated = false
-                )
-            }
-            pendingCalibrationPoints.clear()
-            return true
-        }
-        return false
-    }
-
-    fun clearCalibration() {
-        calibration = null
-        pendingCalibrationPoints.clear()
+    /** Применяет одно-точечную калибровку (только старт). Флаг finishCalibrated остаётся false до «Здесь финиш». */
+    fun applyStartCalibration(cal: MapCalibration) {
+        calibration = cal
         _gpsState.value = _gpsState.value.copy(
-            calibration = null,
-            isCalibrated = false,
-            startCalibrated = false,
+            calibration = cal,
+            isCalibrated = true,
+            startCalibrated = true,
             finishCalibrated = false
         )
     }
 
-    fun getCalibration(): MapCalibration? = calibration
 
-    /**
-     * Apply a [MapCalibrationUtils.BindResult] returned by [MapCalibrationUtils.bindGpsToFinish].
-     * This is the canonical place for bind-side state effects — clears old calibration, sets
-     * the new one from BindResult.calibration, updates northAngle via gpsState.
-     */
-    /**
-     * Apply a [MapCalibrationUtils.BindResult] returned by [MapCalibrationUtils.bindGpsToFinish].
-     * This is the canonical place for bind-side calibration state effects — sets the new
-     * calibration, updates isCalibrated flags, and clears pending points.
-     *
-     * The northAngle must be applied separately via MapViewModel.updateNorthAngle() because
-     * northAngle lives in MapState, not GpsState.
-     */
-    fun applyBindResult(result: MapCalibrationUtils.BindResult) {
-        calibration = result.calibration
-        _gpsState.value = _gpsState.value.copy(
-            calibration = result.calibration,
-            isCalibrated = true,
-            startCalibrated = true,
-            finishCalibrated = true
-        )
-        pendingCalibrationPoints.clear()
-    }
-
-    /** Returns the northAngle that should be applied to the map after a bind. */
-    fun bindNorthAngle(): Float {
-        // -bearing aligns the image frame's Y-axis with physical (magnetic) north.
-        // For GPS = pointB, displacement from pointA pivot is zero so rotation has no effect.
-        return calibration?.let { -it.bearingDegrees.toFloat() } ?: 0f
-    }
-
-    private fun getMagneticDeclination(latitude: Double, longitude: Double, altitude: Double, timestamp: Long): Double {
-        val geomagneticField = GeomagneticField(
-            latitude.toFloat(), longitude.toFloat(), altitude.toFloat(), timestamp
-        )
-        return geomagneticField.declination.toDouble()
-    }
-
-    // ── Mode Control (синхронизировано с GpsState) ──
-
-    fun setAutoMode(enabled: Boolean) {
-        _autoMode = enabled
-        _gpsState.value = _gpsState.value.copy(autoMode = enabled)
-    }
-
-    fun setAutoCycleActive(active: Boolean) {
-        _autoCycleActive = active
-        _gpsState.value = _gpsState.value.copy(autoCycleActive = active)
-    }
 
     // ── Auto-Bind GPS Mode (привязка "Здесь") ──
 
@@ -321,6 +225,17 @@ class NavViewModel(
     }
     fun clearTrack() { trackRecorder.clearTrack() }
     fun getTrackData() = trackRecorder.getTrackData()
+
+    /** Применяет новую калибровку из MapCalibrationUtils (вся логика в Utils). */
+    fun applyNewCalibration(cal: MapCalibration) {
+        calibration = cal
+        _gpsState.value = _gpsState.value.copy(
+            calibration = cal,
+            isCalibrated = true,
+            startCalibrated = true,
+            finishCalibrated = true
+        )
+    }
 
     override fun onCleared() {
         super.onCleared()

@@ -45,6 +45,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.runtime.rememberCoroutineScope
 import ru.bondarenko.orientvibe.ng.gps.GpsFix
 import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
+
 import ru.bondarenko.orientvibe.ng.gps.NavViewModel
 import ru.bondarenko.orientvibe.ng.model.PanelButton
 import ru.bondarenko.orientvibe.ng.model.PanelStep
@@ -405,130 +406,46 @@ fun MainScreen(
     val bindGpsToStart: () -> Unit = bindStart@{
 
         val fix = gpsState.currentFix ?: return@bindStart
+        val bmpW = mapState.bitmap?.width?.toFloat() ?: 1f
+        val bmpH = mapState.bitmap?.height?.toFloat() ?: 1f
+
         // Store original start GPS for later recalibration — канонический source в NavViewModel
         navViewModel.setOriginalStartGps(fix.coordinate)
 
-        // Convert relative (0..1) coords to absolute pixels for calibration
-        val bmpW = mapState.bitmap?.width?.toFloat() ?: 1f
-        val bmpH = mapState.bitmap?.height?.toFloat() ?: 1f
-        navViewModel.addCalibrationPoint(
-            gpsFix = fix,
-            imageX = (mapState.startPoint?.x ?: 0f) * bmpW,
-            imageY = (mapState.startPoint?.y ?: 0f) * bmpH
+        // Одно-точечная калибровка (placeholder для будущей двух-точечной через "Здесь финиш")
+        val cal = MapCalibrationUtils.calibrateSinglePoint(
+            startGPS = fix.coordinate,
+            startPointImageX = (mapState.startPoint?.x ?: 0f) * bmpW,
+            startPointImageY = (mapState.startPoint?.y ?: 0f) * bmpH
         )
+        navViewModel.applyStartCalibration(cal)
         navViewModel.startTracking()
         infoMessage = "Старт привязан к GPS"
         isInfoVisible = true
-
-        // Calculate finish coordinates 1km away using magnetic bearing
-        val finishCoordinate = navViewModel.calculateDestinationCoordinate(
-            start = fix.coordinate,
-            bearingMagnetic = fix.bearing.toDouble(),
-            distanceMeters = 1000.0 // 1km default distance
-        )
-
-        // Create synthetic GPS fix for finish point
-        val finishFix = GpsFix(
-            coordinate = finishCoordinate,
-            accuracy = fix.accuracy,
-            bearing = fix.bearing,
-            speed = 0f,
-            timestamp = System.currentTimeMillis(),
-            altitude = fix.altitude
-        )
-
-        // Bind finish GPS to image finish point — convert relative to absolute pixels
-        val fBmpW = mapState.bitmap?.width?.toFloat() ?: 1f
-        val fBmpH = mapState.bitmap?.height?.toFloat() ?: 1f
-        navViewModel.addCalibrationPoint(
-            gpsFix = finishFix,
-            imageX = (mapState.finishPoint?.x ?: 0f) * fBmpW,
-            imageY = (mapState.finishPoint?.y ?: 0f) * fBmpH
-        )
-        infoMessage = "Финиш привязан к GPS (расчетный, 1км)"
-        isInfoVisible = true
     }
 
+    // Привязка финиша: создаёт синтетический GPS финиша по направлению и длине трека,
+    // пересчитывает масштаб карты и northAngle
     val bindGpsToFinish: () -> Unit = bindFinish@{
-
         val fix = gpsState.currentFix ?: return@bindFinish
+        val startGPS = navViewModel.getOriginalStartGps() ?: return@bindFinish
 
-        if (navViewModel.getOriginalStartGps() != null) {
-            // Use consolidated bind logic from MapCalibrationUtils — the canonical source for
-            // the "here is finish" binding flow: two-point calibration + north angle update.
-            val startGPS = navViewModel.getOriginalStartGps()!!
-            val finishGPS = fix.coordinate
+        val bmpW = mapState.bitmap?.width?.toFloat() ?: 1f
+        val bmpH = mapState.bitmap?.height?.toFloat() ?: 1f
+        val result = MapCalibrationUtils.bindGpsToFinishWithTrack(
+            startGPS = startGPS,
+            startPointImageX = (mapState.startPoint?.x ?: 0f) * bmpW,
+            startPointImageY = (mapState.startPoint?.y ?: 0f) * bmpH,
+            finishPointImageX = (mapState.finishPoint?.x ?: 0f) * bmpW,
+            finishPointImageY = (mapState.finishPoint?.y ?: 0f) * bmpH,
+            currentFixGPS = fix.coordinate
+        )
 
-            val bmpW = mapState.bitmap?.width?.toFloat() ?: 1f
-            val bmpH = mapState.bitmap?.height?.toFloat() ?: 1f
+        navViewModel.applyNewCalibration(result.calibration)
+        viewModel.updateNorthAngle(result.northAngleDegrees)
 
-            // Magnetic declination at the original start location
-            val geomagneticField = android.hardware.GeomagneticField(
-                fix.coordinate.latitude.toFloat(),
-                fix.coordinate.longitude.toFloat(),
-                fix.altitude.toFloat(),
-                fix.timestamp
-            )
-            val declination = geomagneticField.declination.toDouble()
-
-            // Build absolute pixel coordinates for the two calibration points on the bitmap
-            val pointAX = (mapState.startPoint?.x ?: 0f) * bmpW
-            val pointAY = (mapState.startPoint?.y ?: 0f) * bmpH
-            val pointBX = (mapState.finishPoint?.x ?: 0f) * bmpW
-            val pointBY = (mapState.finishPoint?.y ?: 0f) * bmpH
-
-            // Compute calibrated result in MapCalibrationUtils
-            val bindResult = MapCalibrationUtils.bindGpsToFinish(
-                startGps = startGPS,
-                startPointImageX = pointAX,
-                startPointImageY = pointAY,
-                finishGps = finishGPS,
-                finishPointImageX = pointBX,
-                finishPointImageY = pointBY,
-                magneticDeclination = declination
-            )
-
-            // Apply calibration state in NavViewModel (canonical location for bind-side effects)
-            navViewModel.applyBindResult(bindResult)
-
-            // Update north angle on the map (lives in MapState, not GpsState)
-            viewModel.updateNorthAngle(bindResult.northAngleDegrees)
-
-            infoMessage = "Масштаб карты и линия севера скорректированы"
-            isInfoVisible = true
-        } else {
-            // Fallback: no original start stored — just bind finish GPS as a single point
-            val fbW = mapState.bitmap?.width?.toFloat() ?: 1f
-            val fbH = mapState.bitmap?.height?.toFloat() ?: 1f
-            navViewModel.addCalibrationPoint(
-                gpsFix = fix,
-                imageX = (mapState.finishPoint?.x ?: 0f) * fbW,
-                imageY = (mapState.finishPoint?.y ?: 0f) * fbH
-            )
-            infoMessage = "Финиш привязан к GPS"
-            isInfoVisible = true
-        }
-
-        // Auto-mode: exit navigation, set start = old finish, activate finish placement
-        if (gpsState.autoMode && gpsState.autoCycleActive) {
-            navViewModel.setAutoCycleActive(false)
-            currentStepIndex = 1
-            mapState.finishPoint?.let { fp ->
-                viewModel.moveStartPoint(fp.x, fp.y)
-            }
-            viewModel.setPlacingMode(PlacingMode.PLACING_FINISH)
-            infoMessage = "Авто: Старт перемещен. Выберите новый финиш."
-            isInfoVisible = true
-        }
-    }
-
-    // Auto-cycle: when new finish is placed during auto-cycle, navigate to it
-    LaunchedEffect(mapState.finishPoint) {
-        if (gpsState.autoMode && gpsState.autoCycleActive && mapState.finishPoint != null && currentStepIndex == 1) {
-            currentStepIndex = 2
-            infoMessage = "Авто: Маршрут обновлен. Навигация."
-            isInfoVisible = true
-        }
+        infoMessage = "Масштаб: ${String.format("%.0f", result.calibration.scaleMetersPerPixel)} м/px"
+        isInfoVisible = true
     }
 
     // Когда обе привязки выполнены, показываем дистанцию и масштаб из gpsState
@@ -633,7 +550,6 @@ fun MainScreen(
                         icon = TargetIcon,
                         isActive = gpsState.finishCalibrated,
                         onClick = {
-                            navViewModel.setAutoCycleActive(gpsState.autoMode && gpsState.finishCalibrated)
                             val fix = gpsState.currentFix
                             if (fix != null && fix.accuracy < GPS_ACCURACY_LOW_THRESHOLD) {
                                 bindGpsToFinish()
@@ -784,11 +700,13 @@ fun MainScreen(
                                     // Bind current GPS to this KP — convert relative to absolute pixels
                                 val kpAbsX = kpBox.centerX * imageW
                                 val kpAbsY = kpBox.centerY * imageH
-                                navViewModel.addCalibrationPoint(
-                                    gpsFix = fix,
-                                    imageX = kpAbsX,
-                                    imageY = kpAbsY
-                                )
+                                    // Bind current GPS to this KP using single-point calibration
+                                    val newCal = MapCalibrationUtils.calibrateSinglePoint(
+                                        startGPS = fix.coordinate,
+                                        startPointImageX = kpAbsX,
+                                        startPointImageY = kpAbsY
+                                    )
+                                    navViewModel.applyNewCalibration(newCal)
                                     infoMessage = "КП ${kpIdx + 1} привязан к GPS"
                                     isInfoVisible = true
                                     navViewModel.setAutoBindActive(false)

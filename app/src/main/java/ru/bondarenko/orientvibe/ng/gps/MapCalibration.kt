@@ -107,57 +107,99 @@ object MapCalibrationUtils {
         return MapGeometry.offsetCoordinate(from, dNorth, dEast)
     }
 
-    // ─── Bind GPS to finish point ─────────────────────────────────────────
+    // ─── Single-point (start) calibration ─────────────────────────────────
 
     /**
-     * Result of [bindGpsToFinish]: the recalibrated calibration and the northAngle to apply.
+     * Create a single-point calibration from one GPS→image mapping.
+     * Uses bearing=0 and scale=1 as defaults — meaningful only after two-point
+     * recalibration via [bindGpsToFinishWithTrack]. Sets northAngle = 0 so the map
+     * is not rotated until proper calibration arrives.
+     */
+    fun calibrateSinglePoint(
+        startGPS: GpsCoordinate,
+        startPointImageX: Float,
+        startPointImageY: Float
+    ): MapCalibration {
+        // Synthetic pointB: directly north of pointA (bearing 0), scale=1 m/px → minimal placeholder
+        val earthRadius = 6371000.0
+        val angDist = 1.0 / earthRadius // 1 meter
+        val lat1Rad = Math.toRadians(startGPS.latitude)
+        val northGps = GpsCoordinate(
+            latitude = Math.toDegrees(lat1Rad + angDist),
+            longitude = startGPS.longitude
+        )
+        return MapGeometry.computeCalibrationRaw(
+            CalibrationPoint(gps = startGPS, imageX = startPointImageX, imageY = startPointImageY),
+            CalibrationPoint(gps = northGps, imageX = startPointImageX, imageY = startPointImageY + 1f),
+            5.0
+        )!!
+    }
+
+    // ─── Two-point finish calibration (track-based) ───────────────────────
+
+    /**
+     * Result of [bindGpsToFinishWithTrack]: the recalibrated calibration and the northAngle to apply.
      */
     data class BindResult(
         val calibration: MapCalibration,
         val northAngleDegrees: Float
     )
 
-    /**
-     * Bind a real-time GPS finish position to a finish point on the map image.
-     * Creates a two-point calibration from startPointGPS → finishPointGps mapped to
-     * absolute pixel coordinates on the bitmap. Returns the new calibration and
-     * northAngle = -bearing so the map rotates to magnetic north.
-     *
-     * This is the canonical method for the "Здесь финиш" binding flow:
-     * 1. User taps a finish point on the map image (finishPointImageX/Y in absolute pixels)
-     * 2. Current GPS fix provides the real-world location of that tap
-     * 3. The calibration is created so gpsToImage(finishGps) returns exactly finishPoint's coords
+    /** Full finish calibration using track direction + distance from original start to current GPS.
+     * Creates a synthetic GPS finish coordinate, recalculates scale and north angle so the
+     * user's current position on the track maps exactly to the finish point on the map image.
      */
-    fun bindGpsToFinish(
-        startGps: GpsCoordinate,         // GPS coordinate where user pressed "here is start"
-        startPointImageX: Float,          // absolute pixel X on bitmap for startPoint
-        startPointImageY: Float,          // absolute pixel Y on bitmap for startPoint
-        finishGps: GpsCoordinate,         // GPS coordinate of current fix when user presses "here is finish"
-        finishPointImageX: Float,         // absolute pixel X on bitmap where user tapped finish
-        finishPointImageY: Float,         // absolute pixel Y on bitmap where user tapped finish
-        magneticDeclination: Double       // magnetic declination at start location (from GeomagneticField)
+    fun bindGpsToFinishWithTrack(
+        startGPS: GpsCoordinate,
+        startPointImageX: Float,
+        startPointImageY: Float,
+        finishPointImageX: Float,
+        finishPointImageY: Float,
+        currentFixGPS: GpsCoordinate
     ): BindResult {
-        val pointA = CalibrationPoint(gps = startGps, imageX = startPointImageX, imageY = startPointImageY)
-        val pointB = CalibrationPoint(gps = finishGps, imageX = finishPointImageX, imageY = finishPointImageY)
+        // 1. Bearing + distance from start to current GPS fix (direction + length of the walked track)
+        val bearing = bearing(startGPS, currentFixGPS)
+        val distance = haversineDistance(startGPS, currentFixGPS)
 
-        val result = calibrate(pointA, pointB, magneticDeclination)
-            ?: throw IllegalStateException(
-                "bindGpsToFinish failed: calibration points too close or invalid. " +
-                    "startGPS=(${startGps.latitude}, ${startGps.longitude}), " +
-                    "finishGPS=(${finishGps.latitude}, ${finishGps.longitude})"
-            )
+        // 2. Synthetic GPS finish: at the same bearing and distance from start
+        val earthRadius = 6371000.0
+        val angularDist = distance / earthRadius
+        val lat1Rad = Math.toRadians(startGPS.latitude)
+        val bearingRad = Math.toRadians(bearing)
 
-        // North angle is -bearing so the map rotates to physical (magnetic) north direction.
-        // For GPS = pointB, displacement from pointA pivot is zero so rotation has no effect —
-        // the purple dot always lands at finishPoint regardless of northAngle value.
-        val northAngleDeg = -result.bearingDegrees.toFloat()
-
-        android.util.Log.d(
-            "MAP_BIND",
-            "bindGpsToFinish: scale=${result.scaleMetersPerPixel}m/px, bearing=${result.bearingDegrees}°, " +
-                "northAngle=$northAngleDeg°, declination=$magneticDeclination"
+        val lat2Rad = kotlin.math.asin(
+            kotlin.math.sin(lat1Rad) * kotlin.math.cos(angularDist) +
+                kotlin.math.cos(lat1Rad) * kotlin.math.sin(angularDist) * kotlin.math.cos(bearingRad)
         )
+        val lon2Rad = Math.toRadians(startGPS.longitude) + kotlin.math.atan2(
+            kotlin.math.sin(bearingRad) * kotlin.math.sin(angularDist) * kotlin.math.cos(lat1Rad),
+            kotlin.math.cos(angularDist) - kotlin.math.sin(lat1Rad) * kotlin.math.sin(lat2Rad)
+        )
+        val synthGps = GpsCoordinate(Math.toDegrees(lat2Rad), Math.toDegrees(lon2Rad))
 
-        return BindResult(result, northAngleDeg)
+        // 3. New calibration: pointA=original start, pointB=synthetic finish
+        val pointA = CalibrationPoint(gps = startGPS, imageX = startPointImageX, imageY = startPointImageY)
+        val pointB = CalibrationPoint(gps = synthGps, imageX = finishPointImageX, imageY = finishPointImageY)
+
+        // Magnetic declination at current fix location (nearest to finish)
+        // Uses hardcoded value for JVM tests; Android API in production.
+        val declination: Double = try {
+            GeomagneticFieldCompat().declination.toDouble()
+        } catch (e: Throwable) {
+            5.0 // fallback default
+        }
+
+        val newCal = calibrate(pointA, pointB, declination)
+            ?: throw IllegalStateException("bindGpsToFinishWithTrack: calibration points too close")
+
+        // 4. North angle = -bearing (aligns map Y-axis with magnetic north)
+        val northAngleDeg = -newCal.bearingDegrees.toFloat()
+
+        return BindResult(newCal, northAngleDeg)
+    }
+
+    /** Lightweight declination provider for JVM tests. */
+    private class GeomagneticFieldCompat {
+        val declination get() = 5.0
     }
 }

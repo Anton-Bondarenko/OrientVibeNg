@@ -212,11 +212,15 @@ class TrackRecalibrationTest {
         recorder.stopTracking()
     }
 
+    // ─────────────────────────── NEW TESTS: bindGpsToFinishWithTrack ───────────────────────────
+
     /**
-     * After bindGpsToFinish (recalibration with real finish GPS + northAngle update):
-     * 1. gpsToImage() WITHOUT rotation always returns exact pointB coords.
-     * 2. pointA is invariant under any rotation around itself (pivot anchor).
-     * 3. gpsToImageAbs at northAngle=0 also returns exact pointB coords.
+     * Complete calibration flow:
+     * 1. Create a route with bearing ~100°, distance ~2000m (Rhumb line)
+     * 2. User presses "Здесь старт" — tracks originalStartGps, starts recording
+     * 3. User walks 800m at track bearing 120° from original start
+     * 4. User presses "Здесь финиш" → bindGpsToFinishWithTrack creates synthetic GPS finish
+     * 5. Verify: current track position projects exactly to finishPoint image coords
      */
     @Test
     fun `after bindGpsToFinish gpsToImage returns exact pointB coords and pivot is invariant`() {
