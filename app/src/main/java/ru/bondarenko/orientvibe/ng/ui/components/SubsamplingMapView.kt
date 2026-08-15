@@ -125,10 +125,12 @@ class OverlayMapView(
         }
 
         // Purple circle for calibration point B (finish/second calibration point)
+        // Uses gpsToImageAbs with northAngle so it shares the same rotated coordinate frame as
+        // the green GPS dot — both rotate around pointA and render consistently on screen.
         calibrationPointBGps?.let { gpsB ->
             val cal = trackOverlay.calibration ?: return@let
-            val imageCoords = MapCalibrationUtils.gpsToImage(
-                gpsB, cal
+            val imageCoords = MapCalibrationUtils.gpsToImageAbs(
+                gpsB, cal, Pair(sWidth, sHeight), trackOverlay.northAngle
             ) ?: return@let
             val viewPt = sourceToViewCoord(imageCoords.first, imageCoords.second)
             if (viewPt != null) {

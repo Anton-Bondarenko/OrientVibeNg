@@ -18,14 +18,7 @@ object MapCalibrationUtils {
         pointB: CalibrationPoint,
         magneticDeclination: Double
     ): MapCalibration? {
-        val result = MapGeometry.computeCalibrationRaw(pointA, pointB, magneticDeclination)
-        if (result != null) {
-            android.util.Log.d(
-                "TRACK_DRAW",
-                "calibrate: true_bearing_ab=${MapGeometry.bearing(pointA.gps, pointB.gps)} raw_magneticBearing=${result.bearingDegrees} hasXYFlip=${result.hasXYFlip} physical_decl=$magneticDeclination"
-            )
-        }
-        return result
+        return MapGeometry.computeCalibrationRaw(pointA, pointB, magneticDeclination)
     }
 
     /** Returns the physical magnetic declination used for northAngle computation. */
@@ -68,38 +61,40 @@ object MapCalibrationUtils {
         return MapGeometry.eastDistance(from, to)
     }
 
-    // ─── Absolute GPS→image (with scaling + northAngle rotation) ──────────
+    // ─── Absolute GPS→image (with scaling, northAngle rotation handled by canvas) ──
 
     /**
-     * Convert GPS coordinate to absolute image-space coordinates (pixels),
-     * applying calibration bearing rotation AND northAngle adjustment.
+     * Convert GPS coordinate to absolute image-space coordinates (pixels).
+     * Uses the calibration's pointA anchor and uniform scale to map geographic offsets
+     * to pixel offsets, then rotates around pointA by northAngleDeg to align with the
+     * map's displayed orientation. This ensures projected GPS points stay consistent with
+     * the rotated map image — the green GPS dot and purple calibration-point markers
+     * both use this function so they share the same coordinate frame before sourceToViewCoord()
+     * applies the uniform canvas rotation in production rendering.
      */
     fun gpsToImageAbs(
         gps: GpsCoordinate,
         calibration: MapCalibration,
-        imageDimensions: Pair<Float, Float>,  // (width, height) in source pixels — unused but kept for API compatibility
-        northAngleDeg: Float
+        imageDimensions: Pair<Float, Float>,  // (width, height) — unused but kept for API compatibility
+        northAngleDeg: Float  // degrees to rotate around pointA
     ): Pair<Float, Float>? {
         val rel = gpsToImage(gps, calibration) ?: return null
 
-        // gpsToImage already returns calibrated absolute pixel coordinates.
-        // We keep the dims parameter for backward compatibility; actual values are used as-is.
-        var x = rel.first
-        var y = rel.second
+        if (northAngleDeg == 0f) return rel
 
-        if (northAngleDeg != 0f) {
-            val angleRad = Math.toRadians(northAngleDeg.toDouble())
-            val cosA = kotlin.math.cos(angleRad).toFloat()
-            val sinA = kotlin.math.sin(angleRad).toFloat()
-            // Pivot at calibration point A in absolute pixels
-            val px = calibration.pointA.imageX
-            val py = calibration.pointA.imageY
-            val dx = x - px
-            val dy = y - py
-            x = px + dx * cosA - dy * sinA
-            y = py + dx * sinA + dy * cosA
-        }
-        return Pair(x, y)
+        val pivotX = calibration.pointA.imageX.toDouble()
+        val pivotY = calibration.pointA.imageY.toDouble()
+        val angle = Math.toRadians(northAngleDeg.toDouble())
+        val cosA = kotlin.math.cos(angle)
+        val sinA = kotlin.math.sin(angle)
+
+        // Rotate around pointA (pivot) by northAngleDeg
+        val dx = rel.first.toDouble() - pivotX
+        val dy = rel.second.toDouble() - pivotY
+        val rx = pivotX + dx * cosA - dy * sinA
+        val ry = pivotY + dx * sinA + dy * cosA
+
+        return Pair(rx.toFloat(), ry.toFloat())
     }
 
     /** Offset the starting GPS coordinate by a northward and eastward displacement (metres). */
@@ -146,8 +141,8 @@ object MapCalibrationUtils {
     )
 
     /** Full finish calibration using track direction + distance from original start to current GPS.
-     * Creates a synthetic GPS finish coordinate, recalculates scale and north angle so the
-     * user's current position on the track maps exactly to the finish point on the map image.
+     * Creates a two-point calibration where pointA=startGPS and pointB=currentFixGPS,
+     * so the user's current position maps exactly to finishPoint on the map image.
      */
     fun bindGpsToFinishWithTrack(
         startGPS: GpsCoordinate,
@@ -157,29 +152,10 @@ object MapCalibrationUtils {
         finishPointImageY: Float,
         currentFixGPS: GpsCoordinate
     ): BindResult {
-        // 1. Bearing + distance from start to current GPS fix (direction + length of the walked track)
-        val bearing = bearing(startGPS, currentFixGPS)
-        val distance = haversineDistance(startGPS, currentFixGPS)
-
-        // 2. Synthetic GPS finish: at the same bearing and distance from start
-        val earthRadius = 6371000.0
-        val angularDist = distance / earthRadius
-        val lat1Rad = Math.toRadians(startGPS.latitude)
-        val bearingRad = Math.toRadians(bearing)
-
-        val lat2Rad = kotlin.math.asin(
-            kotlin.math.sin(lat1Rad) * kotlin.math.cos(angularDist) +
-                kotlin.math.cos(lat1Rad) * kotlin.math.sin(angularDist) * kotlin.math.cos(bearingRad)
-        )
-        val lon2Rad = Math.toRadians(startGPS.longitude) + kotlin.math.atan2(
-            kotlin.math.sin(bearingRad) * kotlin.math.sin(angularDist) * kotlin.math.cos(lat1Rad),
-            kotlin.math.cos(angularDist) - kotlin.math.sin(lat1Rad) * kotlin.math.sin(lat2Rad)
-        )
-        val synthGps = GpsCoordinate(Math.toDegrees(lat2Rad), Math.toDegrees(lon2Rad))
-
-        // 3. New calibration: pointA=original start, pointB=synthetic finish
+        // Use actual GPS coordinates directly — two-point calibration guarantees
+        // gpsToImage(pointB.gps) returns pointB.imageCoords exactly.
         val pointA = CalibrationPoint(gps = startGPS, imageX = startPointImageX, imageY = startPointImageY)
-        val pointB = CalibrationPoint(gps = synthGps, imageX = finishPointImageX, imageY = finishPointImageY)
+        val pointB = CalibrationPoint(gps = currentFixGPS, imageX = finishPointImageX, imageY = finishPointImageY)
 
         // Magnetic declination at current fix location (nearest to finish)
         // Uses hardcoded value for JVM tests; Android API in production.
@@ -192,7 +168,7 @@ object MapCalibrationUtils {
         val newCal = calibrate(pointA, pointB, declination)
             ?: throw IllegalStateException("bindGpsToFinishWithTrack: calibration points too close")
 
-        // 4. North angle = -bearing (aligns map Y-axis with magnetic north)
+        // North angle = -bearing (aligns map Y-axis with magnetic north)
         val northAngleDeg = -newCal.bearingDegrees.toFloat()
 
         return BindResult(newCal, northAngleDeg)

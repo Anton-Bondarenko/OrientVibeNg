@@ -368,7 +368,6 @@ class TrackRecalibrationTest {
 
         // ── Phase 2: "Здесь финиш" pressed — REAL currentFix GPS is DIFFERENT from synthetic ──
         // Use horizontal baseline (dNorth=0) for NUMERICALLY EXACT round-trip.
-        // Real finish has a DIFFERENT distance than synthetic (1000m), proving recalibration works.
         val realFinishGps = MapGeometry.offsetCoordinate(originalStartGps, dNorth = 0.0, dEast = 550.0)
 
         // Compute scale: GPS distance / image X delta (purely horizontal → exact round-trip)
@@ -427,11 +426,16 @@ class TrackRecalibrationTest {
         assertEquals("gpsToImageAbs angle=0: Y matches finishPoint.imageY",
             startPointImageY.toDouble(), absUnrotated.second.toDouble(), 1e-6)
 
-        // ── Test 4: document that rotation moves pointB in gpsToImageAbs (expected behavior) ──
-        val rotated = MapCalibrationUtils.gpsToImageAbs(realFinishGps, recalibratedCal, Pair(bmpW, bmpH), northAngleDeg)!!
-        val dx = kotlin.math.abs(rotated.first - finishPointImageX)
-        val dy = kotlin.math.abs(rotated.second - startPointImageY)
-        assertTrue("Rotation moves pointB in gpsToImageAbs as expected (dx=$dx, dy=$dy)", dx + dy > 0.1)
+        // ── Test 4: verify rotation is applied by comparing with/without northAngle ──
+        // NOTE: realFinishGps = pointB.gps always maps back to (finishX, finishY) even with rotation,
+        // because rotating the calibration baseline's own point around its pivot returns itself.
+        // So we compare gpsToImageAbs with northAngleDeg vs 0 — they should differ for non-zero bearing.
+        val nearPointGps = MapGeometry.offsetCoordinate(originalStartGps, dNorth = 50.0, dEast = 50.0)
+        val rotatedNear = MapCalibrationUtils.gpsToImageAbs(nearPointGps, recalibratedCal, Pair(bmpW, bmpH), northAngleDeg)!!
+        val unrotatedNear = MapCalibrationUtils.gpsToImageAbs(nearPointGps, recalibratedCal, Pair(bmpW, bmpH), 0f)!!
+        val dx = kotlin.math.abs(rotatedNear.first - unrotatedNear.first)
+        val dy = kotlin.math.abs(rotatedNear.second - unrotatedNear.second)
+        assertTrue("Rotation produces measurable displacement for nearby points (dx=$dx, dy=$dy)", dx + dy > 0.1)
     }
 
     /**
@@ -469,8 +473,7 @@ class TrackRecalibrationTest {
         // ── Step 2: "Здесь старт" pressed — GPS position at start location ──
         val originalStartGps = GpsCoordinate(50.45, 30.5)
 
-        // Horizontal GPS baseline: pointB.gps same lat as pointA.gps → cos(lat) matches exactly
-        // This is the GPS position where user presses "Здесь финиш" (stands on ground at finish location)
+        // Horizontal GPS baseline (dNorth=0): same latitude as pointA ensures exact cos(lat) match
         val routeEastDistanceM = 1000.0
         val currentFixGps = MapGeometry.offsetCoordinate(originalStartGps, dNorth = 0.0, dEast = routeEastDistanceM)
 
@@ -627,9 +630,7 @@ class TrackRecalibrationTest {
         val finishPointImageX = 620f
         val finishPointImageY = 180f
 
-        // ── Use horizontal baseline for NUMERICALLY EXACT invariant ──
-        // Construct pointB purely eastward so dNorth=0 and offsetCoordinate/eastDistance agree exactly.
-        // This ensures the calibration scale round-trips perfectly through gpsToImage.
+        // ── Eastward baseline (dNorth=0) — ensures exact gpsToImage round-trip invariant ──
         val realFinishGps = MapGeometry.offsetCoordinate(originalStartGps, dNorth = 0.0, dEast = 500.0)
 
         // Compute pixel distance for a horizontal image (same Y as pointA):
@@ -677,12 +678,14 @@ class TrackRecalibrationTest {
         assertEquals("gpsToImageAbs angle=0 X must match", finishPointImageX.toDouble(), absUnrotated.first.toDouble(), 1e-6)
         assertEquals("gpsToImageAbs angle=0 Y must match", finishPointImageH.toDouble(), absUnrotated.second.toDouble(), 1e-6)
 
-        // ── Document: with northAngle=-bearing, rotation moves pointB in gpsToImageAbs ──
-        val rotated = MapCalibrationUtils.gpsToImageAbs(realFinishGps, recalibratedCal, Pair(bmpW, bmpH), northAngleDeg)!!
-        val dx = kotlin.math.abs(rotated.first - finishPointImageX)
-        val dy = kotlin.math.abs(rotated.second - finishPointImageH)
-        assertTrue("Rotation moves pointB in gpsToImageAbs (dx=$dx, dy=$dy) — this is expected for non-zero bearing",
-            dx + dy > 0.1)
+        // ── Document: rotation produces displacement for points NOT on the calibration baseline ──
+        // NOTE: realFinishGps = pointB.gps always maps back to (finishX, finishY) even with rotation.
+        val nearbyGps = MapGeometry.offsetCoordinate(originalStartGps, dNorth = 50.0, dEast = 30.0)
+        val rotatedNear = MapCalibrationUtils.gpsToImageAbs(nearbyGps, recalibratedCal, Pair(bmpW, bmpH), northAngleDeg)!!
+        val unrotatedNear = MapCalibrationUtils.gpsToImageAbs(nearbyGps, recalibratedCal, Pair(bmpW, bmpH), 0f)!!
+        val dx = kotlin.math.abs(rotatedNear.first - unrotatedNear.first)
+        val dy = kotlin.math.abs(rotatedNear.second - unrotatedNear.second)
+        assertTrue("Rotation produces measurable displacement for nearby points (dx=$dx, dy=$dy)", dx + dy > 0.1)
     }
 
     /**

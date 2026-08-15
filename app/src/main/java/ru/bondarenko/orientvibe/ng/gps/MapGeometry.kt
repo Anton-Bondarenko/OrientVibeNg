@@ -45,8 +45,10 @@ object MapGeometry {
 
     /** Eastward distance in metres from *from* to *to*. Positive = east. */
     fun eastDistance(from: GpsCoordinate, to: GpsCoordinate): Double {
-        val avgLat = Math.toRadians((from.latitude + to.latitude) / 2.0)
-        return (to.longitude - from.longitude) * (Math.PI / 180.0) * EARTH_RADIUS_METERS * cos(avgLat)
+        // Use cos(from.lat) for longitude-to-meters conversion — matches offsetCoordinate,
+        // computeCalibrationRaw, and gpsToImageRelative which all use from (anchor) as reference.
+        val refLat = Math.toRadians(from.latitude)
+        return (to.longitude - from.longitude) * (Math.PI / 180.0) * EARTH_RADIUS_METERS * cos(refLat)
     }
 
     /** Offset the starting GPS coordinate by a northward and eastward displacement (metres). */
