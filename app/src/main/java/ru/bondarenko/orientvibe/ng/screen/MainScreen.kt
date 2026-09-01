@@ -432,13 +432,17 @@ fun MainScreen(
 
         val bmpW = mapState.bitmap?.width?.toFloat() ?: 1f
         val bmpH = mapState.bitmap?.height?.toFloat() ?: 1f
+        // Use existing calibration's declination (from start-point calibration) as fallback;
+        // if no calibration yet, default to 0 and let the new calibration set it later.
+        val declination = gpsState.calibration?.physicalDeclination ?: 5.0
         val result = MapCalibrationUtils.bindGpsToFinishWithTrack(
             startGPS = startGPS,
             startPointImageX = (mapState.startPoint?.x ?: 0f) * bmpW,
             startPointImageY = (mapState.startPoint?.y ?: 0f) * bmpH,
             finishPointImageX = (mapState.finishPoint?.x ?: 0f) * bmpW,
             finishPointImageY = (mapState.finishPoint?.y ?: 0f) * bmpH,
-            currentFixGPS = fix.coordinate
+            currentFixGPS = fix.coordinate,
+            magneticDeclination = declination
         )
 
         navViewModel.applyNewCalibration(result.calibration)

@@ -291,5 +291,225 @@ class BindGpsToFinishWithTrackTest {
         assertEquals("northAngle=0: Y", finishPointImageY.toDouble(), zeroAngle.second.toDouble(), 0.01)
     }
 
+    /**
+     * Verify: northAngle uses TRUE bearing (not magnetic bearing) so that
+     * the correction angle aligns with geographic direction, not compass direction.
+     *
+     * Before fix: northAngle = -raw_mag_bearing ≈ -(true_bearing - declination).
+     *   For horizontal baseline: true_bearing ≈ 90°, raw_mag_bearing ≈ 85°.
+     *   northAngle ≈ -85° → gpsToImageAbs shifts currentFixGPS off finishPoint.
+     *
+     * After fix: northAngle = -true_bearing ≈ -90°.
+     *   The correction angle matches the TRUE geographic direction from A to B,
+     *   NOT the compass direction (which includes declination).
+     *
+     * Key insight: cal.bearingDegrees already encodes bearing in the calibration frame.
+     * Using northAngle = -raw_mag_bearing double-encodes declination — once through
+     * cal.scaleMetersPerPixel and again through the explicit rotation, shifting X by ~48px.
+     * Fix: use true bearing for northAngle only (geographic alignment), let calibration
+     * frame handle magnetic direction independently.
+     */
+    @Test
+    fun `bindGpsToFinishWithTrack northAngle uses true bearing not raw magnetic`() {
+        val bmpW = 1000f
+        val bmpH = 800f
+        val startPointImageX = 200f
+        val startPointImageY = 600f
+        val finishPointImageX = 750f
+        val finishPointImageY = 600f
+
+        val originalStartGps = GpsCoordinate(50.45, 30.5)
+
+        // Horizontal baseline: user walks due east along same latitude
+        val currentFixGPS = MapGeometry.offsetCoordinate(originalStartGps, dNorth = 0.0, dEast = 800.0)
+
+        val result = MapCalibrationUtils.bindGpsToFinishWithTrack(
+            startGPS = originalStartGps,
+            startPointImageX = startPointImageX,
+            startPointImageY = startPointImageY,
+            finishPointImageX = finishPointImageX,
+            finishPointImageY = finishPointImageY,
+            currentFixGPS = currentFixGPS
+        )
+
+        val northAngleDeg = result.northAngleDegrees
+        val trueBearing = MapGeometry.bearing(originalStartGps, currentFixGPS)
+
+        System.err.println("NORTH: northAngle=${northAngleDeg}°, true_bearing=${trueBearing}°")
+
+        // KEY ASSERTION: northAngle must equal -true_bearing (declination-independent).
+        // This ensures the correction angle aligns with geographic direction.
+        val expectedNorthAngle = -trueBearing.toFloat()
+        assertEquals(
+            "northAngle must equal -true_bearing, not -raw_mag_bearing",
+            expectedNorthAngle.toDouble(),
+            northAngleDeg.toDouble(),
+            0.1  // small tolerance for Rhumb-line vs haversine bearing differences
+        )
+
+        // Verify: gpsToImage (unrotated) maps currentFixGPS to finishPoint EXACTLY.
+        // This is the core two-point invariant — holds regardless of northAngle.
+        val unrotated = MapCalibrationUtils.gpsToImage(currentFixGPS, result.calibration)!!
+        assertEquals(
+            "gpsToImage: X → finishPoint (unconditional invariant)",
+            finishPointImageX.toDouble(), unrotated.first.toDouble(), 0.01
+        )
+        assertEquals(
+            "gpsToImage: Y → finishPoint (unconditional invariant)",
+            finishPointImageY.toDouble(), unrotated.second.toDouble(), 0.01
+        )
+
+        // Verify: northAngle is close to -90° for horizontal baseline (due east walk).
+        assertTrue(
+            "northAngle ≈ -90° for due-east walk: ${northAngleDeg}°",
+            kotlin.math.abs(kotlin.math.abs(northAngleDeg) - 90.0) < 1.0
+        )
+
+        // Verify: gpsToImageAbs at northAngle=0 returns same as gpsToImage (proves pivot=pointA).
+        val zeroProjected = MapCalibrationUtils.gpsToImageAbs(
+            currentFixGPS, result.calibration, Pair(bmpW, bmpH), 0f
+        )!!
+        assertEquals(
+            "gpsToImageAbs(0) == gpsToImage at finishPoint (pivot=pointA)",
+            unrotated.first.toDouble(), zeroProjected.first.toDouble(), 0.01
+        )
+        assertEquals(
+            "gpsToImageAbs(0) Y matches",
+            unrotated.second.toDouble(), zeroProjected.second.toDouble(), 0.01
+        )
+
+        System.err.println("NORTH: unrotated=($unrotated), absProj(northAngle)=(${result.calibration.scaleMetersPerPixel})")
+    }
+
+    /**
+     * Regression test: bindGpsToFinishWithTrack's northAngle must account for magnetic
+     * declination. The user has placed the start/finish such that the map's top edge is
+     * aligned with magnetic north (a typical orienteering map). With declination = +10°,
+     * walking TRUE-north on the ground must produce a track on the map that tilts +10°
+     * clockwise from screen-up — not 0°.
+     *
+     * Scenario:
+     *   - Map: bottom = start point (imageY = 0.8 * 1000 = 800), top = finish point
+     *          (imageY = 0.2 * 1000 = 200). The image Y-axis (smaller pixel index at the top)
+     *          corresponds to magnetic north on the physical map.
+     *   - GPS: start = (50.45, 30.5). User walks due TRUE-north (true bearing 0°) for 500m,
+     *          then presses "Здесь финиш" → bindGpsToFinishWithTrack is invoked.
+     *   - Declination at the user's location: +10° (east).
+     *
+     * Expected:
+     *   - finishPoint GPS = 500m due north of startGPS.
+     *   - The northAngle returned by bindGpsToFinishWithTrack must equal
+     *     -(trueBearing - declination) = -(0° - 10°) = +10° — NOT -(0°) = 0°.
+     *   - The rendered track (start→finish via gpsToImageAbs + northAngle) must appear at
+     *     screen angle +10° (clockwise from screen-up), confirming the user sees the
+     *     GPS north track on the magnetic-north-aligned map at the expected angle.
+     */
+    @Test
+    fun `bindGpsToFinishWithTrack northAngle accounts for magnetic declination`() {
+        val declination = 10.0
+
+        val bmpW = 1000f
+        val bmpH = 1000f
+
+        // Map: start at bottom (imageY=800), finish at top (imageY=200). The map's
+        // top edge is the magnetic-north direction.
+        val startPointImageX = 500f
+        val startPointImageY = 800f
+        val finishPointImageX = 500f
+        val finishPointImageY = 200f
+
+        // User starts at this GPS and walks 500m due TRUE-north (true bearing 0°)
+        // before pressing "Здесь финиш".
+        val originalStartGps = GpsCoordinate(50.45, 30.5)
+        val currentFixGPS = MapGeometry.offsetCoordinate(
+            originalStartGps, dNorth = 500.0, dEast = 0.0
+        )
+
+        // === Run bindGpsToFinishWithTrack with the explicit declination overload ===
+        val result = MapCalibrationUtils.bindGpsToFinishWithTrack(
+            startGPS = originalStartGps,
+            startPointImageX = startPointImageX,
+            startPointImageY = startPointImageY,
+            finishPointImageX = finishPointImageX,
+            finishPointImageY = finishPointImageY,
+            currentFixGPS = currentFixGPS,
+            magneticDeclination = declination
+        )
+
+        // === Assertion 1: northAngle must equal -(trueBearing - declination) ===
+        val trueBearing = MapGeometry.bearing(originalStartGps, currentFixGPS)
+        val expectedNorthAngle = -(trueBearing - declination).toFloat()
+        assertEquals(
+            "northAngle must use rawMagneticBearing (trueBearing - declination), not raw trueBearing",
+            expectedNorthAngle.toDouble(),
+            result.northAngleDegrees.toDouble(),
+            0.5
+        )
+        // With trueBearing ≈ 0° and declination +10°, northAngle must be ≈ +10° (not 0°).
+        assertTrue(
+            "northAngle must be ≈ +10° for declination=+10°; got ${result.northAngleDegrees}°",
+            kotlin.math.abs(result.northAngleDegrees - 10f) < 1f
+        )
+
+        // === Assertion 2: Rendered track screen angle ===
+        // Use the calibration's bearing-derived northAngle to project start and finish GPS
+        // onto the calibrated map, and check that the resulting vector tilts +10°.
+        val startImg = MapCalibrationUtils.gpsToImageAbs(
+            originalStartGps, result.calibration, Pair(bmpW, bmpH), result.northAngleDegrees
+        )!!
+        val finishImg = MapCalibrationUtils.gpsToImageAbs(
+            currentFixGPS, result.calibration, Pair(bmpW, bmpH), result.northAngleDegrees
+        )!!
+        val dx = finishImg.first - startImg.first
+        val dy = finishImg.second - startImg.second
+        // 0° = up (screen-up), 90° = right, etc.
+        val trackScreenAngle = Math.toDegrees(kotlin.math.atan2(dx.toDouble(), (-dy).toDouble()))
+        assertEquals(
+            "Track walking TRUE-north must render at +10° (declination=${declination}°); got $trackScreenAngle°",
+            declination, trackScreenAngle, 1.0
+        )
+    }
+
+    /**
+     * Regression test (negative declination): with declination = -10° (west), walking
+     * TRUE-north must render at -10° (counter-clockwise from screen-up).
+     */
+    @Test
+    fun `bindGpsToFinishWithTrack northAngle handles negative declination`() {
+        val declination = -10.0
+        val startPointImageX = 500f
+        val startPointImageY = 800f
+        val finishPointImageX = 500f
+        val finishPointImageY = 200f
+
+        val originalStartGps = GpsCoordinate(50.45, 30.5)
+        val currentFixGPS = MapGeometry.offsetCoordinate(
+            originalStartGps, dNorth = 500.0, dEast = 0.0
+        )
+
+        val result = MapCalibrationUtils.bindGpsToFinishWithTrack(
+            startGPS = originalStartGps,
+            startPointImageX = startPointImageX,
+            startPointImageY = startPointImageY,
+            finishPointImageX = finishPointImageX,
+            finishPointImageY = finishPointImageY,
+            currentFixGPS = currentFixGPS,
+            magneticDeclination = declination
+        )
+
+        val trueBearing = MapGeometry.bearing(originalStartGps, currentFixGPS)
+        val expectedNorthAngle = -(trueBearing - declination).toFloat()
+        assertEquals(
+            "northAngle must use rawMagneticBearing",
+            expectedNorthAngle.toDouble(),
+            result.northAngleDegrees.toDouble(),
+            0.5
+        )
+        assertTrue(
+            "northAngle must be ≈ -10° for declination=-10°; got ${result.northAngleDegrees}°",
+            kotlin.math.abs(result.northAngleDegrees + 10f) < 1f
+        )
+    }
+
     private fun Double.toFixed(digits: Int): String = "%.${digits}f".format(this)
 }

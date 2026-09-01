@@ -150,32 +150,25 @@ object MapCalibrationUtils {
         startPointImageY: Float,
         finishPointImageX: Float,
         finishPointImageY: Float,
-        currentFixGPS: GpsCoordinate
+        currentFixGPS: GpsCoordinate,
+        magneticDeclination: Double = 0.0
     ): BindResult {
         // Use actual GPS coordinates directly — two-point calibration guarantees
         // gpsToImage(pointB.gps) returns pointB.imageCoords exactly.
         val pointA = CalibrationPoint(gps = startGPS, imageX = startPointImageX, imageY = startPointImageY)
         val pointB = CalibrationPoint(gps = currentFixGPS, imageX = finishPointImageX, imageY = finishPointImageY)
 
-        // Magnetic declination at current fix location (nearest to finish)
-        // Uses hardcoded value for JVM tests; Android API in production.
-        val declination: Double = try {
-            GeomagneticFieldCompat().declination.toDouble()
-        } catch (e: Throwable) {
-            5.0 // fallback default
-        }
-
-        val newCal = calibrate(pointA, pointB, declination)
+        val newCal = calibrate(pointA, pointB, magneticDeclination)
             ?: throw IllegalStateException("bindGpsToFinishWithTrack: calibration points too close")
 
-        // North angle = -bearing (aligns map Y-axis with magnetic north)
-        val northAngleDeg = -newCal.bearingDegrees.toFloat()
+        // North angle = -raw_magnetic_bearing = -(trueBearing - declination).
+        // For a magnetic-north-aligned orienteering map the image frame is rotated
+        // relative to geographic north by +declination.  Compensating with
+        // northAngle = -rawMagneticBearing cancels that rotation so currentFixGPS
+        // projects EXACTLY onto finishPoint after canvas rotation.
+        val trueBearing = MapGeometry.bearing(pointA.gps, pointB.gps)
+        val northAngleDeg = -(trueBearing - magneticDeclination).toFloat()
 
         return BindResult(newCal, northAngleDeg)
-    }
-
-    /** Lightweight declination provider for JVM tests. */
-    private class GeomagneticFieldCompat {
-        val declination get() = 5.0
     }
 }

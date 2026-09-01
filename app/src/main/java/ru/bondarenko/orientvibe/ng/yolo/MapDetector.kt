@@ -231,12 +231,19 @@ class MapDetector(private val context: Context) {
                 continue
             }
 
+            val cropW = minOf(max(roiX2 - roiX1, MIN_ROI_WIDTH).toInt(), bitmap.width - roiX1)
+            val cropH = minOf(max(roiY2 - roiY1, MIN_ROI_HEIGHT).toInt(), bitmap.height - roiY1)
+            if (cropW <= 0 || cropH <= 0) {
+                results.add(makeEmptyBox(numberBox))
+                continue
+            }
+
             val roiBitmap = Bitmap.createBitmap(
                 bitmap,
                 roiX1,
                 roiY1,
-                max(roiX2 - roiX1, MIN_ROI_WIDTH),
-                max(roiY2 - roiY1, MIN_ROI_HEIGHT)
+                cropW,
+                cropH
             ) ?: run {
                 results.add(makeEmptyBox(numberBox))
                 continue
