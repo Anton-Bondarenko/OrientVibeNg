@@ -1,0 +1,9 @@
+
+path: E:/git/OrientVibe-1/dataset/orienteering_yolo_dataset
+
+train: train/images
+val: val/images
+
+names:
+  0: control_point
+  1: number
