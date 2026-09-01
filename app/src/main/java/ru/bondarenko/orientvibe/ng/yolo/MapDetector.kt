@@ -166,7 +166,7 @@ class MapDetector(private val context: Context) {
 
             Log.d(
                 tag,
-                "Detection: controls=${matchedControls.size}, numbers=${detectedNumbers.size}"
+                "Detection: controls=${matchedControls.size}, numbers total=${numbersBoxes.size}, with_digit=${detectedNumbers.count { it.number != null }}, without_digit=${detectedNumbers.count { it.number == null }}"
             )
             MapDetectionResult(matchedControls, numbersBoxes)
         } catch (e: Exception) {
@@ -195,9 +195,13 @@ class MapDetector(private val context: Context) {
             height = height,
             confidence = dr.confidence,
             label = "",
-            number = null
+            number = null,
+            tileId = dr.tileId
         )
     }
+
+    /** Slice size — совпадает с OnnxObjectDetector.inputImageWidth. */
+    private companion object { val SLICE_SIZE = 640 }
 
     /** Recognises digits inside each number bounding box via OCR, returns boxes with assembled numbers. */
     private suspend fun detectAndAssembleNumbers(
@@ -210,6 +214,36 @@ class MapDetector(private val context: Context) {
             // ТОЧКА ОТМЕНЫ 3: Проверяем перед обработкой каждого отдельного номера
             // Если корутина отменена, выполнение прервется, а блок try-finally гарантирует вызов roiBitmap.recycle()
             currentCoroutineContext().ensureActive()
+
+            // Пропускаем OCR для боксов, обрезанных границами тайла.
+            // Они содержат только часть объекта (детектирована на краю тайла).
+            // За счёт избыточного наложения — полная версия есть в соседнем тайле.
+            Log.d(tag, "NUM#${numbersBoxes.indexOf(numberBox)} tileId=${numberBox.tileId} cx=${"%.4f".format(numberBox.centerX)} cy=${"%.4f".format(numberBox.centerY)} w=${"%.4f".format(numberBox.width)} h=${"%.4f".format(numberBox.height)} conf=${"%.3f".format(numberBox.confidence)}")
+            // bbox tileId указывает, в каком слайсе YOLO обнаружил число.
+            // Координаты cx/cy/w/h всегда в нормализованных координатах полного изображения — ROI корректен.
+            // Раньше мы пропускали OCR для bbox, частично выходящих за границы слайса, но это приводило
+            // к потере номеров на границах тайлов (число детектировано в одном слайсе, а bbox частично
+            // лежит в соседнем — по координатам проверяем: leftNorm < 0).
+            // Теперь OCR запускается всегда — ROI берётся из полной картинки.
+            if (numberBox.tileId != null) {
+                val tileIdx = numberBox.tileId!!
+                val numSlicesXPerRow = kotlin.math.ceil(bitmap.width.toDouble() / (SLICE_SIZE - SLICE_SIZE / 5)).toInt()
+                val col = tileIdx / numSlicesXPerRow
+                val row = tileIdx % numSlicesXPerRow
+                val offsetX = col * (SLICE_SIZE - SLICE_SIZE / 5)
+                val offsetY = row * (SLICE_SIZE - SLICE_SIZE / 5)
+
+                // Конвертируем bbox из абсолютных пикселей → локальные координаты тайла
+                val leftNorm = numberBox.centerX - numberBox.width / 2f - offsetX / bitmap.width.toFloat()
+                val rightNorm = numberBox.centerX + numberBox.width / 2f - offsetX / bitmap.width.toFloat()
+                val topNorm = numberBox.centerY - numberBox.height / 2f - offsetY / bitmap.height.toFloat()
+                val bottomNorm = numberBox.centerY + numberBox.height / 2f - offsetY / bitmap.height.toFloat()
+
+                Log.d(tag, "  slice=$tileIdx [$col,$row] offsetX=$offsetX offsetY=$offsetY bounds=tl=${"%.4f".format(leftNorm)} tr=${"%.4f".format(rightNorm)} bl=${"%.4f".format(topNorm)} br=${"%.4f".format(bottomNorm)}")
+                if (leftNorm < 0 || rightNorm >= 1 || topNorm < 0 || bottomNorm >= 1) {
+                    Log.d(tag, "  bbox частично вне слайса #$tileIdx, но OCR запускаем — координаты полн. изображения ROI корректен")
+                }
+            }
 
             val cxPx = numberBox.centerX * bitmap.width
             val cyPx = numberBox.centerY * bitmap.height
@@ -226,7 +260,10 @@ class MapDetector(private val context: Context) {
                 (cyPx + halfH * DIGIT_ROI_EXPANSION_FACTOR).coerceAtMost(bitmap.height.toFloat())
                     .toInt()
 
+            Log.d(tag, "  cx=$cxPx cy=$cyPx halfW=$halfW halfH=$halfH rawROI=[$roiX1,$roiY1]-$roiX2,$roiY2 sz=${roiX2-roiX1}x${roiY2-roiY1}")
+
             if (roiX2 - roiX1 < 8 || roiY2 - roiY1 < 8) {
+                Log.w(tag, "  >>> SKIP ROI too small: ${roiX2 - roiX1}x${roiY2 - roiY1}")
                 results.add(makeEmptyBox(numberBox))
                 continue
             }
@@ -234,10 +271,12 @@ class MapDetector(private val context: Context) {
             val cropW = minOf(max(roiX2 - roiX1, MIN_ROI_WIDTH).toInt(), bitmap.width - roiX1)
             val cropH = minOf(max(roiY2 - roiY1, MIN_ROI_HEIGHT).toInt(), bitmap.height - roiY1)
             if (cropW <= 0 || cropH <= 0) {
+                Log.w(tag, "  >>> SKIP crop dims invalid: w=$cropW h=$cropH")
                 results.add(makeEmptyBox(numberBox))
                 continue
             }
 
+            Log.d(tag, "  finalCrop=[$roiX1,$roiY1] ${cropW}x$cropH")
             val roiBitmap = Bitmap.createBitmap(
                 bitmap,
                 roiX1,
@@ -245,79 +284,98 @@ class MapDetector(private val context: Context) {
                 cropW,
                 cropH
             ) ?: run {
+                Log.w(tag, "  >>> SKIP createBitmap returned null")
                 results.add(makeEmptyBox(numberBox))
                 continue
             }
 
             try {
-                val digitDetector = detectorDigits ?: continue
-                val digitDetections = digitDetector.detect(roiBitmap)
+                val digitDetector = detectorDigits ?: run {
+                    Log.w(tag, "  >>> SKIP digitDetector is null")
+                    results.add(makeEmptyBox(numberBox))
+                    null
+                }
 
-                // Filter valid digits (classId 0-9) and convert ROI coords → original image coords
-                val validDigits = mutableListOf<Pair<BoundingBox, Int>>()
-                for (dr in digitDetections) {
-                    if (dr.confidence < DIG_CONFIDENCE || dr.classId !in 0..9) continue
+                digitDetector?.let { det ->
+                    val digitDetections = det.detect(roiBitmap)
+                    Log.d(tag, "  rawDigits=${digitDetections.size} on ${roiBitmap.width}x${roiBitmap.height}")
 
-                    val scaleX = bitmap.width.toFloat() / roiBitmap.width.toFloat()
-                    val scaleY = bitmap.height.toFloat() / roiBitmap.height.toFloat()
+                    // Filter valid digits (classId 0-9) and convert ROI coords → original image coords
+                    val validDigits = mutableListOf<Pair<BoundingBox, Int>>()
+                    for (dr in digitDetections) {
+                        Log.d(tag, "    rawDigit classId=${dr.classId} conf=${"%.3f".format(dr.confidence)} box=[${dr.boundingBox.left}, ${dr.boundingBox.top}] [${dr.boundingBox.right}, ${dr.boundingBox.bottom}]")
+                        if (dr.confidence < DIG_CONFIDENCE || dr.classId !in 0..9) {
+                            Log.d(tag, "    filtered out: conf=${"%.3f".format(dr.confidence)} classId=${dr.classId}")
+                            continue
+                        }
 
-                    val cx2 = (dr.boundingBox.left * scaleX + roiX1) / bitmap.width.toFloat()
-                    val cy2 = (dr.boundingBox.top * scaleY + roiY1) / bitmap.height.toFloat()
-                    val bw2 =
-                        (dr.boundingBox.right - dr.boundingBox.left) * scaleX / bitmap.width.toFloat()
-                    val bh2 =
-                        (dr.boundingBox.bottom - dr.boundingBox.top) * scaleY / bitmap.height.toFloat()
+                        val scaleX = bitmap.width.toFloat() / roiBitmap.width.toFloat()
+                        val scaleY = bitmap.height.toFloat() / roiBitmap.height.toFloat()
 
-                    validDigits.add(
-                        Pair(
-                            BoundingBox(
-                                cx2,
-                                cy2,
-                                bw2,
-                                bh2,
-                                dr.confidence,
-                                "digit",
-                                null
-                            ), dr.classId
+                        val cx2 = (dr.boundingBox.left * scaleX + roiX1) / bitmap.width.toFloat()
+                        val cy2 = (dr.boundingBox.top * scaleY + roiY1) / bitmap.height.toFloat()
+                        val bw2 =
+                            (dr.boundingBox.right - dr.boundingBox.left) * scaleX / bitmap.width.toFloat()
+                        val bh2 =
+                            (dr.boundingBox.bottom - dr.boundingBox.top) * scaleY / bitmap.height.toFloat()
+
+                        validDigits.add(
+                            Pair(
+                                BoundingBox(
+                                    cx2,
+                                    cy2,
+                                    bw2,
+                                    bh2,
+                                    dr.confidence,
+                                    "digit",
+                                    null
+                                ), dr.classId
+                            )
+                        )
+                    }
+
+                    Log.d(tag, "  validDigits=${validDigits.size}")
+                    if (validDigits.isEmpty()) {
+                        Log.w(tag, "  >>> SKIP no valid digits found")
+                        continue
+                    }
+
+                    // Assemble digits left→right into a single number value.
+                    val sorted = validDigits.sortedBy { p -> p.first.centerX }
+                    var number = 0
+                    for ((_, digitNum) in sorted) {
+                        Log.d(tag, "    digit=$digitNum conf=${"%.3f".format(sorted.find { it.second == digitNum }?.first?.confidence ?: 0f)}")
+                        number = number * 10 + digitNum
+                    }
+
+                    // Create one merged bbox for the entire number (not individual digits).
+                    val leftest = sorted.first().first
+                    val rightest = sorted.last().first
+                    numberBox.number = number
+                    Log.d(tag, "  >>> NUMBER=$number from ${validDigits.size} digit(s)")
+                    results.add(
+                        BoundingBox(
+                            centerX = (leftest.centerX + rightest.centerX) / 2f,
+                            centerY = (leftest.centerY + rightest.centerY) / 2f,
+                            width = if (sorted.size > 1) {
+                                (rightest.centerX + rightest.width / 2f) - (leftest.centerX - leftest.width / 2f)
+                            } else {
+                                leftest.width
+                            },
+                            height = sorted.maxOf { it.first.height },
+                            confidence = sorted.maxOf { it.first.confidence },
+                            label = "number",
+                            number = number
                         )
                     )
                 }
-
-                if (validDigits.isEmpty()) {
-                    // Не добавляем bbox — только жёлтая рамка для области с цифрами
-                    continue
-                }
-
-                // Assemble digits left→right into a single number value.
-                val sorted = validDigits.sortedBy { p -> p.first.centerX }
-                var number = 0
-                for ((_, digitNum) in sorted) {
-                    number = number * 10 + digitNum
-                }
-
-                // Create one merged bbox for the entire number (not individual digits).
-                val leftest = sorted.first().first
-                val rightest = sorted.last().first
-                numberBox.number = number
-                results.add(
-                    BoundingBox(
-                        centerX = (leftest.centerX + rightest.centerX) / 2f,
-                        centerY = (leftest.centerY + rightest.centerY) / 2f,
-                        width = if (sorted.size > 1) {
-                            (rightest.centerX + rightest.width / 2f) - (leftest.centerX - leftest.width / 2f)
-                        } else {
-                            leftest.width
-                        },
-                        height = sorted.maxOf { it.first.height },
-                        confidence = sorted.maxOf { it.first.confidence },
-                        label = "number",
-                        number = number
-                    )
-                )
             } finally {
                 roiBitmap.recycle()
             }
         }
+
+        val withNum = results.count { it.number != null }
+        Log.d(tag, "detectAndAssembleNumbers: $withNum/${results.size} numbers recognized")
 
         return results
     }

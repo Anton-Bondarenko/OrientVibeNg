@@ -26,7 +26,8 @@ import androidx.core.graphics.createBitmap
 data class DetectionResult(
     val boundingBox: RectF,
     val confidence: Float,
-    val classId: Int
+    val classId: Int,
+    val tileId: Int? = null // номер тайла детекции, null = глобальная детекция (без нарезки)
 )
 
 interface DetectionProgressListener {
@@ -159,6 +160,7 @@ class OnnxObjectDetector(private val context: Context) {
         // Process each slice
         for (y in 0 until numSlicesY) {
             for (x in 0 until numSlicesX) {
+                val sliceIdx = y * numSlicesX + x
                 // ТОЧКА ОТМЕНЫ 1: Проверяем перед обработкой каждого тайла.
                 // Если задача отменена через shared AtomicReference в MapDetector, этот метод выбросит CancellationException,
                 // выполнение цикла прекратится, а блок catch/finally утилизирует 'source' bitmap.
@@ -208,7 +210,7 @@ class OnnxObjectDetector(private val context: Context) {
                         det.boundingBox.right + sliceX1,
                         det.boundingBox.bottom + sliceY1
                     )
-                    DetectionResult(adjustedBox, det.confidence, det.classId)
+                    DetectionResult(adjustedBox, det.confidence, det.classId, tileId = sliceIdx)
                 }
 
                 allDetections.addAll(adjustedDetections)
