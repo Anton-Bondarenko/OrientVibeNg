@@ -267,9 +267,12 @@ fun MainScreen(
         }
 
     // Compute map rotation: rotate image so route line is vertical (bottom-to-top)
+    // Include placingMode in dependencies — while active, return stable 0f to avoid
+    // triggering DisposableEffect(mapRotation) which would block tap handling.
     val mapRotation =
-        remember(mapState.startPoint, mapState.finishPoint, mapState.bitmap, currentStepIndex) {
-            if (currentStepIndex == 2) {
+        remember(mapState.startPoint, mapState.finishPoint, mapState.bitmap,
+            currentStepIndex, mapState.placingMode) {
+            if (currentStepIndex == 2 && mapState.placingMode == PlacingMode.NONE) {
                 val sp = mapState.startPoint
                 val fp = mapState.finishPoint
                 val bmp = mapState.bitmap

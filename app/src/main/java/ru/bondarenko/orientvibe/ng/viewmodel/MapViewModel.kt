@@ -38,6 +38,8 @@ class MapViewModel(
     private val context: Context
 ) : ViewModel(), MapDetectionProgressListener {
 
+    private val tag = "MapViewModel"
+
     companion object {
         fun Factory(context: Context) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -195,7 +197,11 @@ class MapViewModel(
 
     fun placeRoutePoint(relativeX: Float, relativeY: Float) {
         val state = _mapState.value
-        if (state.placingMode == PlacingMode.NONE) return
+        Log.d(tag, "placeRoutePoint x=$relativeX y=$relativeY placingMode=${state.placingMode}")
+        if (state.placingMode == PlacingMode.NONE) {
+            Log.w(tag, "  >>> EARLY RETURN: placingMode is NONE")
+            return
+        }
 
         val finalPoint = snapToControlPoint(relativeX, relativeY)
 
