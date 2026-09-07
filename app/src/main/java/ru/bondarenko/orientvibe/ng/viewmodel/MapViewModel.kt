@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.os.Environment
+import java.io.File
 import ru.bondarenko.orientvibe.ng.model.MapState
 import ru.bondarenko.orientvibe.ng.model.PlacingMode
 import ru.bondarenko.orientvibe.ng.model.RoutePoint
@@ -73,6 +75,18 @@ class MapViewModel(
                 _mapState.value = _mapState.value.copy(
                     errorMessage = "Failed to load orientmapv8n.onnx model"
                 )
+            } else {
+                // Debug: автозагрузка карты из /sdcard/Pictures/ если нет загруженной карты
+                val picturesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+                val mapFile = File(picturesDir, "PXL_20260830_092754005.jpg")
+                if (mapFile.exists()) {
+                    Log.d(tag, "Debug auto-loading map from: ${mapFile.absolutePath}")
+                    try {
+                        loadBitmapFromUri(Uri.fromFile(mapFile))
+                    } catch (e: Exception) {
+                        Log.w(tag, "Debug auto-load failed: ${e.message}", e)
+                    }
+                }
             }
         }
     }
@@ -104,6 +118,14 @@ class MapViewModel(
     // ── Image loading + detection entry point ──────────────────────────────
 
     /** Загрузка Bitmap напрямую (для TakePicturePreview — без FileProvider). */
+    private fun loadBitmapFromUri(uri: Uri): Bitmap {
+        val inputStream = context.contentResolver.openInputStream(uri)
+            ?: throw IllegalArgumentException("Cannot open URI: $uri")
+        val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
+        inputStream.close()
+        return bitmap ?: throw IllegalStateException("Failed to decode bitmap from URI: $uri")
+    }
+
     fun loadImageFromBitmap(bitmap: android.graphics.Bitmap, imageUri: Uri? = null) {
         var displayBitmap =
             bitmap.copy(bitmap.config ?: android.graphics.Bitmap.Config.ARGB_8888, false)

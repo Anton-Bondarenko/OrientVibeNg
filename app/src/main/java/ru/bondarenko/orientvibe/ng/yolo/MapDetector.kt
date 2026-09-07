@@ -68,6 +68,16 @@ class MapDetector(private val context: Context) {
     /** Monotonically increasing version for stale-result filtering (thread-safe). */
     private var nextVersion = 0
 
+    // ── Diagnostic flags (toggle during development, reset before production) ──
+    /** Bypass median-area filtering — passes ALL YOLO control point boxes through unchanged. */
+    private var skipControlFiltering = false
+
+    /** Bypass median-height filtering — passes ALL YOLO number boxes through unchanged. */
+    private var skipNumberFiltering = false
+
+    /** Skip number↔control correlation — numbers stay on number boxes, not attached to CPs. */
+    private var skipNumberCorrelation = false
+
     /** Creates a new task handle (atomic). Cancels any previous task first. */
     fun launchDetection(): DetectionTaskHandle {
         val version = synchronized(this) { nextVersion++ }
@@ -134,8 +144,14 @@ class MapDetector(private val context: Context) {
                 return@withContext MapDetectionResult(emptyList(), emptyList())
             }
 
+            // ── Прогресс: запуск YOLO ──
+            emitProgress(1, 4, "YOLO детекция...")
+
             // Run YOLO on the full image — returns DetectionResult[]
             val allDetections = detector.detect(bitmap)
+
+            // Прогресс: YOLO завершена, переходим к разделению
+            emitProgress(2, 4, "Разделение объектов...")
 
             // Split YOLO detections: classId 0 = control points, classId 1 = numbers
             val controlsBoxes = mutableListOf<BoundingBox>()
@@ -150,19 +166,50 @@ class MapDetector(private val context: Context) {
                 }
             }
 
-            // ТОЧКА ОТМЕНЫ 2: Перед запуском тяжелого OCR
-            currentCoroutineContext().ensureActive()
-            // Digit OCR on each number box ROI
-            val detectedNumbers = if (detectorDigits != null && numbersBoxes.isNotEmpty()) {
-                detectAndAssembleNumbers(bitmap, numbersBoxes)
-                    .takeIf { it.isNotEmpty() }
-                    ?: numbersBoxes  // fallback — original boxes when OCR fails
+            // ── Этап 1: фильтрация КП по медиане размера и номеров по медиане высоты (ДО OCR/корреляции) ──
+            val filteredControls = if (skipControlFiltering) {
+                Log.d(tag, "  [DIAG] Skipping control filtering — all ${controlsBoxes.size} boxes passed")
+                controlsBoxes
             } else {
-                numbersBoxes  // OCR unavailable — show YOLO boxes without number
+                filterControlsByMedianArea(controlsBoxes)
             }
 
-            // Correlate numbers with control points by proximity
-            val matchedControls = correlateNumbersWithControls(controlsBoxes, detectedNumbers)
+            val filteredNumbers = if (skipNumberFiltering) {
+                Log.d(tag, "  [DIAG] Skipping number filtering — all ${numbersBoxes.size} boxes passed")
+                numbersBoxes
+            } else {
+                filterNumbersByMedianHeight(numbersBoxes)
+            }
+
+            Log.d(tag, "Post-filter: controls ${controlsBoxes.size}→${filteredControls.size}, numbers ${numbersBoxes.size}→${filteredNumbers.size}")
+
+            // Прогресс: фильтр завершён, переходим к OCR
+            emitProgress(3, 4, "Распознавание номеров...")
+
+            // ТОЧКА ОТМЕНЫ 2: Перед запуском тяжелого OCR
+            currentCoroutineContext().ensureActive()
+            // Digit OCR on each number box ROI — works on filtered boxes only
+            val detectedNumbers = if (detectorDigits != null && filteredNumbers.isNotEmpty()) {
+                detectAndAssembleNumbers(bitmap, filteredNumbers)
+                    .takeIf { it.isNotEmpty() }
+                    ?: filteredNumbers  // fallback — original boxes when OCR fails
+            } else {
+                filteredNumbers  // OCR unavailable — show YOLO boxes without number
+            }
+
+            // Correlate numbers with control points by proximity (uses filtered controls)
+            val matchedControls = if (skipNumberCorrelation) {
+                Log.d(tag, "  [DIAG] Skipping number↔control correlation")
+                filteredControls.mapIndexed { idx, box ->
+                    // Attach number from correlated detected numbers if available, otherwise keep null
+                    val numNumBox = detectedNumbers.getOrNull(idx)
+                    box.copy(number = numNumBox?.number)
+                }
+            } else {
+                correlateNumbersWithControls(filteredControls, detectedNumbers)
+            }
+
+            emitProgress(4, 4, "Почти готово...")
 
             Log.d(
                 tag,
@@ -380,29 +427,106 @@ class MapDetector(private val context: Context) {
         return results
     }
 
-    /** Correlates detected numbers with control points by proximity within 1.5× number-box width. */
+    /** Compute median of a float list. Returns null if empty. */
+    internal fun median(values: List<Float>): Float? {
+        if (values.isEmpty()) return null
+        val sorted = values.sorted()
+        val mid = sorted.size / 2
+        return if (sorted.size % 2 == 1) sorted[mid] else (sorted[mid - 1] + sorted[mid]) / 2f
+    }
+
+    /**
+     * Remove control points whose area differs from the median area by ≥60%,
+     * or whose absolute area is less than 30% of the median (catches tiny false-positives).
+     * Keeps at least 1 box even if all are outliers (guard against empty result).
+     */
+    internal fun filterControlsByMedianArea(boxes: List<BoundingBox>): List<BoundingBox> {
+        if (boxes.size <= 2) return boxes
+
+        val areas = boxes.map { it.width * it.height }
+        val med = median(areas) ?: return boxes
+        val minArea = med * 0.30f // absolute floor: anything below 30% of median is tiny noise
+
+        return boxes.filter { box ->
+            val area = box.width * box.height
+            if (area < minArea) {
+                Log.d(tag, "    CP size check: area=${"%.4f".format(area)} median=${"%.4f".format(med)} diff=too-small (<30%% of med) FILTER")
+                false
+            } else {
+                val diff = abs(area - med) / med
+                val keep = diff < 0.60f
+                Log.d(tag, "    CP size check: area=${"%.4f".format(area)} median=${"%.4f".format(med)} diff=%.1f%% %s"
+                    .format(diff * 100, if (keep) "KEEP" else "FILTER"))
+                keep
+            }
+        }.takeIf { it.isNotEmpty() } ?: boxes.take(1) // guard: at least one
+    }
+
+    /**
+     * Remove number boxes whose height differs from the median height by ≥25%.
+     * Keeps at least 1 box even if all are outliers (guard against empty result).
+     */
+    internal fun filterNumbersByMedianHeight(boxes: List<BoundingBox>): List<BoundingBox> {
+        if (boxes.size <= 2) return boxes
+
+        val heights = boxes.map { it.height }
+        val med = median(heights) ?: return boxes
+
+        return boxes.filter { box ->
+            val diff = abs(box.height - med) / med
+            val keep = diff < 0.25f
+            Log.d(tag, "    NUM height check: h=${"%.4f".format(box.height)} median=${"%.4f".format(med)} diff=%.1f%% %s"
+                .format(diff * 100, if (keep) "KEEP" else "FILTER"))
+            keep
+        }.takeIf { it.isNotEmpty() } ?: boxes.take(1) // guard: at least one
+    }
+
+    /**
+     * Correlates detected numbers with control points by proximity.
+     *
+     * Uses closest-edge-of-box distance (not center-to-center), with a dynamic threshold based on
+     * each CP's box size. The minimum threshold was increased from 0.005 to 0.015 to account for
+     * tile-overlap artifacts that can displace number detections by several percent — especially
+     * critical for CPs near image edges (KP 8, 10, 11-16) where artifacts compound.
+     *
+     * Greedy assignment: each number box is assigned to at most one CP (the closest),
+     * preventing duplicate assignments from tile-overlap artifacts.
+     */
     private fun correlateNumbersWithControls(
         controlsBoxes: List<BoundingBox>,
         detectedNumbers: List<BoundingBox>
     ): List<BoundingBox> {
         if (detectedNumbers.isEmpty()) return controlsBoxes
 
-        return controlsBoxes.mapNotNull { control ->
+        val assigned = mutableSetOf<Int>()
+
+        return controlsBoxes.mapIndexed { idx, control ->
             var bestMatch: BoundingBox? = null
             var bestDist = Float.MAX_VALUE
 
-            for (numBox in detectedNumbers) {
-                val dx = abs(control.centerX - numBox.centerX)
-                val dy = abs(control.centerY - numBox.centerY)
-                val dist = sqrt(dx * dx + dy * dy)
-                val threshold = numBox.width * NUMBER_CORRELATION_THRESHOLD_MULT
+            // Dynamic threshold: 4x the larger dimension of this CP box.
+            // Minimum was raised from 0.005 to 0.015 — tile-overlap artifacts can displace
+            // number detections by 5-8% near image edges, and small controls need a wider reach.
+            val cpSize = max(control.width, control.height)
+            val dynamicThreshold = max(cpSize * 4f, 0.015f) // min 1.5% of image dimension (was 0.5%)
 
-                if (dist < bestDist && dist < threshold) {
+            for ((i, numBox) in detectedNumbers.withIndex()) {
+                if (assigned.contains(i)) continue // already assigned to another CP
+
+                // Closest-edge distance: accounts for BOTH the CP box size AND the number box size.
+                // If the number box is large and positioned at an edge of its tile, its center may be
+                // far from the CP center — but the closest edges are still adjacent.
+                val dx = max(0f, abs(control.centerX - numBox.centerX) - control.width / 2f - numBox.width / 2f)
+                val dy = max(0f, abs(control.centerY - numBox.centerY) - control.height / 2f - numBox.height / 2f)
+                val dist = sqrt(dx * dx + dy * dy).toFloat()
+
+                if (dist < bestDist && dist < dynamicThreshold) {
                     bestDist = dist
                     bestMatch = numBox
                 }
             }
 
+            bestMatch?.let { assigned.add(detectedNumbers.indexOf(it)) }
             control.copy(number = bestMatch?.number)
         }
     }
@@ -423,5 +547,12 @@ class MapDetector(private val context: Context) {
         detectorDigits?.close()
         detectorDigits = null
         initialized = false
+    }
+
+    /** Thread-safe progress emitter — checks current task handle before reporting. */
+    private fun emitProgress(current: Int, total: Int, message: String) {
+        val task = _currentTask.get() ?: return
+        if (!task.job.isActive) return // cancelled — silently skip
+        progressListener?.onProgressUpdate(current, total, message)
     }
 }
