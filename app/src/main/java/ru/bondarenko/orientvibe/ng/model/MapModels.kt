@@ -35,5 +35,5 @@ data class MapState(
     val finishPoint: RoutePoint? = null,
     val placingMode: PlacingMode = PlacingMode.NONE,
     val northAngle: Float = 0f, // degrees, 0 = up, positive = CW, range -45..45
-    val azimuth: Float = 0f
+    val azimuth: Float = 0f,
 )

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -31,7 +32,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.ExifInterface
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -43,6 +46,11 @@ import ru.bondarenko.orientvibe.ng.image.rememberGalleryPicker
 import ru.bondarenko.orientvibe.ng.image.ImageCapture
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+// Debug import: Bitmap, ExifInterface are already imported above
 import ru.bondarenko.orientvibe.ng.gps.GpsFix
 import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
 
@@ -56,8 +64,10 @@ import ru.bondarenko.orientvibe.ng.ui.components.MapTapListener
 import ru.bondarenko.orientvibe.ng.ui.components.SubsamplingMapView
 import ru.bondarenko.orientvibe.ng.ui.components.TopInfoPanel
 import ru.bondarenko.orientvibe.ng.viewmodel.MapViewModel
-import ru.bondarenko.orientvibe.ng.image.ImageLoader
 import ru.bondarenko.orientvibe.ng.model.PlacingMode
+
+// Minimal screen width for Compose rendering (prevents ANR on low-res emulators)
+private const val MIN_SCREEN_WIDTH_DP = 320f
 
 // РњРёРЅРёРјР°Р»СЊРЅР°СЏ С‚РѕС‡РЅРѕСЃС‚СЊ GPS РґР»СЏ РїСЂРёРІСЏР·РєРё Рє РєР°СЂС‚Рµ (30 РјРµС‚СЂРѕРІ)
 private const val GPS_ACCURACY_LOW_THRESHOLD = 30f
@@ -202,6 +212,51 @@ private val FinishIcon: ImageVector
         }
     }.build()
 
+/** Loads a bitmap from URI and applies EXIF orientation correction. Runs on background thread. */
+private suspend fun loadAndOrientBitmap(
+    context: android.content.Context,
+    uri: android.net.Uri
+): Bitmap {
+    val inputStream = context.contentResolver.openInputStream(uri)
+        ?: throw IllegalStateException("Cannot open URI for image loading")
+    try {
+        val rawBm = BitmapFactory.decodeStream(inputStream)
+            ?: throw IllegalStateException("Bitmap decode failed")
+
+        val exif = ExifInterface(
+            context.contentResolver.openInputStream(uri)
+                ?: throw IllegalStateException("Cannot read EXIF metadata")
+        )
+        val orientation = exif.getAttributeInt(
+            ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL
+        )
+
+        return if (orientation != ExifInterface.ORIENTATION_NORMAL) {
+            applyExifRotation(rawBm, orientation)
+        } else {
+            rawBm.copy(rawBm.config ?: Bitmap.Config.ARGB_8888, false)
+        }
+    } finally {
+        inputStream.close()
+    }
+}
+
+private fun applyExifRotation(
+    src: Bitmap,
+    orientation: Int
+): Bitmap {
+    val degrees = when (orientation) {
+        ExifInterface.ORIENTATION_ROTATE_90, ExifInterface.ORIENTATION_TRANSPOSE -> 90
+        ExifInterface.ORIENTATION_ROTATE_180, ExifInterface.ORIENTATION_FLIP_VERTICAL -> 180
+        ExifInterface.ORIENTATION_ROTATE_270, ExifInterface.ORIENTATION_TRANSVERSE -> 270
+        else -> return src.copy(src.config ?: Bitmap.Config.ARGB_8888, false)
+    }
+
+    val matrix = android.graphics.Matrix()
+    matrix.postRotate(degrees.toFloat())
+    return Bitmap.createBitmap(src, 0, 0, src.width, src.height, matrix, true)
+}
+
 @Composable
 fun MainScreen(
     viewModel: MapViewModel = viewModel(),
@@ -290,33 +345,25 @@ fun MainScreen(
             }
         }
 
-    val imageLoader = ImageLoader(
-        context = LocalContext.current,
-        detector = viewModel.detector,
-    )
-
     // Состояние выбранного из галереи URI — запускает загрузку через LaunchedEffect
     var pendingGalleryUri by rememberSaveable { mutableStateOf<android.net.Uri?>(null) }
     val localContext = LocalContext.current
+    val debugScope = rememberCoroutineScope()
 
-    // При появлении URI — загружаем в viewModel + запускаем детекцию
+    // При появлении URI — загружаем в viewModel + запускаем детекцию (ANR fix: heavy I/O on background thread, no redundant detection)
     LaunchedEffect(pendingGalleryUri) {
         val uri = pendingGalleryUri ?: return@LaunchedEffect
         infoMessage = "Загрузка изображения..."
         isInfoVisible = true
 
         try {
-            // 1. Raw bitmap (без EXIF) — MapViewModel применит коррекцию
-            val rawBm = localContext.contentResolver.openInputStream(uri).use { stream ->
-                BitmapFactory.decodeStream(stream)
-                    ?: throw IllegalStateException("Bitmap decode failed")
+            // 1. Загружаем и поворачиваем bitmap на фоне — тяжёлые операции не блокируют main thread (ANR fix)
+            val exifBm = withContext(Dispatchers.Default) {
+                loadAndOrientBitmap(localContext, uri)
             }
-            viewModel.loadImageFromBitmap(rawBm, uri)
 
-            // 2. EXIF-повёрнутый bitmap для детекции
-            imageLoader.loadImageForGallery(uri, { /* уже обновлён MapState */ }) { result ->
-                viewModel.updateDetectionResults(result)
-            }
+            // 2. Загрузка в viewModel + старт YOLO детекции (async)
+            viewModel.loadImageFromBitmap(exifBm, uri)
         } catch (e: Exception) {
             infoMessage = "Ошибка загрузки изображения"
             isInfoVisible = true
@@ -478,6 +525,63 @@ fun MainScreen(
                             infoMessage = "Запуск камеры..."
                             isInfoVisible = true
                             camera.launchCamera()
+                        }
+                    ),
+                    // Debug: загрузка карты из файла (обход gallery picker)
+                    PanelButton(
+                        id = "debug",
+                        text = "",
+                        icon = Icons.Default.BugReport,
+                        onClick = {
+                            val context = localContext
+                            val file = android.os.Environment.getExternalStoragePublicDirectory(
+                                android.os.Environment.DIRECTORY_DOWNLOADS
+                            )
+                            val mapFile = java.io.File(file, "PXL_20260830_092754005.jpg")
+                            if (mapFile.exists()) {
+                                infoMessage = "Загрузка из файла..."
+                                isInfoVisible = true
+                                // Копируем во внутреннее хранилище — обход scoped storage ограничений
+                                debugScope.launch(Dispatchers.Default) {
+                                    try {
+                                        val cacheDir = context.cacheDir
+                                        val tempFile = java.io.File(cacheDir, "debug_map.jpg")
+                                        mapFile.inputStream().use { input ->
+                                            tempFile.outputStream().use { output ->
+                                                input.copyTo(output)
+                                            }
+                                        }
+                                        val inputStream = tempFile.inputStream()
+                                        val rawBm = BitmapFactory.decodeStream(inputStream)
+                                            ?: run {
+                                                infoMessage = "Bitmap decode failed"
+                                                isInfoVisible = true
+                                                return@launch
+                                            }
+                                        // Read EXIF
+                                        val exif = ExifInterface(tempFile.absolutePath)
+                                        val orientation = exif.getAttributeInt(
+                                            ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL
+                                        )
+                                        val orientedBm = if (orientation != ExifInterface.ORIENTATION_NORMAL) {
+                                            applyExifRotation(rawBm, orientation)
+                                        } else {
+                                            rawBm.copy(rawBm.config ?: Bitmap.Config.ARGB_8888, false)
+                                        }
+                                        inputStream.close()
+                                        tempFile.delete()
+                                        // Load into viewModel + YOLO detection (async)
+                                        viewModel.loadImageFromBitmap(orientedBm, null)
+                                    } catch (e: Exception) {
+                                        infoMessage = "Ошибка загрузки: ${e.message}"
+                                        isInfoVisible = true
+                                        e.printStackTrace()
+                                    }
+                                }
+                            } else {
+                                infoMessage = "Файл не найден: ${mapFile.absolutePath}"
+                                isInfoVisible = true
+                            }
                         }
                     ),
                     PanelButton(

@@ -7,7 +7,8 @@ import ru.bondarenko.orientvibe.ng.model.BoundingBox
 
 /**
  * Unit tests for filtering logic in MapDetector:
- * - filterControlsByMedianArea: removes control points whose area differs from median by >=10%
+ * - filterControlsByMedianArea: removes control points whose area differs from median by >=40% (relative)
+ *                                or absolute area < 15% of median (tiny noise). Keeps at most EXPECTED_CONTROL_POINTS.
  * - filterNumbersByMedianHeight: removes number boxes whose height differs from median by >=25%
  */
 class MapDetectorFilteringTest {
@@ -20,14 +21,15 @@ class MapDetectorFilteringTest {
         return if (sorted.size % 2 == 1) sorted[mid] else (sorted[mid - 1] + sorted[mid]) / 2f
     }
 
-    /** Mirror MapDetector.filterControlsByMedianArea logic */
+    /** Mirror MapDetector.filterControlsByMedianArea logic (relative threshold + absolute floor) */
     private fun computeFilterControls(boxes: List<BoundingBox>): List<BoundingBox> {
         if (boxes.size <= 2) return boxes
         val areas = boxes.map { it.width * it.height }
-        val med = computeMedian(areas)
+        val med = computeMedian(areas) ?: return boxes
+        val minArea = med * 0.15f // absolute floor: tiny noise
         return boxes.filter { box ->
             val area = box.width * box.height
-            kotlin.math.abs(area - med) / med < 0.10f
+            if (area < minArea) false else kotlin.math.abs(area - med) / med < 0.40f
         }.takeIf { it.isNotEmpty() } ?: boxes.take(1)
     }
 

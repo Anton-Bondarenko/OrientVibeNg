@@ -1,3 +1,4 @@
+
 package ru.bondarenko.orientvibe.ng.viewmodel
 
 import android.content.Context
@@ -60,11 +61,28 @@ class MapViewModel(
     val detector: MapDetector = mapDetector
 
     fun updateDetectionResults(result: ru.bondarenko.orientvibe.ng.yolo.MapDetectionResult) {
+        val controls = result.controlsBoundingBoxes
+        val totalControls = controls.size
+        val withNumbers = controls.count { it.number != null }
+        val withoutNumbers = controls.filter { it.number == null }.mapIndexed { i, b -> "${i+1}" }
+        val stats = "CP:$totalControls(+$withNumbers#) OCR:${result.numbersBoundingBoxes.count { it.number != null }}/${result.numbersBoundingBoxes.size}"
+        Log.d(tag, "Attachment: $stats | no-num CPs: ${withoutNumbers.take(8)}${if (withoutNumbers.size > 8) "+${withoutNumbers.size - 8}" else ""}")
+
+        // Verbose bounding box details for verification
+        Log.d(tag, "=== CONTROLS (${controls.size}) ===")
+        for ((i, cp) in controls.withIndex()) {
+            Log.d(tag, String.format("  CP#%d w=%.4f h=%.4f cx=%.4f cy=%.4f num=%s", i, cp.width, cp.height, cp.centerX, cp.centerY, cp.number))
+        }
+        Log.d(tag, "=== NUMBERS (${result.numbersBoundingBoxes.size}) ===")
+        for ((i, nb) in result.numbersBoundingBoxes.withIndex()) {
+            Log.d(tag, String.format("  NUM#%d w=%.4f h=%.4f cx=%.4f cy=%.4f", i, nb.width, nb.height, nb.centerX, nb.centerY))
+        }
+
         _mapState.value = _mapState.value.copy(
-            controlsBoundingBoxes = result.controlsBoundingBoxes,
+            controlsBoundingBoxes = controls,
             numbersBoundingBoxes = result.numbersBoundingBoxes,
             isProcessing = false,
-            progressMessage = null
+            progressMessage = null,
         )
     }
 
@@ -76,19 +94,47 @@ class MapViewModel(
                     errorMessage = "Failed to load orientmapv8n.onnx model"
                 )
             } else {
-                // Debug: автозагрузка карты из /sdcard/Pictures/ если нет загруженной карты
-                val picturesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
-                val mapFile = File(picturesDir, "PXL_20260830_092754005.jpg")
-                if (mapFile.exists()) {
-                    Log.d(tag, "Debug auto-loading map from: ${mapFile.absolutePath}")
+                // Debug: auto-load test maps from external storage via MediaStore
+                val mapNames = listOf("PXL_20260726_131215883.jpg", "PXL_20260830_092754005.jpg")
+                for (name in mapNames) {
                     try {
-                        loadBitmapFromUri(Uri.fromFile(mapFile))
+                        val uri = findFileByDisplayName(name)
+                        if (uri != null) {
+                            Log.d(tag, "Debug auto-loading map from MediaStore: $name")
+                            val bitmap = context.contentResolver.openInputStream(uri)?.use {
+                                android.graphics.BitmapFactory.decodeStream(it)
+                            } ?: throw IllegalStateException("Cannot open stream for $name")
+                            loadImageFromBitmap(bitmap, uri)
+                            break
+                        }
                     } catch (e: Exception) {
-                        Log.w(tag, "Debug auto-load failed: ${e.message}", e)
+                        Log.w(tag, "Auto-load $name failed: ${e.message}")
                     }
                 }
             }
         }
+    }
+
+    /** Find a file in MediaStore external images by display name. */
+    private fun findFileByDisplayName(displayName: String): android.net.Uri? {
+        val projection = arrayOf(android.provider.MediaStore.Images.Media._ID, android.provider.MediaStore.Images.Media.DISPLAY_NAME)
+        context.contentResolver.query(
+            android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            projection,
+            "${android.provider.MediaStore.Images.Media.DISPLAY_NAME} = ?",
+            arrayOf(displayName),
+            null
+        )?.use { cursor ->
+            val idCol = cursor.getColumnIndex(android.provider.MediaStore.Images.Media._ID)
+            val nameCol = cursor.getColumnIndex(android.provider.MediaStore.Images.Media.DISPLAY_NAME)
+            while (cursor.moveToNext()) {
+                if (cursor.getString(nameCol) == displayName) {
+                    val id = cursor.getLong(idCol)
+                    return android.net.Uri.parse("content://media/external/images/media/$id")
+                }
+            }
+        }
+        return null
     }
 
     // ── Progress (from MapDetectionProgressListener) ───────────────────────
@@ -119,8 +165,11 @@ class MapViewModel(
 
     /** Загрузка Bitmap напрямую (для TakePicturePreview — без FileProvider). */
     private fun loadBitmapFromUri(uri: Uri): Bitmap {
-        val inputStream = context.contentResolver.openInputStream(uri)
-            ?: throw IllegalArgumentException("Cannot open URI: $uri")
+        val inputStream = when (uri.scheme) {
+            "file" -> java.io.FileInputStream(java.io.File(uri.path!!))
+            else -> context.contentResolver.openInputStream(uri)
+                ?: throw IllegalArgumentException("Cannot open URI: $uri")
+        }
         val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
         inputStream.close()
         return bitmap ?: throw IllegalStateException("Failed to decode bitmap from URI: $uri")
@@ -183,12 +232,7 @@ class MapViewModel(
             // Only apply results if this task is still the current one — prevents stale updates.
             mapDetector.currentTaskRef.get()?.takeIf { it.version == task.version }?.let { current ->
                 current.job.ensureActive()  // throw if cancelled
-                _mapState.value = _mapState.value.copy(
-                    controlsBoundingBoxes = result.controlsBoundingBoxes,
-                    numbersBoundingBoxes = result.numbersBoundingBoxes,
-                    isProcessing = false,
-                    progressMessage = null
-                )
+                updateDetectionResults(result)
             }
         }
     }

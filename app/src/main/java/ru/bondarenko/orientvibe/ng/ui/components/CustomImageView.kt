@@ -148,11 +148,13 @@ open class CustomImageView(context: Context) : View(context) {
 
     fun updateControlsBoundingBoxes(boxes: List<BoundingBox>) {
         controlPointOverlay.controlsboundingBoxes = boxes
+        controlPointOverlay.debugDrawAllBoxes = true  // <-- отладка: убрать после теста
         invalidate()
     }
 
     fun updateNumbersBoundingBoxes(boxes: List<BoundingBox>) {
         controlPointOverlay.numbersBoundingBoxes = boxes
+        controlPointOverlay.debugDrawAllBoxes = true  // <-- отладка: убрать после теста
         invalidate()
     }
 

@@ -23,11 +23,18 @@ const val NUMBER_CORRELATION_THRESHOLD_MULT = 1.5f
 const val MIN_ROI_WIDTH = 200
 const val MIN_ROI_HEIGHT = 200
 const val DIG_CONFIDENCE = 0.5f
+const val SEARCH_BOX_SIZE_MUL = 6f
 
 /** Result of the full detection pipeline (YOLO + OCR + correlation). */
 data class MapDetectionResult(
     val controlsBoundingBoxes: List<BoundingBox>,
     val numbersBoundingBoxes: List<BoundingBox>
+)
+
+/** Result of digit OCR: merged number boxes and individual digit positions for correlation. */
+data class DigitAssemblyResult(
+    val numbers: List<BoundingBox>,     // merged bboxes with assembled number values
+    val digitsPerNum: List<List<Pair<Float, Float>>>  // digitPositions per number index
 )
 
 /** Progress events emitted by [MapDetector]. */
@@ -75,8 +82,6 @@ class MapDetector(private val context: Context) {
     /** Bypass median-height filtering — passes ALL YOLO number boxes through unchanged. */
     private var skipNumberFiltering = false
 
-    /** Skip number↔control correlation — numbers stay on number boxes, not attached to CPs. */
-    private var skipNumberCorrelation = false
 
     /** Creates a new task handle (atomic). Cancels any previous task first. */
     fun launchDetection(): DetectionTaskHandle {
@@ -166,22 +171,28 @@ class MapDetector(private val context: Context) {
                 }
             }
 
+            // ── Дедуп: удалить наложения детекции с одного и того же объекта из разных фрагментов ──
+            val dedupedControls = dedupOverlappingBoxes(controlsBoxes)
+            val dedupedNumbers = dedupOverlappingBoxes(numbersBoxes)
+
+            Log.d(tag, "Post-dedup: controls ${controlsBoxes.size}→${dedupedControls.size}, numbers ${numbersBoxes.size}→${dedupedNumbers.size}")
+
             // ── Этап 1: фильтрация КП по медиане размера и номеров по медиане высоты (ДО OCR/корреляции) ──
             val filteredControls = if (skipControlFiltering) {
-                Log.d(tag, "  [DIAG] Skipping control filtering — all ${controlsBoxes.size} boxes passed")
-                controlsBoxes
+                Log.d(tag, "  [DIAG] Skipping control filtering — all ${dedupedControls.size} boxes passed")
+                dedupedControls
             } else {
-                filterControlsByMedianArea(controlsBoxes)
+                filterControlsByMedianArea(dedupedControls)
             }
 
             val filteredNumbers = if (skipNumberFiltering) {
-                Log.d(tag, "  [DIAG] Skipping number filtering — all ${numbersBoxes.size} boxes passed")
-                numbersBoxes
+                Log.d(tag, "  [DIAG] Skipping number filtering — all ${dedupedNumbers.size} boxes passed")
+                dedupedNumbers
             } else {
-                filterNumbersByMedianHeight(numbersBoxes)
+                filterNumbersByMedianHeight(dedupedNumbers)
             }
 
-            Log.d(tag, "Post-filter: controls ${controlsBoxes.size}→${filteredControls.size}, numbers ${numbersBoxes.size}→${filteredNumbers.size}")
+            Log.d(tag, "Post-filter: controls ${dedupedControls.size}→${filteredControls.size}, numbers ${dedupedNumbers.size}→${filteredNumbers.size}")
 
             // Прогресс: фильтр завершён, переходим к OCR
             emitProgress(3, 4, "Распознавание номеров...")
@@ -189,31 +200,29 @@ class MapDetector(private val context: Context) {
             // ТОЧКА ОТМЕНЫ 2: Перед запуском тяжелого OCR
             currentCoroutineContext().ensureActive()
             // Digit OCR on each number box ROI — works on filtered boxes only
-            val detectedNumbers = if (detectorDigits != null && filteredNumbers.isNotEmpty()) {
+            val digitResult = if (detectorDigits != null && filteredNumbers.isNotEmpty()) {
                 detectAndAssembleNumbers(bitmap, filteredNumbers)
-                    .takeIf { it.isNotEmpty() }
-                    ?: filteredNumbers  // fallback — original boxes when OCR fails
             } else {
-                filteredNumbers  // OCR unavailable — show YOLO boxes without number
+                DigitAssemblyResult(filteredNumbers, filteredNumbers.map { emptyList() })
             }
 
-            // Correlate numbers with control points by proximity (uses filtered controls)
-            val matchedControls = if (skipNumberCorrelation) {
-                Log.d(tag, "  [DIAG] Skipping number↔control correlation")
-                filteredControls.mapIndexed { idx, box ->
-                    // Attach number from correlated detected numbers if available, otherwise keep null
-                    val numNumBox = detectedNumbers.getOrNull(idx)
-                    box.copy(number = numNumBox?.number)
-                }
-            } else {
-                correlateNumbersWithControls(filteredControls, detectedNumbers)
-            }
+            val detectedNumbers = digitResult.numbers.takeIf { it.isNotEmpty() }
+                ?: filteredNumbers  // fallback — original boxes when OCR fails
+            val digitPositions = digitResult.digitsPerNum
+
+            // Прогресс: OCR завершён, переходим к привязке номеров к КП
+            emitProgress(3, 4, "Привязка номеров...")
+
+            currentCoroutineContext().ensureActive()
+
+            // Square-search binding — pure relative coords, no image dimensions needed.
+            val matchedControls = attachNumbersBySquareSearch(filteredControls, detectedNumbers)
 
             emitProgress(4, 4, "Почти готово...")
 
             Log.d(
                 tag,
-                "Detection: controls=${matchedControls.size}, numbers total=${numbersBoxes.size}, with_digit=${detectedNumbers.count { it.number != null }}, without_digit=${detectedNumbers.count { it.number == null }}"
+                "Detection: controls=${matchedControls.size}, numbers total=${numbersBoxes.size}, attached=${matchedControls.count { it.number != null }}"
             )
             MapDetectionResult(matchedControls, numbersBoxes)
         } catch (e: Exception) {
@@ -254,8 +263,9 @@ class MapDetector(private val context: Context) {
     private suspend fun detectAndAssembleNumbers(
         bitmap: Bitmap,
         numbersBoxes: List<BoundingBox>
-    ): List<BoundingBox> {
+    ): DigitAssemblyResult {
         val results = mutableListOf<BoundingBox>()
+        val digitsPerNum = mutableListOf<List<Pair<Float, Float>>>()
 
         for (numberBox in numbersBoxes) {
             // ТОЧКА ОТМЕНЫ 3: Проверяем перед обработкой каждого отдельного номера
@@ -311,7 +321,8 @@ class MapDetector(private val context: Context) {
 
             if (roiX2 - roiX1 < 8 || roiY2 - roiY1 < 8) {
                 Log.w(tag, "  >>> SKIP ROI too small: ${roiX2 - roiX1}x${roiY2 - roiY1}")
-                results.add(makeEmptyBox(numberBox))
+//                results.add(makeEmptyBox(numberBox))
+                digitsPerNum.add(emptyList())
                 continue
             }
 
@@ -319,7 +330,8 @@ class MapDetector(private val context: Context) {
             val cropH = minOf(max(roiY2 - roiY1, MIN_ROI_HEIGHT).toInt(), bitmap.height - roiY1)
             if (cropW <= 0 || cropH <= 0) {
                 Log.w(tag, "  >>> SKIP crop dims invalid: w=$cropW h=$cropH")
-                results.add(makeEmptyBox(numberBox))
+//                results.add(makeEmptyBox(numberBox))
+                digitsPerNum.add(emptyList())
                 continue
             }
 
@@ -332,19 +344,25 @@ class MapDetector(private val context: Context) {
                 cropH
             ) ?: run {
                 Log.w(tag, "  >>> SKIP createBitmap returned null")
-                results.add(makeEmptyBox(numberBox))
+//                results.add(makeEmptyBox(numberBox))
                 continue
             }
 
             try {
                 val digitDetector = detectorDigits ?: run {
                     Log.w(tag, "  >>> SKIP digitDetector is null")
-                    results.add(makeEmptyBox(numberBox))
+//                    results.add(makeEmptyBox(numberBox))
                     null
                 }
 
                 digitDetector?.let { det ->
                     val digitDetections = det.detect(roiBitmap)
+                    if (digitDetections.isEmpty()) {
+                        Log.d(tag, "  rawDigits=0 — no detections")
+                        digitsPerNum.add(emptyList())
+//                        results.add(makeEmptyBox(numberBox))
+                        return@let
+                    }
                     Log.d(tag, "  rawDigits=${digitDetections.size} on ${roiBitmap.width}x${roiBitmap.height}")
 
                     // Filter valid digits (classId 0-9) and convert ROI coords → original image coords
@@ -384,11 +402,14 @@ class MapDetector(private val context: Context) {
                     Log.d(tag, "  validDigits=${validDigits.size}")
                     if (validDigits.isEmpty()) {
                         Log.w(tag, "  >>> SKIP no valid digits found")
+                        digitsPerNum.add(emptyList())
                         continue
                     }
 
                     // Assemble digits left→right into a single number value.
                     val sorted = validDigits.sortedBy { p -> p.first.centerX }
+                    val digitPositions = sorted.map { (bb, d) -> Pair(bb.centerX, d.toFloat()) }
+                    digitsPerNum.add(digitPositions)
                     var number = 0
                     for ((_, digitNum) in sorted) {
                         Log.d(tag, "    digit=$digitNum conf=${"%.3f".format(sorted.find { it.second == digitNum }?.first?.confidence ?: 0f)}")
@@ -396,20 +417,14 @@ class MapDetector(private val context: Context) {
                     }
 
                     // Create one merged bbox for the entire number (not individual digits).
-                    val leftest = sorted.first().first
-                    val rightest = sorted.last().first
                     numberBox.number = number
                     Log.d(tag, "  >>> NUMBER=$number from ${validDigits.size} digit(s)")
                     results.add(
                         BoundingBox(
-                            centerX = (leftest.centerX + rightest.centerX) / 2f,
-                            centerY = (leftest.centerY + rightest.centerY) / 2f,
-                            width = if (sorted.size > 1) {
-                                (rightest.centerX + rightest.width / 2f) - (leftest.centerX - leftest.width / 2f)
-                            } else {
-                                leftest.width
-                            },
-                            height = sorted.maxOf { it.first.height },
+                            centerX = numberBox.centerX,
+                            centerY = numberBox.centerY,
+                            width = numberBox.width,
+                            height = numberBox.height,
                             confidence = sorted.maxOf { it.first.confidence },
                             label = "number",
                             number = number
@@ -421,10 +436,15 @@ class MapDetector(private val context: Context) {
             }
         }
 
+        // Fill missing digit positions for boxes that had no digits
+        while (digitsPerNum.size < results.size) {
+            digitsPerNum.add(emptyList())
+        }
+
         val withNum = results.count { it.number != null }
         Log.d(tag, "detectAndAssembleNumbers: $withNum/${results.size} numbers recognized")
 
-        return results
+        return DigitAssemblyResult(results, digitsPerNum)
     }
 
     /** Compute median of a float list. Returns null if empty. */
@@ -437,7 +457,9 @@ class MapDetector(private val context: Context) {
 
     /**
      * Remove control points whose area differs from the median area by ≥60%,
-     * or whose absolute area is less than 30% of the median (catches tiny false-positives).
+     * or whose absolute area is less than 30% of the median (catches tiny false-positives),
+     * or whose width-to-height aspect ratio exceeds 2.5 (catches elongated false-positives).
+     * Orienteering CP circles should produce roughly square boxes (ratio ≈ 1.2–1.8).
      * Keeps at least 1 box even if all are outliers (guard against empty result).
      */
     internal fun filterControlsByMedianArea(boxes: List<BoundingBox>): List<BoundingBox> {
@@ -454,9 +476,20 @@ class MapDetector(private val context: Context) {
                 false
             } else {
                 val diff = abs(area - med) / med
-                val keep = diff < 0.60f
-                Log.d(tag, "    CP size check: area=${"%.4f".format(area)} median=${"%.4f".format(med)} diff=%.1f%% %s"
-                    .format(diff * 100, if (keep) "KEEP" else "FILTER"))
+                val areaOk = diff < 0.60f
+
+                // Aspect ratio check: orienteering CP circles → roughly square bbox
+                // width/height > 2.5 means elongated false-positive (line, text, etc.)
+                val ratio = box.width / box.height
+                val ratioOk = ratio <= 2.5f
+                if (!ratioOk) {
+                    Log.d(tag, "    CP aspect check: w/h=${"%.2f".format(ratio)} median-area=${"%.4f".format(med)} diff=%.1f%% FILTER (elongated)"
+                        .format(diff * 100))
+                }
+
+                val keep = areaOk && ratioOk
+                Log.d(tag, "    CP size check: area=${"%.4f".format(area)} median=${"%.4f".format(med)} diff=%.1f%% ratio=%.2f %s"
+                    .format(diff * 100, ratio, if (keep) "KEEP" else "FILTER"))
                 keep
             }
         }.takeIf { it.isNotEmpty() } ?: boxes.take(1) // guard: at least one
@@ -481,55 +514,6 @@ class MapDetector(private val context: Context) {
         }.takeIf { it.isNotEmpty() } ?: boxes.take(1) // guard: at least one
     }
 
-    /**
-     * Correlates detected numbers with control points by proximity.
-     *
-     * Uses closest-edge-of-box distance (not center-to-center), with a dynamic threshold based on
-     * each CP's box size. The minimum threshold was increased from 0.005 to 0.015 to account for
-     * tile-overlap artifacts that can displace number detections by several percent — especially
-     * critical for CPs near image edges (KP 8, 10, 11-16) where artifacts compound.
-     *
-     * Greedy assignment: each number box is assigned to at most one CP (the closest),
-     * preventing duplicate assignments from tile-overlap artifacts.
-     */
-    private fun correlateNumbersWithControls(
-        controlsBoxes: List<BoundingBox>,
-        detectedNumbers: List<BoundingBox>
-    ): List<BoundingBox> {
-        if (detectedNumbers.isEmpty()) return controlsBoxes
-
-        val assigned = mutableSetOf<Int>()
-
-        return controlsBoxes.mapIndexed { idx, control ->
-            var bestMatch: BoundingBox? = null
-            var bestDist = Float.MAX_VALUE
-
-            // Dynamic threshold: 4x the larger dimension of this CP box.
-            // Minimum was raised from 0.005 to 0.015 — tile-overlap artifacts can displace
-            // number detections by 5-8% near image edges, and small controls need a wider reach.
-            val cpSize = max(control.width, control.height)
-            val dynamicThreshold = max(cpSize * 4f, 0.015f) // min 1.5% of image dimension (was 0.5%)
-
-            for ((i, numBox) in detectedNumbers.withIndex()) {
-                if (assigned.contains(i)) continue // already assigned to another CP
-
-                // Closest-edge distance: accounts for BOTH the CP box size AND the number box size.
-                // If the number box is large and positioned at an edge of its tile, its center may be
-                // far from the CP center — but the closest edges are still adjacent.
-                val dx = max(0f, abs(control.centerX - numBox.centerX) - control.width / 2f - numBox.width / 2f)
-                val dy = max(0f, abs(control.centerY - numBox.centerY) - control.height / 2f - numBox.height / 2f)
-                val dist = sqrt(dx * dx + dy * dy).toFloat()
-
-                if (dist < bestDist && dist < dynamicThreshold) {
-                    bestDist = dist
-                    bestMatch = numBox
-                }
-            }
-
-            bestMatch?.let { assigned.add(detectedNumbers.indexOf(it)) }
-            control.copy(number = bestMatch?.number)
-        }
-    }
 
     /** When OCR fails, emit the original bbox without a number so it stays visible on screen. */
     private fun makeEmptyBox(original: BoundingBox): BoundingBox {
@@ -538,6 +522,87 @@ class MapDetector(private val context: Context) {
             width = original.width, height = original.height,
             confidence = original.confidence, label = "number", number = null
         )
+    }
+
+    /**
+     * Square-search binding algorithm (spec).
+     *
+     * For each control point:
+     *   1. Create a square centered on CP bbox center with sides = cpBboxSide × 6
+     *      (where bboxSide = max(width_px, height_px) in pixels).
+     *   2. Find all number-box centres inside this square.
+     *   3. Among found candidates, pick the one closest to the CP centre (Euclidean distance).
+     *   4. If the closest candidate is within 3× CP-height from CP centre → attach it.
+     *
+     * Pure relative coords [0..1] throughout — no pixel conversions, no image dimensions needed.
+     */
+    private fun attachNumbersBySquareSearch(
+        controls: List<BoundingBox>,
+        numbers: List<BoundingBox>
+    ): List<BoundingBox> {
+        if (controls.isEmpty() || numbers.isEmpty()) return controls
+
+        val result = controls.map { it.copy(number = null) }.toMutableList()
+        val attachedNumbers = mutableSetOf<Int>()
+
+        for ((i, cp) in result.withIndex()) {
+            // Square half-side in relative coords: max(width, height) of CP bbox × 3
+            // This is the "bbox_side / 2" where bbox_side = max(w*W, h*H) * 6
+            // and we divide by W or H depending on axis — simplified to max(w,h)*3 in pure rel space.
+            val halfWidth = SEARCH_BOX_SIZE_MUL/2f * cp.width
+            val halfHeight = SEARCH_BOX_SIZE_MUL/2f * cp.height
+
+            // Search: centers within square (relative coords)
+            val candidates = numbers.filter { nb ->
+                abs(nb.centerX - cp.centerX) < halfWidth &&
+                abs(nb.centerY - cp.centerY) < halfHeight
+            }
+
+            if (candidates.isEmpty()) {
+                Log.d(tag, "    CP#$i: search empty  cp=(${"%.4f".format(cp.centerX)}, ${"%.4f".format(cp.centerY)}) sz=${"%.4f".format(cp.width)}×${"%.4f".format(cp.height)} halfWidth=$halfWidth halfWidth=$halfHeight")
+                continue
+            }
+
+            // Find closest unattached candidate (pure relative distance)
+            val closestPair = candidates.withIndex()
+                .filter { (_, nb) ->
+                    abs(nb.centerX - cp.centerX) < halfWidth &&
+                    abs(nb.centerY - cp.centerY) < halfHeight
+                }
+                .minByOrNull { (_, nb) ->
+                    val dx = nb.centerX - cp.centerX
+                    val dy = nb.centerY - cp.centerY
+                    dx * dx + dy * dy  // relative squared distance (ordering same as px)
+                } ?: continue
+
+            val (numIdx, numBox) = closestPair
+
+            // Distance constraint: ≤ 3× CP height from centre (relative coords)
+            val dxRel = abs(numBox.centerX - cp.centerX)
+            val dyRel = abs(numBox.centerY - cp.centerY)
+            val distRel = sqrt(dxRel * dxRel + dyRel * dyRel)
+            val maxDistRel = 3f * cp.height
+
+            if (distRel > maxDistRel) {
+                Log.d(tag, "    CP@$i: too far  cp=(${"%.4f".format(cp.centerX)}, ${"%.4f".format(cp.centerY)}, w=${
+                    "%.4f".format(
+                        cp.width
+                    )
+                }, h=${
+                    "%.4f".format(
+                        cp.height
+                    )
+                }) distRel=${"%.4f".format(distRel)} maxRel=${"%.4f".format(maxDistRel)} | numIdx=$numIdx nb=(${"%.4f".format(numBox.centerX)}, ${"%.4f".format(numBox.centerY)})")
+                continue
+            }
+
+            // Number attached.
+            result[i].number = numBox.number ?: cp.number
+            attachedNumbers.add(numIdx)
+            Log.d(tag, "    CP@$i: attached NUM#$numIdx (value=${numBox.number}) distRel=${"%.4f".format(distRel)} cp=(${"%.4f".format(cp.centerX)}, ${"%.4f".format(cp.centerY)}) nb=(${"%.4f".format(numBox.centerX)}, ${"%.4f".format(numBox.centerY)})")
+        }
+
+        return result
     }
 
     /** Releases ONNX sessions. Safe to call multiple times. */
@@ -554,5 +619,64 @@ class MapDetector(private val context: Context) {
         val task = _currentTask.get() ?: return
         if (!task.job.isActive) return // cancelled — silently skip
         progressListener?.onProgressUpdate(current, total, message)
+    }
+
+    /**
+     * Remove overlapping bounding boxes — duplicate detections of the same object from adjacent tiles.
+     * For each pair with IoU > 0.5: keep the larger (by area), remove the smaller.
+     * If areas are equal: remove the later one.
+     */
+    private fun dedupOverlappingBoxes(boxes: List<BoundingBox>): List<BoundingBox> {
+        if (boxes.size <= 1) return boxes
+
+        val kept = BooleanArray(boxes.size) { true }
+        var changed = true
+
+        while (changed) {
+            changed = false
+            for (i in boxes.indices) {
+                if (!kept[i]) continue
+                for (j in i + 1 until boxes.size) {
+                    if (!kept[j]) continue
+
+                    val a = boxes[i]
+                    val b = boxes[j]
+
+                    // Compute IoU in relative coords [0..1]
+                    val x1a = a.centerX - a.width / 2f
+                    val y1a = a.centerY - a.height / 2f
+                    val x2a = a.centerX + a.width / 2f
+                    val y2a = a.centerY + a.height / 2f
+
+                    val x1b = b.centerX - b.width / 2f
+                    val y1b = b.centerY - b.height / 2f
+                    val x2b = b.centerX + b.width / 2f
+                    val y2b = b.centerY + b.height / 2f
+
+                    val interLeft = max(x1a, x1b)
+                    val interTop = max(y1a, y1b)
+                    val interRight = kotlin.math.min(x2a, x2b)
+                    val interBottom = kotlin.math.min(y2a, y2b)
+
+                    val interW = max(0f, interRight - interLeft)
+                    val interH = max(0f, interBottom - interTop)
+                    val interArea = interW * interH
+
+                    val areaA = a.width * a.height
+                    val areaB = b.width * b.height
+                    val unionArea = areaA + areaB - interArea
+                    val iou = if (unionArea > 0f) interArea / unionArea else 0f
+
+                    if (iou > 0.5f) {
+                        // Keep larger, remove smaller; if equal: remove j (later)
+                        kept[if (areaB >= areaA) j else i] = false
+                        changed = true
+                        break  // restart scan from beginning
+                    }
+                }
+            }
+        }
+
+        return boxes.filterIndexed { idx, _ -> kept[idx] }
     }
 }
