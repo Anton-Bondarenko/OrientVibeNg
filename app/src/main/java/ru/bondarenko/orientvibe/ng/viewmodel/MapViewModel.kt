@@ -1,4 +1,3 @@
-
 package ru.bondarenko.orientvibe.ng.viewmodel
 
 import android.content.Context
@@ -17,8 +16,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import android.os.Environment
-import java.io.File
 import ru.bondarenko.orientvibe.ng.model.MapState
 import ru.bondarenko.orientvibe.ng.model.PlacingMode
 import ru.bondarenko.orientvibe.ng.model.RoutePoint
@@ -64,18 +61,43 @@ class MapViewModel(
         val controls = result.controlsBoundingBoxes
         val totalControls = controls.size
         val withNumbers = controls.count { it.number != null }
-        val withoutNumbers = controls.filter { it.number == null }.mapIndexed { i, b -> "${i+1}" }
-        val stats = "CP:$totalControls(+$withNumbers#) OCR:${result.numbersBoundingBoxes.count { it.number != null }}/${result.numbersBoundingBoxes.size}"
-        Log.d(tag, "Attachment: $stats | no-num CPs: ${withoutNumbers.take(8)}${if (withoutNumbers.size > 8) "+${withoutNumbers.size - 8}" else ""}")
+        val withoutNumbers = controls.filter { it.number == null }.mapIndexed { i, b -> "${i + 1}" }
+        val stats =
+            "CP:$totalControls(+$withNumbers#) OCR:${result.numbersBoundingBoxes.count { it.number != null }}/${result.numbersBoundingBoxes.size}"
+        Log.d(
+            tag,
+            "Attachment: $stats | no-num CPs: ${withoutNumbers.take(8)}${if (withoutNumbers.size > 8) "+${withoutNumbers.size - 8}" else ""}"
+        )
 
         // Verbose bounding box details for verification
         Log.d(tag, "=== CONTROLS (${controls.size}) ===")
         for ((i, cp) in controls.withIndex()) {
-            Log.d(tag, String.format("  CP#%d w=%.4f h=%.4f cx=%.4f cy=%.4f num=%s", i, cp.width, cp.height, cp.centerX, cp.centerY, cp.number))
+            Log.d(
+                tag,
+                String.format(
+                    "  CP#%d w=%.4f h=%.4f cx=%.4f cy=%.4f num=%s",
+                    i,
+                    cp.width,
+                    cp.height,
+                    cp.centerX,
+                    cp.centerY,
+                    cp.number
+                )
+            )
         }
         Log.d(tag, "=== NUMBERS (${result.numbersBoundingBoxes.size}) ===")
         for ((i, nb) in result.numbersBoundingBoxes.withIndex()) {
-            Log.d(tag, String.format("  NUM#%d w=%.4f h=%.4f cx=%.4f cy=%.4f", i, nb.width, nb.height, nb.centerX, nb.centerY))
+            Log.d(
+                tag,
+                String.format(
+                    "  NUM#%d w=%.4f h=%.4f cx=%.4f cy=%.4f",
+                    i,
+                    nb.width,
+                    nb.height,
+                    nb.centerX,
+                    nb.centerY
+                )
+            )
         }
 
         _mapState.value = _mapState.value.copy(
@@ -99,7 +121,10 @@ class MapViewModel(
 
     /** Find a file in MediaStore external images by display name. */
     private fun findFileByDisplayName(displayName: String): android.net.Uri? {
-        val projection = arrayOf(android.provider.MediaStore.Images.Media._ID, android.provider.MediaStore.Images.Media.DISPLAY_NAME)
+        val projection = arrayOf(
+            android.provider.MediaStore.Images.Media._ID,
+            android.provider.MediaStore.Images.Media.DISPLAY_NAME
+        )
         context.contentResolver.query(
             android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             projection,
@@ -108,7 +133,8 @@ class MapViewModel(
             null
         )?.use { cursor ->
             val idCol = cursor.getColumnIndex(android.provider.MediaStore.Images.Media._ID)
-            val nameCol = cursor.getColumnIndex(android.provider.MediaStore.Images.Media.DISPLAY_NAME)
+            val nameCol =
+                cursor.getColumnIndex(android.provider.MediaStore.Images.Media.DISPLAY_NAME)
             while (cursor.moveToNext()) {
                 if (cursor.getString(nameCol) == displayName) {
                     val id = cursor.getLong(idCol)
@@ -161,7 +187,7 @@ class MapViewModel(
         var displayBitmap =
             bitmap.copy(bitmap.config ?: android.graphics.Bitmap.Config.ARGB_8888, false)
 
-        // Корректируем ориентацию если передан URI с EXIF metadata
+        // Корректируем ориентацию если передан URI с EXIF metadata (для camera source — фото сохранено в FileProvider)
         if (imageUri != null) {
             try {
                 val inputStream = context.contentResolver.openInputStream(imageUri)
@@ -194,10 +220,58 @@ class MapViewModel(
             }
         }
 
-        _mapState.value = MapState()
+        launchDetectionWithBitmap(displayBitmap)
+    }
 
+    /** Загрузка bitmap из URI с EXIF-коррекцией + запуск детекции (единый API для любого источника). */
+    suspend fun loadImageFromUri(uri: Uri) {
+        // Открыть поток и прочитать EXIF для поворота
+        val inputStream = context.contentResolver.openInputStream(uri)
+            ?: throw IllegalStateException("Cannot open URI for image loading")
+
+        val exif = ExifInterface(inputStream)
+        val orientation = exif.getAttributeInt(
+            ExifInterface.TAG_ORIENTATION,
+            ExifInterface.ORIENTATION_NORMAL
+        )
+        inputStream.close()
+
+        // Раскодировать bitmap (отдельный поток — ContentResolver не переиспользует stream)
+        val rawStream = context.contentResolver.openInputStream(uri)
+            ?: throw IllegalStateException("Cannot open URI for image loading")
+        val rawBm = android.graphics.BitmapFactory.decodeStream(rawStream)
+            ?: throw IllegalStateException("Bitmap decode failed")
+        rawStream.close()
+
+        // Применить EXIF поворот если нужно
+        val displayBm = if (orientation != ExifInterface.ORIENTATION_NORMAL) {
+            when (orientation) {
+                ExifInterface.ORIENTATION_ROTATE_90, ExifInterface.ORIENTATION_TRANSPOSE -> rawBm.rotateBitmap(
+                    90f
+                )
+
+                ExifInterface.ORIENTATION_ROTATE_180, ExifInterface.ORIENTATION_FLIP_VERTICAL -> rawBm.rotateBitmap(
+                    180f
+                )
+
+                ExifInterface.ORIENTATION_ROTATE_270, ExifInterface.ORIENTATION_TRANSVERSE -> rawBm.rotateBitmap(
+                    270f
+                )
+
+                else -> rawBm.copy(rawBm.config ?: android.graphics.Bitmap.Config.ARGB_8888, false)
+            }
+        } else {
+            rawBm.copy(rawBm.config ?: android.graphics.Bitmap.Config.ARGB_8888, false)
+        }
+
+        launchDetectionWithBitmap(displayBm)
+    }
+
+    /** Запускает детекцию на уже повернутом bitmap — общий шаг для обоих путей загрузки. */
+    private fun launchDetectionWithBitmap(bitmap: android.graphics.Bitmap) {
+        _mapState.value = MapState()
         _mapState.value = _mapState.value.copy(
-            bitmap = displayBitmap,
+            bitmap = bitmap,
             isProcessing = true,
             progressMessage = "Запуск детекции..."
         )
@@ -208,16 +282,20 @@ class MapViewModel(
 
         viewModelScope.launch(task.job) {
             val result = withContext(Dispatchers.IO) {
-                mapDetector.detect(displayBitmap)
+                mapDetector.detect(bitmap)
             }
 
             // Only apply results if this task is still the current one — prevents stale updates.
-            mapDetector.currentTaskRef.get()?.takeIf { it.version == task.version }?.let { current ->
-                current.job.ensureActive()  // throw if cancelled
-                updateDetectionResults(result)
-            }
+            mapDetector.currentTaskRef.get()?.takeIf { it.version == task.version }
+                ?.let { current ->
+                    current.job.ensureActive()  // throw if cancelled
+                    updateDetectionResults(result)
+                }
         }
     }
+
+    /** Показывать overlay загрузки (камера/галерея) когда изображение ещё не загружено. */
+    val isLoading: Boolean get() = _mapState.value.bitmap == null
 
     // ── Route management ───────────────────────────────────────────────────
 

@@ -1,8 +1,5 @@
 ﻿package ru.bondarenko.orientvibe.ng.screen
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.media.ExifInterface
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -40,8 +37,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
 import ru.bondarenko.orientvibe.ng.gps.NavViewModel
 import ru.bondarenko.orientvibe.ng.image.rememberCameraSource
@@ -199,51 +194,6 @@ private val FinishIcon: ImageVector
         }
     }.build()
 
-/** Loads a bitmap from URI and applies EXIF orientation correction. Runs on background thread. */
-private suspend fun loadAndOrientBitmap(
-    context: android.content.Context,
-    uri: android.net.Uri
-): Bitmap {
-    val inputStream = context.contentResolver.openInputStream(uri)
-        ?: throw IllegalStateException("Cannot open URI for image loading")
-    try {
-        val rawBm = BitmapFactory.decodeStream(inputStream)
-            ?: throw IllegalStateException("Bitmap decode failed")
-
-        val exif = ExifInterface(
-            context.contentResolver.openInputStream(uri)
-                ?: throw IllegalStateException("Cannot read EXIF metadata")
-        )
-        val orientation = exif.getAttributeInt(
-            ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL
-        )
-
-        return if (orientation != ExifInterface.ORIENTATION_NORMAL) {
-            applyExifRotation(rawBm, orientation)
-        } else {
-            rawBm.copy(rawBm.config ?: Bitmap.Config.ARGB_8888, false)
-        }
-    } finally {
-        inputStream.close()
-    }
-}
-
-private fun applyExifRotation(
-    src: Bitmap,
-    orientation: Int
-): Bitmap {
-    val degrees = when (orientation) {
-        ExifInterface.ORIENTATION_ROTATE_90, ExifInterface.ORIENTATION_TRANSPOSE -> 90
-        ExifInterface.ORIENTATION_ROTATE_180, ExifInterface.ORIENTATION_FLIP_VERTICAL -> 180
-        ExifInterface.ORIENTATION_ROTATE_270, ExifInterface.ORIENTATION_TRANSVERSE -> 270
-        else -> return src.copy(src.config ?: Bitmap.Config.ARGB_8888, false)
-    }
-
-    val matrix = android.graphics.Matrix()
-    matrix.postRotate(degrees.toFloat())
-    return Bitmap.createBitmap(src, 0, 0, src.width, src.height, matrix, true)
-}
-
 @Composable
 fun MainScreen(
     viewModel: MapViewModel = viewModel(),
@@ -345,22 +295,15 @@ fun MainScreen(
 
     // Состояние выбранного из галереи URI — запускает загрузку через LaunchedEffect
     var pendingGalleryUri by rememberSaveable { mutableStateOf<android.net.Uri?>(null) }
-    val localContext = LocalContext.current
 
-    // При появлении URI — загружаем в viewModel + запускаем детекцию (ANR fix: heavy I/O on background thread, no redundant detection)
+    // При появлении URI — загружаем в viewModel + запускаем детекцию (единый API handle EXIF)
     LaunchedEffect(pendingGalleryUri) {
         val uri = pendingGalleryUri ?: return@LaunchedEffect
         infoMessage = "Загрузка изображения..."
         isInfoVisible = true
 
         try {
-            // 1. Загружаем и поворачиваем bitmap на фоне — тяжёлые операции не блокируют main thread (ANR fix)
-            val exifBm = withContext(Dispatchers.Default) {
-                loadAndOrientBitmap(localContext, uri)
-            }
-
-            // 2. Загрузка в viewModel + старт YOLO детекции (async)
-            viewModel.loadImageFromBitmap(exifBm, uri)
+            viewModel.loadImageFromUri(uri)
         } catch (e: Exception) {
             infoMessage = "Ошибка загрузки изображения"
             isInfoVisible = true
