@@ -93,24 +93,6 @@ class MapViewModel(
                 _mapState.value = _mapState.value.copy(
                     errorMessage = "Failed to load orientmapv8n.onnx model"
                 )
-            } else {
-                // Debug: auto-load test maps from external storage via MediaStore
-                val mapNames = listOf("PXL_20260726_131215883.jpg", "PXL_20260830_092754005.jpg")
-                for (name in mapNames) {
-                    try {
-                        val uri = findFileByDisplayName(name)
-                        if (uri != null) {
-                            Log.d(tag, "Debug auto-loading map from MediaStore: $name")
-                            val bitmap = context.contentResolver.openInputStream(uri)?.use {
-                                android.graphics.BitmapFactory.decodeStream(it)
-                            } ?: throw IllegalStateException("Cannot open stream for $name")
-                            loadImageFromBitmap(bitmap, uri)
-                            break
-                        }
-                    } catch (e: Exception) {
-                        Log.w(tag, "Auto-load $name failed: ${e.message}")
-                    }
-                }
             }
         }
     }

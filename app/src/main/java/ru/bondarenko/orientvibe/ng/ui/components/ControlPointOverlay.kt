@@ -3,7 +3,6 @@ package ru.bondarenko.orientvibe.ng.ui.components
 import android.graphics.Canvas
 import android.graphics.Color.BLACK
 import android.graphics.Paint
-import android.graphics.Typeface
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.ui.theme.ControlsRed
 import kotlin.math.sqrt
@@ -52,14 +51,24 @@ class ControlPointOverlay {
     }
 
     // ── Отладка: рисует индексы всех боксов (CP#N / NUM#N) в координатах центра ──
-    private fun drawDebugBoxes(canvas: Canvas, sWidth: Float, sHeight: Float, toView: (Float, Float) -> android.graphics.PointF?) {
+    private fun drawDebugBoxes(
+        canvas: Canvas,
+        sWidth: Float,
+        sHeight: Float,
+        toView: (Float, Float) -> android.graphics.PointF?
+    ) {
         // Боксы КП — над кружком чуть выше
         controlsboundingBoxes.forEachIndexed { idx, box ->
             val cx = (box.centerX + box.width / 2f) * sWidth + 18f
             val cy = (box.centerY + box.height / 2f) * sHeight
             val view = toView(cx, cy) ?: return@forEachIndexed
             debugTextPaint.color = android.graphics.Color.BLACK
-            canvas.drawText("CP#$idx %.2f %.2f".format(box.centerX, box.centerY), view.x, view.y, debugTextPaint)
+            canvas.drawText(
+                "CP#$idx %.2f %.2f".format(box.centerX, box.centerY),
+                view.x,
+                view.y,
+                debugTextPaint
+            )
         }
 
         // Боксы номеров — смещение вниз от центра бокса
@@ -68,16 +77,21 @@ class ControlPointOverlay {
             val cy = (box.centerY + box.height / 2f) * sHeight
             val view = toView(cx, cy) ?: return@forEachIndexed
             debugTextPaint.color = android.graphics.Color.BLACK
-            canvas.drawText("NUM#$idx %.2f %.2f".format(box.centerX, box.centerY), view.x, view.y, debugTextPaint)
+            canvas.drawText(
+                "NUM#$idx %.2f %.2f".format(box.centerX, box.centerY),
+                view.x,
+                view.y,
+                debugTextPaint
+            )
         }
     }
 
-    fun numDraw(box: BoundingBox, canvas: Canvas, idx : Int){
+    fun numDraw(box: BoundingBox, canvas: Canvas, idx: Int) {
         val (sWidth, sHeight) = imageDimensions ?: return
-        val left   = (box.centerX - box.width/ 2f) * sWidth
-        val top    = (box.centerY - box.height/ 2f) * sHeight
-        val right  = (box.centerX + box.width/ 2f) * sWidth
-        val bottom = (box.centerY + box.height/ 2f) * sHeight
+        val left = (box.centerX - box.width / 2f) * sWidth
+        val top = (box.centerY - box.height / 2f) * sHeight
+        val right = (box.centerX + box.width / 2f) * sWidth
+        val bottom = (box.centerY + box.height / 2f) * sHeight
         val toView = sourceToViewCoord ?: return
 
         val corner = toView(left, top) ?: return
@@ -94,7 +108,8 @@ class ControlPointOverlay {
         // Отрисовка распознанного числа внутри бокса (белый текст с цветной обводкой по hue бокса)
         box.number?.let { num ->
             val hue = (idx * 137.508) % 360f
-            val textColor = android.graphics.Color.HSVToColor(floatArrayOf(hue.toFloat(), 1f, 0.95f))
+            val textColor =
+                android.graphics.Color.HSVToColor(floatArrayOf(hue.toFloat(), 1f, 0.95f))
             val textPaint = Paint().apply {
                 color = android.graphics.Color.WHITE
                 strokeWidth = 2f
@@ -119,7 +134,7 @@ class ControlPointOverlay {
         }
     }
 
-    fun controlDraw(box: BoundingBox, canvas: Canvas, idx : Int){
+    fun controlDraw(box: BoundingBox, canvas: Canvas, idx: Int) {
         val (sWidth, sHeight) = imageDimensions ?: return
         val cx = box.centerX * sWidth
         val cy = box.centerY * sHeight
@@ -144,7 +159,8 @@ class ControlPointOverlay {
         // Номер привязанного пункта внутри круга (цветной фон + белый текст)
         box.number?.let { num ->
             val hue = (idx * 137.508) % 360f
-            val bgColor = android.graphics.Color.HSVToColor(floatArrayOf(hue.toFloat(), 0.9f, 0.95f))
+            val bgColor =
+                android.graphics.Color.HSVToColor(floatArrayOf(hue.toFloat(), 0.9f, 0.95f))
             val bgPaint = Paint().apply {
                 color = bgColor
                 alpha = 0 // ~12.5% opacity — почти прозрачный фон
@@ -166,12 +182,12 @@ class ControlPointOverlay {
         }
     }
 
-    fun searchBoxDraw(box: BoundingBox, canvas: Canvas){
+    fun searchBoxDraw(box: BoundingBox, canvas: Canvas) {
         val (sWidth, sHeight) = imageDimensions ?: return
-        val left   = (box.centerX - (box.width * 6f)/ 2f) * sWidth
-        val top    = (box.centerY - (box.height * 6f)/ 2f) * sHeight
-        val right  = (box.centerX + (box.width * 6f)/ 2f) * sWidth
-        val bottom = (box.centerY + (box.height * 6f)/ 2f) * sHeight
+        val left = (box.centerX - (box.width * 6f) / 2f) * sWidth
+        val top = (box.centerY - (box.height * 6f) / 2f) * sHeight
+        val right = (box.centerX + (box.width * 6f) / 2f) * sWidth
+        val bottom = (box.centerY + (box.height * 6f) / 2f) * sHeight
         val toView = sourceToViewCoord ?: return
 
         val corner = toView(left, top) ?: return
@@ -195,9 +211,9 @@ class ControlPointOverlay {
         val toView = sourceToViewCoord ?: return
 
         // ── Прямоугольники для боксов номеров ──
-        numbersBoundingBoxes.forEachIndexed { idx, box ->
-            numDraw(box, canvas, idx)
-        }
+//        numbersBoundingBoxes.forEachIndexed { idx, box ->
+//            numDraw(box, canvas, idx)
+//        }
 
         // ── Круги контрольных пунктов ──
         controlsboundingBoxes.forEachIndexed { idx, box ->

@@ -1,5 +1,10 @@
 ﻿package ru.bondarenko.orientvibe.ng.screen
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.media.ExifInterface
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,7 +13,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -22,41 +26,29 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.media.ExifInterface
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
+import ru.bondarenko.orientvibe.ng.gps.NavViewModel
 import ru.bondarenko.orientvibe.ng.image.rememberCameraSource
 import ru.bondarenko.orientvibe.ng.image.rememberGalleryPicker
-import ru.bondarenko.orientvibe.ng.image.ImageCapture
-import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.compose.runtime.rememberCoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-
-// Debug import: Bitmap, ExifInterface are already imported above
-import ru.bondarenko.orientvibe.ng.gps.GpsFix
-import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
-
-import ru.bondarenko.orientvibe.ng.gps.NavViewModel
 import ru.bondarenko.orientvibe.ng.model.PanelButton
 import ru.bondarenko.orientvibe.ng.model.PanelStep
+import ru.bondarenko.orientvibe.ng.model.PlacingMode
 import ru.bondarenko.orientvibe.ng.ui.components.BottomButtonPanel
 import ru.bondarenko.orientvibe.ng.ui.components.MapDisplayArea
 import ru.bondarenko.orientvibe.ng.ui.components.MapDragListener
@@ -64,12 +56,7 @@ import ru.bondarenko.orientvibe.ng.ui.components.MapTapListener
 import ru.bondarenko.orientvibe.ng.ui.components.SubsamplingMapView
 import ru.bondarenko.orientvibe.ng.ui.components.TopInfoPanel
 import ru.bondarenko.orientvibe.ng.viewmodel.MapViewModel
-import ru.bondarenko.orientvibe.ng.model.PlacingMode
 
-// Minimal screen width for Compose rendering (prevents ANR on low-res emulators)
-private const val MIN_SCREEN_WIDTH_DP = 320f
-
-// РњРёРЅРёРјР°Р»СЊРЅР°СЏ С‚РѕС‡РЅРѕСЃС‚СЊ GPS РґР»СЏ РїСЂРёРІСЏР·РєРё Рє РєР°СЂС‚Рµ (30 РјРµС‚СЂРѕРІ)
 private const val GPS_ACCURACY_LOW_THRESHOLD = 30f
 
 // Equilateral triangle pointing up (orienteering start symbol)
@@ -281,7 +268,13 @@ fun MainScreen(
     }
 
     // Compute current GPS position in image-space for green circle indicator
-    LaunchedEffect(gpsState.currentFix, gpsState.calibration, mapState.bitmap, mapState.northAngle, autoBindActive) {
+    LaunchedEffect(
+        gpsState.currentFix,
+        gpsState.calibration,
+        mapState.bitmap,
+        mapState.northAngle,
+        autoBindActive
+    ) {
         if (autoBindActive && mapState.bitmap != null && gpsState.calibration != null && gpsState.currentFix != null) {
             navViewModel.getCurrentGpsImageAbs(mapState.northAngle)?.let { pos ->
                 gpsImagePos = pos
@@ -299,7 +292,10 @@ fun MainScreen(
     // Current distance from start point to current GPS position (используем канонический source из NavViewModel)
     val currentDistanceFromStart = remember(gpsState.originalStartGps, gpsState.currentFix) {
         if (gpsState.originalStartGps != null && gpsState.currentFix != null) {
-            navViewModel.distanceBetween(gpsState.originalStartGps!!, gpsState.currentFix!!.coordinate)
+            navViewModel.distanceBetween(
+                gpsState.originalStartGps!!,
+                gpsState.currentFix!!.coordinate
+            )
         } else {
             null
         }
@@ -325,8 +321,10 @@ fun MainScreen(
     // Include placingMode in dependencies — while active, return stable 0f to avoid
     // triggering DisposableEffect(mapRotation) which would block tap handling.
     val mapRotation =
-        remember(mapState.startPoint, mapState.finishPoint, mapState.bitmap,
-            currentStepIndex, mapState.placingMode) {
+        remember(
+            mapState.startPoint, mapState.finishPoint, mapState.bitmap,
+            currentStepIndex, mapState.placingMode
+        ) {
             if (currentStepIndex == 2 && mapState.placingMode == PlacingMode.NONE) {
                 val sp = mapState.startPoint
                 val fp = mapState.finishPoint
@@ -348,7 +346,6 @@ fun MainScreen(
     // Состояние выбранного из галереи URI — запускает загрузку через LaunchedEffect
     var pendingGalleryUri by rememberSaveable { mutableStateOf<android.net.Uri?>(null) }
     val localContext = LocalContext.current
-    val debugScope = rememberCoroutineScope()
 
     // При появлении URI — загружаем в viewModel + запускаем детекцию (ANR fix: heavy I/O on background thread, no redundant detection)
     LaunchedEffect(pendingGalleryUri) {
@@ -384,7 +381,12 @@ fun MainScreen(
         },
     )
 
-    LaunchedEffect(mapState.startPoint, mapState.finishPoint, mapState.northAngle, mapState.bitmap) {
+    LaunchedEffect(
+        mapState.startPoint,
+        mapState.finishPoint,
+        mapState.northAngle,
+        mapState.bitmap
+    ) {
         viewModel.updateAzimuth()
     }
 
@@ -498,7 +500,8 @@ fun MainScreen(
         navViewModel.applyNewCalibration(result.calibration)
         viewModel.updateNorthAngle(result.northAngleDegrees)
 
-        infoMessage = "Масштаб: ${String.format("%.0f", result.calibration.scaleMetersPerPixel)} м/px"
+        infoMessage =
+            "Масштаб: ${String.format("%.0f", result.calibration.scaleMetersPerPixel)} м/px"
         isInfoVisible = true
     }
 
@@ -525,63 +528,6 @@ fun MainScreen(
                             infoMessage = "Запуск камеры..."
                             isInfoVisible = true
                             camera.launchCamera()
-                        }
-                    ),
-                    // Debug: загрузка карты из файла (обход gallery picker)
-                    PanelButton(
-                        id = "debug",
-                        text = "",
-                        icon = Icons.Default.BugReport,
-                        onClick = {
-                            val context = localContext
-                            val file = android.os.Environment.getExternalStoragePublicDirectory(
-                                android.os.Environment.DIRECTORY_DOWNLOADS
-                            )
-                            val mapFile = java.io.File(file, "PXL_20260830_092754005.jpg")
-                            if (mapFile.exists()) {
-                                infoMessage = "Загрузка из файла..."
-                                isInfoVisible = true
-                                // Копируем во внутреннее хранилище — обход scoped storage ограничений
-                                debugScope.launch(Dispatchers.Default) {
-                                    try {
-                                        val cacheDir = context.cacheDir
-                                        val tempFile = java.io.File(cacheDir, "debug_map.jpg")
-                                        mapFile.inputStream().use { input ->
-                                            tempFile.outputStream().use { output ->
-                                                input.copyTo(output)
-                                            }
-                                        }
-                                        val inputStream = tempFile.inputStream()
-                                        val rawBm = BitmapFactory.decodeStream(inputStream)
-                                            ?: run {
-                                                infoMessage = "Bitmap decode failed"
-                                                isInfoVisible = true
-                                                return@launch
-                                            }
-                                        // Read EXIF
-                                        val exif = ExifInterface(tempFile.absolutePath)
-                                        val orientation = exif.getAttributeInt(
-                                            ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL
-                                        )
-                                        val orientedBm = if (orientation != ExifInterface.ORIENTATION_NORMAL) {
-                                            applyExifRotation(rawBm, orientation)
-                                        } else {
-                                            rawBm.copy(rawBm.config ?: Bitmap.Config.ARGB_8888, false)
-                                        }
-                                        inputStream.close()
-                                        tempFile.delete()
-                                        // Load into viewModel + YOLO detection (async)
-                                        viewModel.loadImageFromBitmap(orientedBm, null)
-                                    } catch (e: Exception) {
-                                        infoMessage = "Ошибка загрузки: ${e.message}"
-                                        isInfoVisible = true
-                                        e.printStackTrace()
-                                    }
-                                }
-                            } else {
-                                infoMessage = "Файл не найден: ${mapFile.absolutePath}"
-                                isInfoVisible = true
-                            }
                         }
                     ),
                     PanelButton(
@@ -683,7 +629,8 @@ fun MainScreen(
                         isActive = autoBindActive,
                         onClick = {
                             navViewModel.setAutoBindActive(!autoBindActive)
-                            infoMessage = if (navViewModel.getAutoBindActive()) "Режим привязки включен" else "Режим привязки выключен"
+                            infoMessage =
+                                if (navViewModel.getAutoBindActive()) "Режим привязки включен" else "Режим привязки выключен"
                             isInfoVisible = true
                         }
                     )
@@ -766,13 +713,20 @@ fun MainScreen(
                     autoBindActive = autoBindActive,
                     gpsFixImagePos = gpsImagePos.takeIf { it != Pair(0f, 0f) },
                     calibrationPointBGps = gpsState.calibration?.pointB?.gps,
-                    calibrationImageDims = mapState.bitmap?.let { bm -> Pair(bm.width.toFloat(), bm.height.toFloat()) },
+                    calibrationImageDims = mapState.bitmap?.let { bm ->
+                        Pair(
+                            bm.width.toFloat(),
+                            bm.height.toFloat()
+                        )
+                    },
                     onAutoBindTap = { relX, relY ->
                         if (!autoBindActive) return@SubsamplingMapView false
                         val fix = gpsState.currentFix ?: return@SubsamplingMapView false
 
-                        val sWidth = mapState.bitmap?.width?.toFloat() ?: return@SubsamplingMapView false
-                        val sHeight = mapState.bitmap?.height?.toFloat() ?: return@SubsamplingMapView false
+                        val sWidth =
+                            mapState.bitmap?.width?.toFloat() ?: return@SubsamplingMapView false
+                        val sHeight =
+                            mapState.bitmap?.height?.toFloat() ?: return@SubsamplingMapView false
                         val tapAbsX = relX * sWidth
                         val tapAbsY = relY * sHeight
 
@@ -809,8 +763,8 @@ fun MainScreen(
                                 // Within ~0.06 relative distance (~120 view-pixels) of GPS fix → it's a match!
                                 if (distToGpsSq < 0.06 * 0.06) {
                                     // Bind current GPS to this KP — convert relative to absolute pixels
-                                val kpAbsX = kpBox.centerX * imageW
-                                val kpAbsY = kpBox.centerY * imageH
+                                    val kpAbsX = kpBox.centerX * imageW
+                                    val kpAbsY = kpBox.centerY * imageH
                                     // Bind current GPS to this KP using single-point calibration
                                     val newCal = MapCalibrationUtils.calibrateSinglePoint(
                                         startGPS = fix.coordinate,
