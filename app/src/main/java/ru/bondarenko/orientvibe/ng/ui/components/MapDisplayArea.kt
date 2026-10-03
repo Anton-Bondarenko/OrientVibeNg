@@ -1,5 +1,10 @@
 package ru.bondarenko.orientvibe.ng.ui.components
 
+import android.content.Context
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -13,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.runtime.collectAsState
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -20,6 +26,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddAPhoto
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -28,7 +35,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.viewmodel.compose.viewModel as viewmodel_compose
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,7 +48,86 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import ru.bondarenko.orientvibe.ng.image.rememberCameraSource
+import ru.bondarenko.orientvibe.ng.viewmodel.MapViewModel
+
+// ──────────────────────────────────────────────
+// MapLoader — единый компонент для загрузки/отображения карты + камеры/галереи
+// ──────────────────────────────────────────────
+
+@Composable
+fun MapLoader(
+    viewModel: MapViewModel,
+    modifier: Modifier = Modifier,
+    onMapLoaded: (uri: Uri?) -> Unit = {},
+) {
+    val mapState by viewModel.mapState.collectAsState()
+    val context = LocalContext.current
+
+    var pendingGalleryUri by remember { mutableStateOf<Uri?>(null) }
+
+    // Загрузка из галереи — при появлении URI загружаем в viewModel
+    androidx.compose.runtime.LaunchedEffect(pendingGalleryUri) {
+        val uri = pendingGalleryUri ?: return@LaunchedEffect
+        try {
+            viewModel.loadImageFromUri(uri)
+            onMapLoaded(uri)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        } finally {
+            pendingGalleryUri = null
+        }
+    }
+
+    val galleryPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        uri?.let { pendingGalleryUri = it }
+    }
+
+    // Камера
+    var cameraLoaded by remember { mutableStateOf(false) }
+    val camera = rememberCameraSource(
+        context = context,
+        onImageCaptured = { imageCapture ->
+            if (!cameraLoaded) {
+                viewModel.loadImageFromBitmap(imageCapture.bitmap, imageCapture.uri)
+                onMapLoaded(imageCapture.uri)
+                cameraLoaded = true
+            }
+        },
+    )
+
+    val isLoading by derivedStateOf { mapState.bitmap == null }
+
+    Box(
+        modifier = modifier
+    ) {
+        if (isLoading || mapState.bitmap == null) {
+            // Overlay — выбор источника изображения
+            EmptyMapPlaceholder(
+                onCameraClick = { camera.launchCamera() },
+                onGalleryClick = {
+                    galleryPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                }
+            )
+        } else {
+            AsyncImage(
+                model = mapState.imageUri?.toString(),
+                contentDescription = "Map image",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit
+            )
+        }
+    }
+}
+
+// ──────────────────────────────────────────────
+// Оставшиеся компоненты (для MainScreen)
+// ──────────────────────────────────────────────
 
 @Composable
 fun MapDisplayArea(

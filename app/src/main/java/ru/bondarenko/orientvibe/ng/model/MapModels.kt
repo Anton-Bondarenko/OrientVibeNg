@@ -37,3 +37,17 @@ data class MapState(
     val northAngle: Float = 0f, // degrees, 0 = up, positive = CW, range -45..45
     val azimuth: Float = 0f,
 )
+
+/** Состояние авто-режима — только поля для загрузки и отображения карты. */
+data class AutoMapState(
+    val imageUri: android.net.Uri? = null,
+    val bitmap: android.graphics.Bitmap? = null,
+    val controlsBoundingBoxes: List<BoundingBox> = emptyList(),
+    val numbersBoundingBoxes: List<BoundingBox> = emptyList(),
+    val northAngle: Float = 0f,
+    val isProcessing: Boolean = false,
+    val errorMessage: String? = null,
+    val progressMessage: String? = null,
+) {
+    val isLoading: Boolean get() = bitmap == null
+}
