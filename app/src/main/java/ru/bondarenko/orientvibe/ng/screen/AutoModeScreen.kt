@@ -3,16 +3,19 @@ package ru.bondarenko.orientvibe.ng.screen
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoFixNormal
@@ -21,6 +24,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,23 +36,40 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import ru.bondarenko.orientvibe.ng.gps.NavViewModel
 import ru.bondarenko.orientvibe.ng.image.rememberCameraSource
+import ru.bondarenko.orientvibe.ng.model.AccuracyLevel
 import ru.bondarenko.orientvibe.ng.ui.components.MapDisplayArea
 import ru.bondarenko.orientvibe.ng.ui.components.MapDragListener
 import ru.bondarenko.orientvibe.ng.ui.components.MapTapListener
 import ru.bondarenko.orientvibe.ng.ui.components.SubsamplingMapView
 import ru.bondarenko.orientvibe.ng.viewmodel.AutoModeViewModel
 
+private val GreenReady = Color(0xFF4CAF50)
+private val GreenReadyDark = Color(0xFF2E7D32)
+private val TelemetryBg = Color(0xFF1B5E20)
+
 @Composable
 fun AutoModeScreen() {
     val context = LocalContext.current
+    val navVm = viewModel<NavViewModel>(factory = NavViewModel.Factory(context))
     val autoVm = viewModel<AutoModeViewModel>(factory = AutoModeViewModel.Factory(context))
 
+    // Передаём NavViewModel в AutoModeViewModel и запускаем мониторинг GPS
+    LaunchedEffect(Unit) {
+        autoVm.navVm = navVm  // устанавливаем поле экземпляра, а не static
+        autoVm.startMonitoringIfNeeded()
+    }
+
     val mapState by autoVm.mapState.collectAsState()
+    val moveReadyAlert by autoVm.moveReadyAlert.collectAsState()
+    val telemetryPoints by autoVm.telemetryPoints.collectAsState()
 
     var infoMessage by remember { mutableStateOf("Авто-режим: выберите карту") }
     var isInfoVisible by remember { mutableStateOf(true) }
@@ -142,6 +163,14 @@ fun AutoModeScreen() {
         }
     }
 
+    // ── Зелёный баннер "можно двигаться" ─────────────────────────────────────
+    val alertActive = moveReadyAlert.active
+    val progressColor by animateColorAsState(
+        targetValue = if (moveReadyAlert.progress >= 1f) GreenReadyDark else GreenReady,
+        animationSpec = tween(durationMillis = 300),
+        label = "alertProgressColor"
+    )
+
     Box(
         modifier = Modifier.fillMaxSize()
     ) {
@@ -194,6 +223,85 @@ fun AutoModeScreen() {
                     .align(Alignment.CenterEnd)
                     .padding(top = 24.dp, end = 24.dp)
             )
+        }
+
+        // ── Зелёный баннер "можно двигаться" (поверх карты, снизу) ──
+        if (alertActive && moveReadyAlert.elapsedMs < 10000L) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = if (telemetryPoints.isNotEmpty()) 16.dp else 16.dp)
+            ) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .height(80.dp),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = GreenReady.copy(alpha = 0.95f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        Text(
+                            text = "Можно двигаться!",
+                            fontSize = 28.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            modifier = Modifier.align(Alignment.CenterHorizontally)
+                        )
+                        LinearProgressIndicator(
+                            progress = { moveReadyAlert.progress },
+                            color = progressColor,
+                            trackColor = GreenReadyDark,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+        }
+
+        // ── GPS accuracy indicator (top-left) ──
+        val gps by navVm.gpsState.collectAsState()
+        val fix = gps.currentFix
+        if (fix != null) {
+            val accuracyLevel = gps.accuracyLevel
+            val (accuracyColor, accuracyText) = when (accuracyLevel) {
+                AccuracyLevel.HIGH_ACCURACY -> GreenReady to "GPS: ${String.format("%.0f", fix.accuracy)}м"
+                AccuracyLevel.LOW_ACCURACY -> Color(0xFFFFC107) to "GPS: ${String.format("%.0f", fix.accuracy)}м"
+                AccuracyLevel.NO_FIX -> Color.Red to "GPS: нет сигнала"
+            }
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(top = 16.dp, start = 16.dp)
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .background(accuracyColor.copy(alpha = 0.7f), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .background(accuracyColor, RoundedCornerShape(5.dp))
+                    )
+                    Text(
+                        text = accuracyText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White
+                    )
+                }
+            }
         }
 
         // ── Top Info Panel ──
@@ -254,7 +362,7 @@ fun AutoModeScreen() {
             }
         }
 
-        // ── Bottom Panel: Detection results ──
+        // ── Bottom Panel: Detection results + telemetry ──
         if (mapState.bitmap != null && mapState.controlsBoundingBoxes.isNotEmpty()) {
             Box(
                 modifier = Modifier
@@ -309,6 +417,59 @@ fun AutoModeScreen() {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                    }
+                }
+            }
+        }
+
+        // ── Telemetry panel (если есть данные GPS) ──
+        if (telemetryPoints.isNotEmpty()) {
+            val lastPoint = telemetryPoints.last()
+            val speedKmh = String.format("%.1f", lastPoint.speedMs * 3.6f)
+            val bearingText = String.format("%.0f°", lastPoint.bearingDegrees)
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .padding(top = 16.dp, bottom = if (alertActive && moveReadyAlert.elapsedMs < 5000L) 120.dp else 16.dp)
+            ) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = TelemetryBg.copy(alpha = 0.95f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp)
+                    ) {
+                        Text(
+                            text = "Телеметрия GPS",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            modifier = Modifier.padding(top = 4.dp)
+                        ) {
+                            Text(
+                                text = "Скор: ${speedKmh} км/ч",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.White.copy(alpha = 0.8f)
+                            )
+                            Text(
+                                text = "Курс: $bearingText",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.White.copy(alpha = 0.8f)
+                            )
+                        }
+                        Text(
+                            text = String.format("GPS: %.6f, %.6f (точн: %.0fm)", lastPoint.latitude, lastPoint.longitude, lastPoint.accuracyMeters),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.7f)
+                        )
                     }
                 }
             }

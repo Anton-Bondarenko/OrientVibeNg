@@ -14,9 +14,14 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import ru.bondarenko.orientvibe.ng.gps.NavViewModel
 import ru.bondarenko.orientvibe.ng.model.AutoMapState
+import ru.bondarenko.orientvibe.ng.model.AutoModeTelemetryPoint
+import ru.bondarenko.orientvibe.ng.model.GpsState
+import ru.bondarenko.orientvibe.ng.model.MoveReadyAlert
 import ru.bondarenko.orientvibe.ng.yolo.MapDetectionProgressListener
 import ru.bondarenko.orientvibe.ng.yolo.MapDetectionResult
 import ru.bondarenko.orientvibe.ng.yolo.MapDetector
@@ -33,8 +38,10 @@ private fun Bitmap.rotateBitmap(degrees: Float): Bitmap {
  * Не содержит логики маршрутизации (start/finish points, placingMode).
  */
 class AutoModeViewModel(
-    private val context: Context
+    private val context: Context,
 ) : ViewModel(), MapDetectionProgressListener {
+
+    var navVm: NavViewModel? = null  // устанавливается из AutoModeScreen LaunchedEffect
 
     private val tag = "AutoModeViewModel"
 
@@ -45,10 +52,24 @@ class AutoModeViewModel(
                 return AutoModeViewModel(context) as T
             }
         }
+
+        // Устанавливается из AutoModeScreen composable сразу после создания viewModel
+        var sharedNavViewModel: NavViewModel? = null
     }
 
     private val _mapState = MutableStateFlow(AutoMapState())
     val mapState: StateFlow<AutoMapState> = _mapState.asStateFlow()
+
+    // Зелёный баннер "можно двигаться"
+    private val _moveReadyAlert = MutableStateFlow(MoveReadyAlert())
+    val moveReadyAlert: StateFlow<MoveReadyAlert> = _moveReadyAlert.asStateFlow()
+
+    // Коллекция телеметрии (текущие координаты, скорость, курс)
+    private val _telemetryPoints = MutableStateFlow<List<AutoModeTelemetryPoint>>(emptyList())
+    val telemetryPoints: StateFlow<List<AutoModeTelemetryPoint>> = _telemetryPoints.asStateFlow()
+
+    // Счётчик для отслеживания переходов точности GPS
+    private var accuracyLevelTransitionCount = 0
 
     private val mapDetector = MapDetector(context).also { it.setProgressListener(this) }
 
@@ -61,6 +82,117 @@ class AutoModeViewModel(
                 )
             }
         }
+    }
+
+    /** Вызывается из AutoModeScreen LaunchedEffect после установки sharedNavViewModel */
+    fun startMonitoringIfNeeded() {
+        if (navVm != null) {
+            Log.d(tag, "startMonitoring: GPS monitoring started")
+            startGpsMonitoring(navVm!!)
+        } else {
+            Log.w(tag, "startMonitoring: sharedNavViewModel is still null")
+        }
+    }
+
+    // ── GPS monitoring ──────────────────────────────────────────────────────
+
+    private fun startGpsMonitoring(navVm: NavViewModel) {
+        viewModelScope.launch {
+            Log.d(tag, "startGpsMonitoring: collecting gpsState")
+            navVm.gpsState.collectLatest { gpsState ->
+                Log.d(tag, "handleGpsUpdate: accuracyLevel=${gpsState.accuracyLevel}, fix=${gpsState.currentFix != null}")
+                handleGpsUpdate(gpsState)
+            }
+        }
+    }
+
+    private fun handleGpsUpdate(gpsState: GpsState) {
+        val currentLevel = gpsState.accuracyLevel
+        val fix = gpsState.currentFix
+
+        Log.d(tag, "handleGpsUpdate: level=$currentLevel accuracy=${fix?.accuracy ?: -1}m bearing=${fix?.bearing ?: -1}°")
+
+        when (currentLevel) {
+            ru.bondarenko.orientvibe.ng.model.AccuracyLevel.HIGH_ACCURACY -> {
+                accuracyLevelTransitionCount++
+                val count = accuracyLevelTransitionCount
+
+                // Переход HIGH_ACCURACY — показываем "можно двигаться" если это новый переход
+                if (count == 1) {
+                    showMoveReadyAlert(count)
+                } else {
+                    // Повторный переход (GPS восстановился) — обновляем счётчик
+                    Log.d(tag, "GPS accuracy recovered: HIGH_ACCURACY")
+                }
+
+                // Добавляем точку телеметрии если есть достоверный fix
+                if (fix != null) {
+                    val point = AutoModeTelemetryPoint(
+                        latitude = fix.coordinate.latitude,
+                        longitude = fix.coordinate.longitude,
+                        accuracyMeters = fix.accuracy,
+                        speedMs = fix.speed,
+                        bearingDegrees = fix.bearing,
+                        timestamp = fix.timestamp
+                    )
+                    addTelemetryPoint(point)
+                }
+            }
+
+            ru.bondarenko.orientvibe.ng.model.AccuracyLevel.LOW_ACCURACY -> {
+                // Низкая точность — ничего не делаем, ждём перехода в HIGH
+            }
+
+            ru.bondarenko.orientvibe.ng.model.AccuracyLevel.NO_FIX -> {
+                // Нет сигнала GPS — сбрасываем счётчик при следующем появлении HIGH
+                accuracyLevelTransitionCount = 0
+                _moveReadyAlert.value = MoveReadyAlert()
+            }
+        }
+    }
+
+    /** Показывает зелёный баннер "можно двигаться" на 5 секунд. */
+    private fun showMoveReadyAlert(count: Int) {
+        viewModelScope.launch {
+            // Сбрасываем предыдущий баннер
+            _moveReadyAlert.value = MoveReadyAlert(
+                active = true,
+                remainingMs = 5000L,
+                elapsedMs = 0L
+            )
+
+            // Тикер — обновляем elapsedMs каждые 100мс (завершается через 5 сек)
+            var elapsed = 0L
+            while (elapsed < 5000L && _moveReadyAlert.value.active) {
+                kotlinx.coroutines.delay(100L)
+                elapsed += 100L
+                _moveReadyAlert.value = MoveReadyAlert(
+                    active = true,
+                    remainingMs = 5000L - elapsed,
+                    elapsedMs = elapsed
+                )
+            }
+
+            // Баннер истёк
+            if (_moveReadyAlert.value.active && _moveReadyAlert.value.elapsedMs >= 5000L) {
+                _moveReadyAlert.value = MoveReadyAlert(
+                    active = false,
+                    remainingMs = 0L,
+                    elapsedMs = 5000L
+                )
+            }
+        }
+    }
+
+    /** Добавляет точку телеметрии в коллекцию. */
+    private fun addTelemetryPoint(point: AutoModeTelemetryPoint) {
+        val current = _telemetryPoints.value.toMutableList()
+        // Храним последние 100 точек
+        if (current.size >= 100) {
+            current.removeAt(0)
+        }
+        current.add(point)
+        _telemetryPoints.value = current.toList()
     }
 
     // ── Progress (from MapDetectionProgressListener) ───────────────────────

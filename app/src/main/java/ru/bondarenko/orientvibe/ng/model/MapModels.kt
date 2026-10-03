@@ -51,3 +51,23 @@ data class AutoMapState(
 ) {
     val isLoading: Boolean get() = bitmap == null
 }
+
+/** Один снимок телеметрии авто-режима (координаты, скорость, курс). */
+data class AutoModeTelemetryPoint(
+    val latitude: Double,
+    val longitude: Double,
+    val accuracyMeters: Float,
+    val speedMs: Float,         // м/с
+    val bearingDegrees: Float,   // курс в градусах (0-360)
+    val timestamp: Long,         // System.currentTimeMillis()
+)
+
+/** Состояние зелёного баннера "можно двигаться" */
+data class MoveReadyAlert(
+    val active: Boolean = false,
+    val remainingMs: Long = 5000L,
+    val elapsedMs: Long = 0L,
+) {
+    /** Прогресс от 0.0 до 1.0 (1.0 = баннер истёк) */
+    val progress: Float get() = if (remainingMs <= 0f) 1f else 1f - (elapsedMs.toFloat() / 5000f)
+}
