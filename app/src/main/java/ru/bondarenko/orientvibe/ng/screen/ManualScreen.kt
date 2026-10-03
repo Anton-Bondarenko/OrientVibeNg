@@ -584,7 +584,7 @@ fun MainScreen(
 
     val currentStep = steps[currentStepIndex]
 
-    // Location permission launcher
+    // Location permission launcher — разрешения запрашиваются на StartScreen
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -593,16 +593,6 @@ fun MainScreen(
         ) {
             navViewModel.startGps()
         }
-    }
-
-    // Request location permission and start GPS on app launch
-    LaunchedEffect(Unit) {
-        locationPermissionLauncher.launch(
-            arrayOf(
-                android.Manifest.permission.ACCESS_FINE_LOCATION,
-                android.Manifest.permission.ACCESS_COARSE_LOCATION
-            )
-        )
     }
 
     // Keep screen awake during navigation (step index 2)

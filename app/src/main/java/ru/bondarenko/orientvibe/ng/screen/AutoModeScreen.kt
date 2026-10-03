@@ -3,7 +3,6 @@ package ru.bondarenko.orientvibe.ng.screen
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,15 +32,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import ru.bondarenko.orientvibe.ng.image.rememberCameraSource
 import ru.bondarenko.orientvibe.ng.ui.components.MapDisplayArea
-import ru.bondarenko.orientvibe.ng.ui.components.SubsamplingMapView
 import ru.bondarenko.orientvibe.ng.ui.components.MapDragListener
 import ru.bondarenko.orientvibe.ng.ui.components.MapTapListener
+import ru.bondarenko.orientvibe.ng.ui.components.SubsamplingMapView
 import ru.bondarenko.orientvibe.ng.viewmodel.AutoModeViewModel
 
 @Composable
@@ -103,18 +102,23 @@ fun AutoModeScreen() {
                 infoMessage = "Обработка изображения..."
                 isInfoVisible = true
             }
+
             mapState.errorMessage != null -> {
                 infoMessage = "Ошибка: ${mapState.errorMessage}"
                 isInfoVisible = true
             }
+
             mapState.controlsBoundingBoxes.isNotEmpty() && mapState.numbersBoundingBoxes.isNotEmpty() -> {
-                infoMessage = "Найдено CP: ${mapState.controlsBoundingBoxes.size}, номеров: ${mapState.numbersBoundingBoxes.size}"
+                infoMessage =
+                    "Найдено CP: ${mapState.controlsBoundingBoxes.size}, номеров: ${mapState.numbersBoundingBoxes.size}"
                 isInfoVisible = true
             }
+
             mapState.controlsBoundingBoxes.isNotEmpty() -> {
                 infoMessage = "Найдено ${mapState.controlsBoundingBoxes.size} контрольных точек"
                 isInfoVisible = true
             }
+
             else -> {
                 isInfoVisible = false
             }
