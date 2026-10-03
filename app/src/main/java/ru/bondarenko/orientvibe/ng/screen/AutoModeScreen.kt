@@ -421,58 +421,5 @@ fun AutoModeScreen() {
                 }
             }
         }
-
-        // ── Telemetry panel (если есть данные GPS) ──
-        if (telemetryPoints.isNotEmpty()) {
-            val lastPoint = telemetryPoints.last()
-            val speedKmh = String.format("%.1f", lastPoint.speedMs * 3.6f)
-            val bearingText = String.format("%.0f°", lastPoint.bearingDegrees)
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.BottomCenter)
-                    .padding(top = 16.dp, bottom = if (alertActive && moveReadyAlert.elapsedMs < 5000L) 120.dp else 16.dp)
-            ) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = TelemetryBg.copy(alpha = 0.95f)
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp)
-                    ) {
-                        Text(
-                            text = "Телеметрия GPS",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(16.dp),
-                            modifier = Modifier.padding(top = 4.dp)
-                        ) {
-                            Text(
-                                text = "Скор: ${speedKmh} км/ч",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.White.copy(alpha = 0.8f)
-                            )
-                            Text(
-                                text = "Курс: $bearingText",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.White.copy(alpha = 0.8f)
-                            )
-                        }
-                        Text(
-                            text = String.format("GPS: %.6f, %.6f (точн: %.0fm)", lastPoint.latitude, lastPoint.longitude, lastPoint.accuracyMeters),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White.copy(alpha = 0.7f)
-                        )
-                    }
-                }
-            }
-        }
     }
 }
