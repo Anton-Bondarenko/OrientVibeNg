@@ -71,3 +71,8 @@ data class MoveReadyAlert(
     /** Прогресс от 0.0 до 1.0 (1.0 = баннер истёк) */
     val progress: Float get() = if (remainingMs <= 0f) 1f else 1f - (elapsedMs.toFloat() / 5000f)
 }
+
+/** Текущая выбранная контрольная точка (редактируемое число). */
+data class CurrentControl(
+    val value: Int = 1,
+)

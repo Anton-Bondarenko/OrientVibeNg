@@ -20,6 +20,7 @@ import kotlinx.coroutines.withContext
 import ru.bondarenko.orientvibe.ng.gps.NavViewModel
 import ru.bondarenko.orientvibe.ng.model.AutoMapState
 import ru.bondarenko.orientvibe.ng.model.AutoModeTelemetryPoint
+import ru.bondarenko.orientvibe.ng.model.CurrentControl
 import ru.bondarenko.orientvibe.ng.model.GpsState
 import ru.bondarenko.orientvibe.ng.model.MoveReadyAlert
 import ru.bondarenko.orientvibe.ng.yolo.MapDetectionProgressListener
@@ -67,6 +68,22 @@ class AutoModeViewModel(
     // Коллекция телеметрии (текущие координаты, скорость, курс)
     private val _telemetryPoints = MutableStateFlow<List<AutoModeTelemetryPoint>>(emptyList())
     val telemetryPoints: StateFlow<List<AutoModeTelemetryPoint>> = _telemetryPoints.asStateFlow()
+
+    // Текущая выбранная контрольная точка
+    private val _currentControl = MutableStateFlow(CurrentControl(1))
+    val currentControl: StateFlow<CurrentControl> = _currentControl.asStateFlow()
+
+    fun incrementCurrentControl() {
+        _currentControl.value = _currentControl.value.copy(value = (_currentControl.value.value + 1).coerceAtMost(999))
+    }
+
+    fun decrementCurrentControl() {
+        _currentControl.value = _currentControl.value.copy(value = (_currentControl.value.value - 1).coerceAtLeast(0))
+    }
+
+    fun setCurrentControl(value: Int) {
+        _currentControl.value = _currentControl.value.copy(value = value.coerceIn(0, 999))
+    }
 
     // Счётчик для отслеживания переходов точности GPS
     private var accuracyLevelTransitionCount = 0

@@ -6,16 +6,18 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoFixNormal
@@ -26,6 +28,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -70,6 +73,7 @@ fun AutoModeScreen() {
     val mapState by autoVm.mapState.collectAsState()
     val moveReadyAlert by autoVm.moveReadyAlert.collectAsState()
     val telemetryPoints by autoVm.telemetryPoints.collectAsState()
+    val currentControl by autoVm.currentControl.collectAsState()
 
     var infoMessage by remember { mutableStateOf("Авто-режим: выберите карту") }
     var isInfoVisible by remember { mutableStateOf(true) }
@@ -230,7 +234,7 @@ fun AutoModeScreen() {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .align(Alignment.BottomCenter)
+                    .align(Alignment.Center)
                     .padding(bottom = if (telemetryPoints.isNotEmpty()) 16.dp else 16.dp)
             ) {
                 Card(
@@ -273,8 +277,20 @@ fun AutoModeScreen() {
         if (fix != null) {
             val accuracyLevel = gps.accuracyLevel
             val (accuracyColor, accuracyText) = when (accuracyLevel) {
-                AccuracyLevel.HIGH_ACCURACY -> GreenReady to "GPS: ${String.format("%.0f", fix.accuracy)}м"
-                AccuracyLevel.LOW_ACCURACY -> Color(0xFFFFC107) to "GPS: ${String.format("%.0f", fix.accuracy)}м"
+                AccuracyLevel.HIGH_ACCURACY -> GreenReady to "GPS: ${
+                    String.format(
+                        "%.0f",
+                        fix.accuracy
+                    )
+                }м"
+
+                AccuracyLevel.LOW_ACCURACY -> Color(0xFFFFC107) to "GPS: ${
+                    String.format(
+                        "%.0f",
+                        fix.accuracy
+                    )
+                }м"
+
                 AccuracyLevel.NO_FIX -> Color.Red to "GPS: нет сигнала"
             }
 
@@ -362,59 +378,95 @@ fun AutoModeScreen() {
             }
         }
 
-        // ── Bottom Panel: Detection results + telemetry ──
-        if (mapState.bitmap != null && mapState.controlsBoundingBoxes.isNotEmpty()) {
+        // ── Control Selector (bottom bar with editable number, +/-, "Здесь") ──
+        if (mapState.bitmap != null) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 16.dp)
+                    .padding(bottom = 8.dp)
                     .align(Alignment.BottomCenter)
             ) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f)
+                        containerColor = Color.White.copy(alpha = 0.95f)
                     )
                 ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp)
+                    Row(
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                     ) {
-                        // Auto-detect start/finish points
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
+                        // Кнопка минус
+                        androidx.compose.material3.FilledTonalIconButton(
+                            onClick = { autoVm.decrementCurrentControl() },
+                            modifier = Modifier.size(40.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.AutoFixNormal,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(24.dp)
-                            )
                             Text(
-                                text = "Результат детекции",
-                                style = MaterialTheme.typography.titleSmall,
+                                text = "−",
+                                fontSize = 24.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = Color.Black
                             )
                         }
 
-                        // Auto-detect CPs and numbers
-                        if (mapState.controlsBoundingBoxes.isNotEmpty()) {
+                        // Редактируемое число — отображаем currentControl.value, вводим вручную или кнопками +/−
+                        OutlinedTextField(
+                            value = currentControl.value.toString(),
+                            onValueChange = { raw ->
+                                val filtered = raw.filter { it.isDigit() }
+                                if (filtered.isEmpty() || filtered.toIntOrNull() != null) {
+                                    autoVm.setCurrentControl(filtered.toInt())
+                                }
+                            },
+                            singleLine = true,
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            ),
+                            modifier = Modifier
+                                .width(80.dp)
+                                .border(1.dp, Color.Gray, RoundedCornerShape(8.dp))
+                                .padding(4.dp),
+                            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = Color.White,
+                                unfocusedContainerColor = Color.White,
+                                focusedBorderColor = GreenReadyDark,
+                                unfocusedBorderColor = Color.Gray
+                            )
+                        )
+
+                        // Кнопка плюс
+                        androidx.compose.material3.FilledTonalIconButton(
+                            onClick = { autoVm.incrementCurrentControl() },
+                            modifier = Modifier.size(40.dp)
+                        ) {
                             Text(
-                                text = "Найдено CP: ${mapState.controlsBoundingBoxes.size}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                text = "+",
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.Black
                             )
                         }
 
-                        // Auto-detect numbers
-                        if (mapState.numbersBoundingBoxes.isNotEmpty()) {
+                        // Разделитель
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        // Кнопка "Здесь" — применяем и отмечаем текущее число
+                        androidx.compose.material3.Button(
+                            onClick = {
+                                autoVm.setCurrentControl(currentControl.value)
+                                infoMessage = "CP #${currentControl.value} отмечена здесь"
+                                isInfoVisible = true
+                            },
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
                             Text(
-                                text = "Распознано номеров: ${mapState.numbersBoundingBoxes.size}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                text = "Здесь",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }
