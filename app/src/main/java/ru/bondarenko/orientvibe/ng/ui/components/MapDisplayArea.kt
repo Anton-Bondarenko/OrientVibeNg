@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoFixNormal
 import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Image
@@ -63,6 +64,7 @@ fun MapLoader(
     viewModel: MapViewModel,
     modifier: Modifier = Modifier,
     onMapLoaded: (uri: Uri?) -> Unit = {},
+    onLoadTestMapClick: () -> Unit = {},
 ) {
     val mapState by viewModel.mapState.collectAsState()
     val context = LocalContext.current
@@ -112,7 +114,8 @@ fun MapLoader(
                 onCameraClick = { camera.launchCamera() },
                 onGalleryClick = {
                     galleryPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                }
+                },
+                onLoadTestMapClick = onLoadTestMapClick
             )
         } else {
             AsyncImage(
@@ -134,6 +137,7 @@ fun MapDisplayArea(
     mapImageUri: String? = null,
     onCameraClick: () -> Unit = {},
     onGalleryClick: () -> Unit = {},
+    onLoadTestMapClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val scale by animateFloatAsState(
@@ -179,7 +183,8 @@ fun MapDisplayArea(
             } else {
                 EmptyMapPlaceholder(
                     onCameraClick = onCameraClick,
-                    onGalleryClick = onGalleryClick
+                    onGalleryClick = onGalleryClick,
+                    onLoadTestMapClick = onLoadTestMapClick
                 )
             }
         }
@@ -189,7 +194,8 @@ fun MapDisplayArea(
 @Composable
 private fun EmptyMapPlaceholder(
     onCameraClick: () -> Unit = {},
-    onGalleryClick: () -> Unit = {}
+    onGalleryClick: () -> Unit = {},
+    onLoadTestMapClick: () -> Unit = {}
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -247,6 +253,11 @@ private fun EmptyMapPlaceholder(
                 icon = Icons.Default.Image,
                 text = "Галерея",
                 onClick = onGalleryClick
+            )
+            SmallActionChip(
+                icon = Icons.Default.AutoFixNormal,
+                text = "Тест карта",
+                onClick = onLoadTestMapClick
             )
         }
     }

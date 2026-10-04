@@ -171,6 +171,7 @@ fun SubsamplingMapView(
     onNorthAngleReset: (() -> Unit)? = null,
     mapRotation: Float = 0f,
     trackPoints: List<TrackPoint> = emptyList(),
+    calibrationVersionTrigger: Int = 0, // триггер пересчёта трека при recalibration
     calibration: MapCalibration? = null,
     currentFix: GpsFix? = null,
     modifier: Modifier = Modifier,
@@ -242,7 +243,8 @@ fun SubsamplingMapView(
         onDispose { }
     }
 
-    DisposableEffect(trackPoints) {
+    // При recalibration track points пересчитываются с новым calibration — trigger обеспечивает recomposition
+    DisposableEffect(trackPoints, calibrationVersionTrigger) {
         overlayView.updateTrackPoints(trackPoints)
         onDispose { }
     }

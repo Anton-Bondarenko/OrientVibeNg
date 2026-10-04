@@ -75,10 +75,60 @@ fun AutoModeScreen() {
     val telemetryPoints by autoVm.telemetryPoints.collectAsState()
     val currentControl by autoVm.currentControl.collectAsState()
 
+    // GPS состояние — источник для трека, калибровки и текущего фиксa
+    val gps by navVm.gpsState.collectAsState()
+
+    // Версия калибровки — триггер для recomposition при повторной калибровке
+    val calibrationVersion by autoVm.calibrationVersion.collectAsState()
+
     var infoMessage by remember { mutableStateOf("Авто-режим: выберите карту") }
     var isInfoVisible by remember { mutableStateOf(true) }
 
+    var pendingBind by remember { mutableStateOf<Int?>(null) }
+    var isBinding by remember { mutableStateOf(false) }
+
+    // Кнопка "Здесь" активна только когда currentControl совпадает с номером найденного CP
+    val hasMatchingCp = mapState.controlsBoundingBoxes.any { it.number == currentControl.value }
+    val isBindEnabled = !isBinding && hasMatchingCp
+
+    // Обработка привязки GPS → контрольная точка
+    LaunchedEffect(pendingBind) {
+        if (pendingBind == null) return@LaunchedEffect
+        pendingBind = null
+        isBinding = true
+        val (ok, msg) = autoVm.bindGpsToCurrentControl()
+        infoMessage = msg
+        isInfoVisible = true
+        isBinding = false
+    }
+
     var pendingGalleryUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var loadTestMapTrigger by remember { mutableStateOf(false) }
+
+    // Загрузка тестовой карты из /storage/emulated/0/Pictures/test_map.jpg — обход системного пикера
+    LaunchedEffect(loadTestMapTrigger) {
+        if (!loadTestMapTrigger) return@LaunchedEffect
+        loadTestMapTrigger = false
+        infoMessage = "Загрузка тестовой карты..."
+        isInfoVisible = true
+        try {
+            val mapFile = java.io.File("/storage/emulated/0/Pictures/test_map.jpg")
+            if (mapFile.exists()) {
+                val rawBm = android.graphics.BitmapFactory.decodeStream(mapFile.inputStream())
+                    ?: throw IllegalStateException("Bitmap decode failed")
+                infoMessage = "Тестовая карта загружена"
+                isInfoVisible = true
+                autoVm.loadImageFromBitmap(rawBm.copy(android.graphics.Bitmap.Config.ARGB_8888, false))
+            } else {
+                infoMessage = "test_map.jpg не найден в Pictures"
+                isInfoVisible = true
+            }
+        } catch (e: Exception) {
+            infoMessage = "Ошибка загрузки: ${e.message}"
+            isInfoVisible = true
+            e.printStackTrace()
+        }
+    }
 
     // Загрузка из галереи — при появлении URI загружаем в viewModel
     LaunchedEffect(pendingGalleryUri) {
@@ -190,12 +240,14 @@ fun AutoModeScreen() {
                 onNorthAngleChanged = { angle -> autoVm.updateNorthAngle(angle) },
                 onNorthAngleReset = { autoVm.resetNorthAngle() },
                 mapRotation = 0f,
-                trackPoints = emptyList(),
-                calibration = null,
-                currentFix = null,
+                // Трек отображаем из telemetryPoints авто-режима — они не сбрасываются при повторной калибровке
+                trackPoints = autoVm.getTelemetryTrackPoints(),
+                calibrationVersionTrigger = calibrationVersion, // триггер пересчёта на каждом recalibration
+                calibration = gps.calibration,
+                currentFix = gps.currentFix,
                 autoBindActive = false,
                 gpsFixImagePos = null,
-                calibrationPointBGps = null,
+                calibrationPointBGps = gps.calibration?.pointB?.gps,
                 calibrationImageDims = mapState.bitmap?.let { bm ->
                     Pair(
                         bm.width.toFloat(),
@@ -212,6 +264,7 @@ fun AutoModeScreen() {
                 onGalleryClick = {
                     galleryPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                 },
+                onLoadTestMapClick = { loadTestMapTrigger = true },
                 modifier = Modifier.fillMaxSize()
             )
         }
@@ -272,7 +325,6 @@ fun AutoModeScreen() {
         }
 
         // ── GPS accuracy indicator (top-left) ──
-        val gps by navVm.gpsState.collectAsState()
         val fix = gps.currentFix
         if (fix != null) {
             val accuracyLevel = gps.accuracyLevel
@@ -454,14 +506,17 @@ fun AutoModeScreen() {
                         // Разделитель
                         Spacer(modifier = Modifier.width(8.dp))
 
-                        // Кнопка "Здесь" — применяем и отмечаем текущее число
+                        // Кнопка "Здесь" — применяем и отмечаем текущее число (неактивна, если CP не найдена)
                         androidx.compose.material3.Button(
                             onClick = {
                                 autoVm.setCurrentControl(currentControl.value)
-                                infoMessage = "CP #${currentControl.value} отмечена здесь"
-                                isInfoVisible = true
+                                isBindEnabled && run {
+                                    pendingBind = currentControl.value
+                                    true
+                                }
                             },
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(12.dp),
+                            enabled = isBindEnabled
                         ) {
                             Text(
                                 text = "Здесь",
