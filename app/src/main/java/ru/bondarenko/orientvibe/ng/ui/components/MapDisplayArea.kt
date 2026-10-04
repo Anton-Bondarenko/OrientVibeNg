@@ -64,7 +64,6 @@ fun MapLoader(
     viewModel: MapViewModel,
     modifier: Modifier = Modifier,
     onMapLoaded: (uri: Uri?) -> Unit = {},
-    onLoadTestMapClick: () -> Unit = {},
 ) {
     val mapState by viewModel.mapState.collectAsState()
     val context = LocalContext.current
@@ -114,8 +113,7 @@ fun MapLoader(
                 onCameraClick = { camera.launchCamera() },
                 onGalleryClick = {
                     galleryPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                },
-                onLoadTestMapClick = onLoadTestMapClick
+                }
             )
         } else {
             AsyncImage(
@@ -137,7 +135,6 @@ fun MapDisplayArea(
     mapImageUri: String? = null,
     onCameraClick: () -> Unit = {},
     onGalleryClick: () -> Unit = {},
-    onLoadTestMapClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val scale by animateFloatAsState(
@@ -184,7 +181,6 @@ fun MapDisplayArea(
                 EmptyMapPlaceholder(
                     onCameraClick = onCameraClick,
                     onGalleryClick = onGalleryClick,
-                    onLoadTestMapClick = onLoadTestMapClick
                 )
             }
         }
@@ -194,8 +190,7 @@ fun MapDisplayArea(
 @Composable
 private fun EmptyMapPlaceholder(
     onCameraClick: () -> Unit = {},
-    onGalleryClick: () -> Unit = {},
-    onLoadTestMapClick: () -> Unit = {}
+    onGalleryClick: () -> Unit = {}
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -253,11 +248,6 @@ private fun EmptyMapPlaceholder(
                 icon = Icons.Default.Image,
                 text = "Галерея",
                 onClick = onGalleryClick
-            )
-            SmallActionChip(
-                icon = Icons.Default.AutoFixNormal,
-                text = "Тест карта",
-                onClick = onLoadTestMapClick
             )
         }
     }

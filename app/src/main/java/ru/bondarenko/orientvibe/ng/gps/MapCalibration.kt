@@ -123,10 +123,11 @@ object MapCalibrationUtils {
             latitude = Math.toDegrees(lat1Rad + angDist),
             longitude = startGPS.longitude
         )
+        val declination = ru.bondarenko.orientvibe.ng.gps.calculateMagneticDeclination(startGPS.latitude, startGPS.longitude)
         return MapGeometry.computeCalibrationRaw(
             CalibrationPoint(gps = startGPS, imageX = startPointImageX, imageY = startPointImageY),
             CalibrationPoint(gps = northGps, imageX = startPointImageX, imageY = startPointImageY + 1f),
-            5.0
+            declination
         )!!
     }
 

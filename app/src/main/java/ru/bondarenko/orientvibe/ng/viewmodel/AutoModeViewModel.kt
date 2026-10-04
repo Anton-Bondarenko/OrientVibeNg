@@ -17,11 +17,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import ru.bondarenko.orientvibe.ng.gps.NavViewModel
 import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
+import ru.bondarenko.orientvibe.ng.gps.NavViewModel
 import ru.bondarenko.orientvibe.ng.model.AutoMapState
 import ru.bondarenko.orientvibe.ng.model.AutoModeTelemetryPoint
-import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.model.CurrentControl
 import ru.bondarenko.orientvibe.ng.model.GpsState
 import ru.bondarenko.orientvibe.ng.model.MoveReadyAlert
@@ -78,98 +77,244 @@ class AutoModeViewModel(
     private val _calibrationVersion = MutableStateFlow(0)
     val calibrationVersion: StateFlow<Int> = _calibrationVersion.asStateFlow()
 
+    /** Первая привязанная контрольная точка (GPS + image pixels). Используется для второй калибровки. */
+    private var _boundGps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate? = null
+    private var _firstGps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate? = null
+    private var _boundImagePos: Pair<Float, Float>? = null
+    private val _boundCpNumberFlow = MutableStateFlow<Int?>(null)
+    val boundCpNumber: StateFlow<Int?> = _boundCpNumberFlow.asStateFlow()
+
     // Текущая выбранная контрольная точка
     private val _currentControl = MutableStateFlow(CurrentControl(1))
     val currentControl: StateFlow<CurrentControl> = _currentControl.asStateFlow()
 
     fun incrementCurrentControl() {
-        _currentControl.value = _currentControl.value.copy(value = (_currentControl.value.value + 1).coerceAtMost(999))
+        _currentControl.value =
+            _currentControl.value.copy(value = (_currentControl.value.value + 1).coerceAtMost(999))
     }
 
     fun decrementCurrentControl() {
-        _currentControl.value = _currentControl.value.copy(value = (_currentControl.value.value - 1).coerceAtLeast(0))
+        _currentControl.value =
+            _currentControl.value.copy(value = (_currentControl.value.value - 1).coerceAtLeast(0))
     }
 
     fun setCurrentControl(value: Int) {
         _currentControl.value = _currentControl.value.copy(value = value.coerceIn(0, 999))
     }
 
+    /** Результат привязки GPS-координаты к контрольной точке. */
+    private data class BindResult(
+        val calibration: ru.bondarenko.orientvibe.ng.gps.MapCalibration,
+        val boundGps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate,
+        val boundImagePos: Pair<Float, Float>
+    )
+
+    /**
+     * Привязывает GPS-координату к детектированной контрольной точке по номеру.
+     * Ищет bounding box в _mapState.controlsBoundingBoxes с совпадающим number,
+     * конвертирует нормализованные [0,1] координаты YOLO в абсолютные пиксели,
+     * создаёт синтетическую калибровку и валидирует что точка попадает на карту.
+     *
+     * @return BindResult при успехе, null при ошибке (сообщение логируется)
+     */
+    private fun bindGpsToCp(
+        gps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate,
+        cpNumber: Int
+    ): BindResult? {
+        val bmp = _mapState.value.bitmap ?: run {
+            Log.w(tag, "bindGpsToCp(cp#$cpNumber): bitmap is null")
+            return null
+        }
+
+        // Ищем BoundingBox с нужным номером
+        val cpBox = _mapState.value.controlsBoundingBoxes.find { it.number == cpNumber }
+            ?: run {
+                Log.w(tag, "bindGpsToCp: CP #$cpNumber not found in controlsBoundingBoxes")
+                return null
+            }
+
+        // Нормализованные [0,1] → абсолютные пиксели
+        val imageX = cpBox.centerX * bmp.width.toFloat()
+        val imageY = cpBox.centerY * bmp.height.toFloat()
+
+        Log.d(tag, "===== bindGpsToCp(cp#$cpNumber) START =====")
+        Log.d(
+            tag,
+            "GPS: (${gps.latitude}, ${gps.longitude}), CP# $cpNumber pixel=($imageX, $imageY)"
+        )
+
+        // Синтетическая калибровка по одной точке
+        val cal = MapCalibrationUtils.calibrateSinglePoint(gps, imageX, imageY)
+
+        // Преобразуем GPS → пиксели для валидации
+        val imgW = bmp.width.toFloat()
+        val imgH = bmp.height.toFloat()
+        val projected = MapCalibrationUtils.gpsToImageAbs(gps, cal, Pair(imgW, imgH), 0f)
+
+        Log.d(tag, "bindGpsToCp: scale=${cal.scaleMetersPerPixel}m/px, projected=($projected)")
+
+        // Валидация: точка внутри границ изображения
+        if (projected == null) {
+            Log.w(tag, "bindGpsToCp(cp#$cpNumber): GPS и карта несовместимы")
+            return null
+        }
+        val padding = 50f
+        if (projected.first < -padding || projected.first > imgW + padding ||
+            projected.second < -padding || projected.second > imgH + padding
+        ) {
+            Log.w(
+                tag,
+                "bindGpsToCp(cp#$cpNumber): точка вне границ imagePt=($projected) dims=$imgW x $imgH"
+            )
+            return null
+        }
+
+        val result = BindResult(cal, gps, Pair(imageX, imageY))
+        Log.d(
+            tag,
+            "bindGpsToCp: SUCCESS — saved boundGps=${result.boundGps}, boundImagePos=${result.boundImagePos}"
+        )
+        Log.d(tag, "===== bindGpsToCp(cp#$cpNumber) END =====")
+        return result
+    }
+
+    /** Применяет результат привязки к состоянию viewModel: сохраняет точку, применяет калибровку. */
+    private fun applyBind(result: BindResult, navVm: NavViewModel, cpNumber: Int) {
+        _boundGps = result.boundGps
+        _boundImagePos = result.boundImagePos
+        _boundCpNumberFlow.value = cpNumber
+
+        navVm.applyNewCalibration(result.calibration)
+        _calibrationVersion.value++
+        navVm.startTracking()
+    }
+
     /** Привязка текущего GPS fix к найденной контрольной точке (поле number). */
     suspend fun bindGpsToCurrentControl(): Pair<Boolean, String> {
         val navVm = navVm ?: return Pair(false, "NavViewModel не подключён")
 
-        // Получаем текущий GPS fix
         val gpsState = navVm.gpsState.value
         val fix = gpsState.currentFix ?: return Pair(false, "Нет GPS fix")
-
         val currentNumber = _currentControl.value.value
 
-        // Ищем BoundingBox с нужным номером в controlsBoundingBoxes
-        val cpBox = _mapState.value.controlsBoundingBoxes.find { it.number == currentNumber }
-        if (cpBox == null) {
-            return Pair(false, "CP #$currentNumber не найдена на карте")
-        }
+        val bindResult = bindGpsToCp(fix.coordinate, currentNumber)
+            ?: return Pair(false, "CP #$currentNumber не найдена на карте")
 
-        // Конвертируем нормализованные [0,1] координаты YOLO в абсолютные пиксели изображения
+        applyBind(bindResult, navVm, currentNumber)
+
+        val scaleStr = String.format("%.1f", bindResult.calibration.scaleMetersPerPixel)
+        return Pair(true, "CP #$currentNumber привязана: масштаб $scaleStr м/px")
+    }
+
+    /** Есть ли первая привязанная точка (для включения кнопки «масштаб») */
+    val hasBoundCp: Boolean get() = _boundGps != null && _boundImagePos != null && _boundImagePos != null
+
+    /** Номера детектированных КП — для проверки что выбранный CP существует на карте */
+    fun getDetectedCpNumbers(): Set<Int?> =
+        _mapState.value.controlsBoundingBoxes.mapNotNullTo(mutableSetOf()) { it.number }
+
+    /**
+     * Двухточечная перекалибровка (масштаб):
+     * точка A — уже привязанная, точка B — центр выбранного КП.
+     * Пересчитывает масштаб и угол истинного севера так, чтобы текущая GPS позиция на треке
+     * оказалась в центре целевого КП.
+     */
+    suspend fun recalibrateToTargetControl(): Pair<Boolean, String> {
+        val navVm = navVm ?: return Pair(false, "NavViewModel не подключён")
+
+        // Должна быть первая привязанная точка
+        val boundGps = _boundGps ?: return Pair(false, "Сначала выполните привязку «Здесь»")
+        val boundImagePos = _boundImagePos ?: return Pair(false, "Нет данных первой привязки")
+
+        // Текущий GPS fix — для вычисления текущего направления
+        val gpsState = navVm.gpsState.value
+        val currentFix = gpsState.currentFix ?: return Pair(false, "Нет GPS fix")
+
+        // Выбранный CP
+        val targetNumber = _currentControl.value.value
+        val targetBox = _mapState.value.controlsBoundingBoxes.find { it.number == targetNumber }
+            ?: return Pair(false, "CP #$targetNumber не найдена на карте")
+
+        // Конвертируем нормализованные координаты CP в абсолютные пиксели
         val bmp = _mapState.value.bitmap ?: return Pair(false, "Изображение не загружено")
-        val imageX = cpBox.centerX * bmp.width.toFloat()
-        val imageY = cpBox.centerY * bmp.height.toFloat()
+        val targetImageX = targetBox.centerX * bmp.width.toFloat()
+        val targetImageY = targetBox.centerY * bmp.height.toFloat()
 
-        Log.d(tag, "===== bindGpsToCurrentControl START =====")
-        Log.d(tag, "CURRENT GPS FIX: lat=${fix.coordinate.latitude}, lon=${fix.coordinate.longitude}, accuracy=${fix.accuracy}m")
-        Log.d(tag, "CP #$currentNumber IMAGE POS: pixel=($imageX, $imageY), confidence=${cpBox.confidence}")
+        Log.d(tag, "===== recalibrateToTargetControl START =====")
+        Log.d(tag, "POINT A (bound): GPS=($boundGps), image=($boundImagePos)")
+        Log.d(
+            tag,
+            "POINT B (target CP#$targetNumber): GPS=(${currentFix.coordinate.latitude}, ${currentFix.coordinate.longitude}), image=($targetImageX, $targetImageY)"
+        )
         Log.d(tag, "All CP bounding boxes:")
         for (cp in _mapState.value.controlsBoundingBoxes) {
-            Log.d(tag, "  CP#${cp.number} -> pixel(${cp.centerX}, ${cp.centerY}), w=${cp.width}, h=${cp.height}")
+            Log.d(
+                tag,
+                "  CP#${cp.number} -> pixel(${cp.centerX}, ${cp.centerY}), w=${cp.width}, h=${cp.height}"
+            )
         }
-        Log.d(tag, "IMAGE dims: ${bmp.width}x${bmp.height}, controlsDetected=${_mapState.value.controlsBoundingBoxes.size}")
-        Log.d(tag, "===== bindGpsToCurrentControl END =====")
 
-        // Создаём калибровку по одной точке
-        val cal = MapCalibrationUtils.calibrateSinglePoint(
-            startGPS = fix.coordinate,
-            startPointImageX = imageX,
-            startPointImageY = imageY
+        // Создаём точки калибровки и вызываем двухточечную калибровку
+        val pointA = ru.bondarenko.orientvibe.ng.model.CalibrationPoint(
+            gps = boundGps, imageX = boundImagePos.first, imageY = boundImagePos.second
+        )
+        val pointB = ru.bondarenko.orientvibe.ng.model.CalibrationPoint(
+            gps = currentFix.coordinate, imageX = targetImageX, imageY = targetImageY
         )
 
-        // Преобразуем GPS координату через калибровку в пиксели изображения
-        val imgW = bmp.width.toFloat()
-        val imgH = bmp.height.toFloat()
-        val firstImagePt = MapCalibrationUtils.gpsToImageAbs(
-            fix.coordinate, cal, Pair(imgW, imgH), 0f
+        // Вычисляем новую калибровку с магнитным склонением
+        val declinationAuto = ru.bondarenko.orientvibe.ng.gps.calculateMagneticDeclination(
+            pointA.gps.latitude, pointA.gps.longitude
+        )
+        val newCal = ru.bondarenko.orientvibe.ng.gps.MapGeometry.computeCalibrationRaw(
+            pointA,
+            pointB,
+            declinationAuto
+        )
+            ?: return Pair(false, "Точки слишком близко — нельзя рассчитать масштаб")
+
+        // Вычисляем true bearing между точками для коррекции угла севера
+        val trueBearing =
+            ru.bondarenko.orientvibe.ng.gps.MapGeometry.bearing(pointA.gps, pointB.gps)
+        val magneticDeclination = declinationAuto
+        val rawMagneticBearing = ru.bondarenko.orientvibe.ng.gps.MapGeometry.magneticBearing(
+            trueBearing,
+            magneticDeclination
+        )
+        val newNorthAngle = (-rawMagneticBearing).toFloat()
+
+        // Создаём полную MapCalibration с обоими точками
+        val fullCal = ru.bondarenko.orientvibe.ng.gps.MapCalibration(
+            pointA = pointA,
+            pointB = pointB,
+            scaleMetersPerPixel = newCal.scaleMetersPerPixel,
+            bearingDegrees = rawMagneticBearing,
+            magneticDeclination = magneticDeclination,
+            physicalDeclination = magneticDeclination,
+            hasXYFlip = newCal.hasXYFlip
         )
 
-        Log.d(tag, "bindGpsToCurrentControl: calibration created — scale=${cal.scaleMetersPerPixel}m/px, bearing=${cal.bearingDegrees}")
-        Log.d(tag, "bindGpsToCurrentControl: calibration pointA(GPS) = (${cal.pointA.gps.latitude}, ${cal.pointA.gps.longitude})")
-        Log.d(tag, "bindGpsToCurrentControl: firstImagePt (from GPS via cal) = (${firstImagePt?.first}, ${firstImagePt?.second})")
+        Log.d(
+            tag,
+            "recalibrateToTargetControl: NEW scale=${newCal.scaleMetersPerPixel}m/px, bearing=$rawMagneticBearing°, northAngle=$newNorthAngle°"
+        )
+        Log.d(
+            tag,
+            "recalibrateToTargetControl: VALIDATION — CP#1 image=($boundImagePos), current GPS on track → target CP#$targetNumber at ($targetImageX, $targetImageY)"
+        )
+        Log.d(tag, "===== recalibrateToTargetControl END =====")
 
-        // ВАЛИДАЦИЯ: проверяем что первая GPS точка преобразуется в допустимые пиксели изображения
-        if (firstImagePt == null) {
-            Log.w(tag, "bindGpsToCurrentControl: gpsToImageAbs returned NULL — GPS и карта несовместимы")
-            return Pair(false, "GPS координаты не соответствуют положению CP #$currentNumber на карте. Убедитесь что вы стоите рядом с пунктом.")
-        }
+        // Применяем новую калибровку через NavViewModel
+        navVm.applyNewCalibration(fullCal)
 
-        // Проверяем что точка внутри границ изображения (с небольшим запасом)
-        val padding = 50f // 50px padding для погрешности GPS
-        if (firstImagePt.first < -padding || firstImagePt.first > imgW + padding ||
-            firstImagePt.second < -padding || firstImagePt.second > imgH + padding) {
-            Log.w(tag, "bindGpsToCurrentControl: FIRST POINT OUT OF BOUNDS imagePt=(${firstImagePt.first}, ${firstImagePt.second}) dims=$imgW x $imgH")
-            return Pair(false, "Вы далеко от CP #$currentNumber на карте. Подойдите ближе и нажмите «Здесь» снова.")
-        }
+        // Обновляем северный индикатор (raw, без коэрции [-45,45])
+        setNorthAngleRaw(newNorthAngle)
 
-        Log.d(tag, "bindGpsToCurrentControl: VALIDATION PASSED — firstImagePt inside bounds [${-padding}, ${imgW + padding}] x [${-padding}, ${imgH + padding}]")
-
-        // Применяем калибровку через NavViewModel
-        navVm.applyNewCalibration(cal)
-
-        // Инкрементируем версию калибровки, чтобы Compose recomposed и пересчитал координаты трека
+        // Инкрементируем версию калибровки — перерисовать трек
         _calibrationVersion.value++
 
-        // Запускаем трек-рекордер — начнём запись точек трека с этой GPS позиции
-        navVm.startTracking()
-
-        val scaleStr = String.format("%.1f", cal.scaleMetersPerPixel)
-        return Pair(true, "CP #$currentNumber привязана: масштаб $scaleStr м/px")
+        val scaleStr = String.format("%.1f", newCal.scaleMetersPerPixel)
+        return Pair(true, "Масштаб обновлён: $scaleStr м/px")
     }
 
     // Счётчик для отслеживания переходов точности GPS
@@ -204,7 +349,10 @@ class AutoModeViewModel(
         viewModelScope.launch {
             Log.d(tag, "startGpsMonitoring: collecting gpsState")
             navVm.gpsState.collectLatest { gpsState ->
-                Log.d(tag, "handleGpsUpdate: accuracyLevel=${gpsState.accuracyLevel}, fix=${gpsState.currentFix != null}")
+                Log.d(
+                    tag,
+                    "handleGpsUpdate: accuracyLevel=${gpsState.accuracyLevel}, fix=${gpsState.currentFix != null}"
+                )
                 handleGpsUpdate(gpsState)
             }
         }
@@ -214,7 +362,10 @@ class AutoModeViewModel(
         val currentLevel = gpsState.accuracyLevel
         val fix = gpsState.currentFix
 
-        Log.d(tag, "handleGpsUpdate: level=$currentLevel accuracy=${fix?.accuracy ?: -1}m bearing=${fix?.bearing ?: -1}°")
+        Log.d(
+            tag,
+            "handleGpsUpdate: level=$currentLevel accuracy=${fix?.accuracy ?: -1}m bearing=${fix?.bearing ?: -1}°"
+        )
 
         when (currentLevel) {
             ru.bondarenko.orientvibe.ng.model.AccuracyLevel.HIGH_ACCURACY -> {
@@ -224,6 +375,7 @@ class AutoModeViewModel(
                 // Переход HIGH_ACCURACY — показываем "можно двигаться" если это новый переход
                 if (count == 1) {
                     showMoveReadyAlert(count)
+                    _firstGps = fix?.coordinate
                 } else {
                     // Повторный переход (GPS восстановился) — обновляем счётчик
                     Log.d(tag, "GPS accuracy recovered: HIGH_ACCURACY")
@@ -231,6 +383,16 @@ class AutoModeViewModel(
 
                 // Добавляем точку телеметрии если есть достоверный fix
                 if (fix != null) {
+                    // Если привязки нет, но детекция уже завершена, делаем привязку к первому КП
+                    if (_boundGps == null) {
+                        // Подстраховка. Запомним достоверную точку для первой авто привязки
+                        val firstGps = _firstGps ?: fix.coordinate
+                        val navVm = navVm
+                        val bindResult = bindGpsToCp(firstGps, 1)
+                        if (bindResult != null && navVm != null)
+                            applyBind(bindResult, navVm, 1)
+                    }
+
                     val point = AutoModeTelemetryPoint(
                         latitude = fix.coordinate.latitude,
                         longitude = fix.coordinate.longitude,
@@ -315,7 +477,10 @@ class AutoModeViewModel(
             val actualIdx = baseIdx + i
             val tp = all[actualIdx]
             val gpsFix = ru.bondarenko.orientvibe.ng.model.GpsFix(
-                coordinate = ru.bondarenko.orientvibe.ng.model.GpsCoordinate(tp.latitude, tp.longitude),
+                coordinate = ru.bondarenko.orientvibe.ng.model.GpsCoordinate(
+                    tp.latitude,
+                    tp.longitude
+                ),
                 accuracy = tp.accuracyMeters,
                 bearing = tp.bearingDegrees,
                 speed = tp.speedMs,
@@ -488,6 +653,11 @@ class AutoModeViewModel(
 
     fun updateNorthAngle(angle: Float) {
         _mapState.value = _mapState.value.copy(northAngle = angle.coerceIn(-45f, 45f))
+    }
+
+    /** Устанавливает северный угол без ограничения диапазона (для калибровки). */
+    private fun setNorthAngleRaw(angle: Float) {
+        _mapState.value = _mapState.value.copy(northAngle = angle)
     }
 
     fun resetNorthAngle() {

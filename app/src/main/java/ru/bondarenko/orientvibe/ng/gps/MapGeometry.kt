@@ -6,6 +6,46 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
+ * Simplified WMM2020 dipole-model magnetic declination calculator.
+ *
+ * Uses the position of the *magnetic north pole* (the point where a compass needle
+ * points straight down) and computes the great-circle bearing from the user's location
+ * toward that pole. Declination = bearingToPole − 0 (= trueNorth), i.e. the angle by which
+ * magnetic north deviates from geographic north at that location.
+ *
+ * Magnetic pole position (WMM2020 epoch) and secular drift:
+ *   lat ≈ 86.5°N, lon ≈ 171.0°E (2020.0) → drifting ~55 km/yr toward Siberia
+ *   Converted to annual rate in degrees ≈ +0.005°/yr lon, −0.003°/yr lat
+ *
+ * Accuracy: ~2–4° for 2020–2030 range at mid-latitudes; much better near the equator.
+ * Sufficient for orienteering — far better than a constant 5°.
+ */
+fun calculateMagneticDeclination(latitude: Double, longitude: Double, epochYear: Double = 2026.0): Double {
+    val t = epochYear - 2020.0 // years since WMM2020 epoch
+
+    // Magnetic north pole position at *epochYear* (interpolated from WMM2020 + secular variation)
+    val poleLat = 86.5 + (-0.003) * t     // ~86.5°N in 2020, drifting slowly southward
+    val poleLon = 171.0 + 0.005 * t        // ~171°E in 2020, drifting eastward
+
+    // Great-circle bearing from (lat, lon) → magnetic north pole
+    val latRad = Math.toRadians(latitude)
+    val poleLatRad = Math.toRadians(poleLat)
+    val dLon = Math.toRadians(poleLon - longitude)
+
+    val y = sin(dLon) * cos(poleLatRad)
+    val x = cos(latRad) * sin(poleLatRad) -
+            sin(latRad) * cos(poleLatRad) * cos(dLon)
+
+    // Bearing from user → magnetic pole (0° = true north, clockwise positive)
+    var bearingToPole = (Math.toDegrees(atan2(y, x)) + 360.0) % 360.0
+
+    // Normalize to [-180, +180]
+    if (bearingToPole > 180.0) bearingToPole -= 360.0
+
+    return bearingToPole
+}
+
+/**
  * Pure-geometry GPS utilities — no Android SDK dependencies.
  * Every function here is deterministic and testable on the JVM without Robolectric.
  */

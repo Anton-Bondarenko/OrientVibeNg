@@ -81,15 +81,30 @@ fun AutoModeScreen() {
     // Версия калибровки — триггер для recomposition при повторной калибровке
     val calibrationVersion by autoVm.calibrationVersion.collectAsState()
 
+    // Первая привязанная КП — для кнопки "масштаб"
+    val boundCpNumber by autoVm.boundCpNumber.collectAsState()
+
     var infoMessage by remember { mutableStateOf("Авто-режим: выберите карту") }
     var isInfoVisible by remember { mutableStateOf(true) }
 
     var pendingBind by remember { mutableStateOf<Int?>(null) }
     var isBinding by remember { mutableStateOf(false) }
 
+    var pendingScale by remember { mutableStateOf(false) }
+    var isScaling by remember { mutableStateOf(false) }
+
     // Кнопка "Здесь" активна только когда currentControl совпадает с номером найденного CP
     val hasMatchingCp = mapState.controlsBoundingBoxes.any { it.number == currentControl.value }
     val isBindEnabled = !isBinding && hasMatchingCp
+
+    // Состояние первой привязки и кнопки "масштаб"
+    val hasBoundCp = autoVm.hasBoundCp
+    val detectedCpNumbers = autoVm.getDetectedCpNumbers()
+    val targetExistsInDetected = detectedCpNumbers.contains(currentControl.value)
+
+    // "масштаб" активна когда: есть привязка, текущий CP ≠ привязанный CP, и выбранный CP найден на карте
+    val isScaleEnabled =
+        hasBoundCp && (boundCpNumber != currentControl.value) && targetExistsInDetected && !isScaling
 
     // Обработка привязки GPS → контрольная точка
     LaunchedEffect(pendingBind) {
@@ -100,6 +115,17 @@ fun AutoModeScreen() {
         infoMessage = msg
         isInfoVisible = true
         isBinding = false
+    }
+
+    // Обработка переккалибровки (масштаб) по второму КП
+    LaunchedEffect(pendingScale) {
+        if (!pendingScale) return@LaunchedEffect
+        pendingScale = false
+        isScaling = true
+        val (ok, msg) = autoVm.recalibrateToTargetControl()
+        infoMessage = msg
+        isInfoVisible = true
+        isScaling = false
     }
 
     var pendingGalleryUri by remember { mutableStateOf<android.net.Uri?>(null) }
@@ -118,7 +144,12 @@ fun AutoModeScreen() {
                     ?: throw IllegalStateException("Bitmap decode failed")
                 infoMessage = "Тестовая карта загружена"
                 isInfoVisible = true
-                autoVm.loadImageFromBitmap(rawBm.copy(android.graphics.Bitmap.Config.ARGB_8888, false))
+                autoVm.loadImageFromBitmap(
+                    rawBm.copy(
+                        android.graphics.Bitmap.Config.ARGB_8888,
+                        false
+                    )
+                )
             } else {
                 infoMessage = "test_map.jpg не найден в Pictures"
                 isInfoVisible = true
@@ -264,7 +295,6 @@ fun AutoModeScreen() {
                 onGalleryClick = {
                     galleryPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                 },
-                onLoadTestMapClick = { loadTestMapTrigger = true },
                 modifier = Modifier.fillMaxSize()
             )
         }
@@ -502,11 +532,16 @@ fun AutoModeScreen() {
                                 color = Color.Black
                             )
                         }
+                    }
 
-                        // Разделитель
-                        Spacer(modifier = Modifier.width(8.dp))
-
-                        // Кнопка "Здесь" — применяем и отмечаем текущее число (неактивна, если CP не найдена)
+                    // Кнопки привязки — вертикально под номером CP
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(top = 8.dp)
+                    ) {
+                        // Кнопка "Здесь" — зелёная когда _boundGps == null (ещё не привязано)
+                        val boundHereGreen = !hasBoundCp
                         androidx.compose.material3.Button(
                             onClick = {
                                 autoVm.setCurrentControl(currentControl.value)
@@ -516,12 +551,39 @@ fun AutoModeScreen() {
                                 }
                             },
                             shape = RoundedCornerShape(12.dp),
-                            enabled = isBindEnabled
+                            enabled = isBindEnabled,
+                            colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                containerColor = if (boundHereGreen) GreenReadyDark else MaterialTheme.colorScheme.primary
+                            )
                         ) {
                             Text(
                                 text = "Здесь",
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        // Кнопка "масштаб" — зелёная когда _boundGps != null (уже привязано)
+                        val boundScaleGreen = hasBoundCp
+                        androidx.compose.material3.Button(
+                            onClick = {
+                                autoVm.setCurrentControl(currentControl.value)
+                                isScaleEnabled && run {
+                                    pendingScale = true
+                                    true
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            enabled = isScaleEnabled,
+                            colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                containerColor = if (boundScaleGreen) GreenReadyDark else MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            Text(
+                                text = "масштаб",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isScaleEnabled) Color.Black else Color.Gray
                             )
                         }
                     }

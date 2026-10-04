@@ -428,8 +428,9 @@ fun MainScreen(
         val bmpW = mapState.bitmap?.width?.toFloat() ?: 1f
         val bmpH = mapState.bitmap?.height?.toFloat() ?: 1f
         // Use existing calibration's declination (from start-point calibration) as fallback;
-        // if no calibration yet, default to 0 and let the new calibration set it later.
-        val declination = gpsState.calibration?.physicalDeclination ?: 5.0
+        // if no calibration yet, calculate from current GPS fix.
+        val declination = gpsState.calibration?.physicalDeclination
+            ?: ru.bondarenko.orientvibe.ng.gps.calculateMagneticDeclination(fix.coordinate.latitude, fix.coordinate.longitude)
         val result = MapCalibrationUtils.bindGpsToFinishWithTrack(
             startGPS = startGPS,
             startPointImageX = (mapState.startPoint?.x ?: 0f) * bmpW,
