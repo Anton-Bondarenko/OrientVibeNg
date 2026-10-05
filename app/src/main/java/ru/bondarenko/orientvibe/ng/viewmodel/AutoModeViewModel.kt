@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
+import ru.bondarenko.orientvibe.ng.gps.MapGeometry
 import ru.bondarenko.orientvibe.ng.gps.NavViewModel
 import ru.bondarenko.orientvibe.ng.model.AutoMapState
 import ru.bondarenko.orientvibe.ng.model.AutoModeTelemetryPoint
@@ -79,6 +80,7 @@ class AutoModeViewModel(
 
     /** Первая привязанная контрольная точка (GPS + image pixels). Используется для второй калибровки. */
     private var _boundGps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate? = null
+    private var _calibration: ru.bondarenko.orientvibe.ng.gps.MapCalibration? = null
     private var _firstGps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate? = null
     private var _boundImagePos: Pair<Float, Float>? = null
     private val _boundCpNumberFlow = MutableStateFlow<Int?>(null)
@@ -180,6 +182,7 @@ class AutoModeViewModel(
 
     /** Применяет результат привязки к состоянию viewModel: сохраняет точку, применяет калибровку. */
     private fun applyBind(result: BindResult, navVm: NavViewModel, cpNumber: Int) {
+        _calibration = result.calibration
         _boundGps = result.boundGps
         _boundImagePos = result.boundImagePos
         _boundCpNumberFlow.value = cpNumber
@@ -263,9 +266,7 @@ class AutoModeViewModel(
         )
 
         // Вычисляем новую калибровку с магнитным склонением
-        val declinationAuto = ru.bondarenko.orientvibe.ng.gps.calculateMagneticDeclination(
-            pointA.gps.latitude, pointA.gps.longitude
-        )
+        val declinationAuto = _calibration?.magneticDeclination ?: 0f
         val newCal = ru.bondarenko.orientvibe.ng.gps.MapGeometry.computeCalibrationRaw(
             pointA,
             pointB,
@@ -275,20 +276,23 @@ class AutoModeViewModel(
 
         // Вычисляем true bearing между точками для коррекции угла севера
         val trueBearing =
-            ru.bondarenko.orientvibe.ng.gps.MapGeometry.bearing(pointA.gps, pointB.gps)
+            MapGeometry.bearing(pointA.gps, pointB.gps)
         val magneticDeclination = declinationAuto
-        val rawMagneticBearing = ru.bondarenko.orientvibe.ng.gps.MapGeometry.magneticBearing(
+        val trackBearing = MapGeometry.magneticBearing(
             trueBearing,
             magneticDeclination
         )
-        val newNorthAngle = (-rawMagneticBearing).toFloat()
+
+        // теперь измерим угол на изображении
+        val screenBearing = MapGeometry.screenBearing(pointA.imageX, pointA.imageY, pointB.imageX, pointB.imageY)
+        val errNorthAngle = screenBearing - trackBearing;
 
         // Создаём полную MapCalibration с обоими точками
         val fullCal = ru.bondarenko.orientvibe.ng.gps.MapCalibration(
             pointA = pointA,
             pointB = pointB,
             scaleMetersPerPixel = newCal.scaleMetersPerPixel,
-            bearingDegrees = rawMagneticBearing,
+            bearingDegrees = trackBearing,
             magneticDeclination = magneticDeclination,
             physicalDeclination = magneticDeclination,
             hasXYFlip = newCal.hasXYFlip
@@ -296,7 +300,7 @@ class AutoModeViewModel(
 
         Log.d(
             tag,
-            "recalibrateToTargetControl: NEW scale=${newCal.scaleMetersPerPixel}m/px, bearing=$rawMagneticBearing°, northAngle=$newNorthAngle°"
+            "recalibrateToTargetControl: NEW scale=${newCal.scaleMetersPerPixel}m/px, bearing=$trackBearing°, northAngle=$errNorthAngle°"
         )
         Log.d(
             tag,
@@ -308,7 +312,7 @@ class AutoModeViewModel(
         navVm.applyNewCalibration(fullCal)
 
         // Обновляем северный индикатор (raw, без коэрции [-45,45])
-        setNorthAngleRaw(newNorthAngle)
+        setNorthAngleRaw(errNorthAngle)
 
         // Инкрементируем версию калибровки — перерисовать трек
         _calibrationVersion.value++
@@ -430,6 +434,7 @@ class AutoModeViewModel(
             // Тикер — обновляем elapsedMs каждые 100мс (завершается через 5 сек)
             var elapsed = 0L
             while (elapsed < 5000L && _moveReadyAlert.value.active) {
+                bindGpsToCurrentControl()
                 kotlinx.coroutines.delay(100L)
                 elapsed += 100L
                 _moveReadyAlert.value = MoveReadyAlert(

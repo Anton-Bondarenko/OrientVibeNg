@@ -192,8 +192,8 @@ class NavViewModel(
         return MapCalibrationUtils.haversineDistance(a, b)
     }
 
-    fun magneticBearingBetween(from: GpsCoordinate, to: GpsCoordinate): Double {
-        val declination = calibration?.physicalDeclination ?: 0.0
+    fun magneticBearingBetween(from: GpsCoordinate, to: GpsCoordinate): Float {
+        val declination = calibration?.physicalDeclination ?: 0f
         return MapCalibrationUtils.magneticBearing(from, to, declination)
     }
 

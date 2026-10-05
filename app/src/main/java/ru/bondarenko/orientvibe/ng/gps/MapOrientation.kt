@@ -1,8 +1,6 @@
 package ru.bondarenko.orientvibe.ng.gps
 
 import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
@@ -64,15 +62,18 @@ object MapOrientation {
         val distFromA = sqrt(dx0 * dx0 + dy0 * dy0)
 
         // Target position on AB line
-        val targetRelX = (calibration.pointB.imageX - calibration.pointA.imageX) * imageDimensions.first
-        val targetRelY = (calibration.pointB.imageY - calibration.pointA.imageY) * imageDimensions.second
+        val targetRelX =
+            (calibration.pointB.imageX - calibration.pointA.imageX) * imageDimensions.first
+        val targetRelY =
+            (calibration.pointB.imageY - calibration.pointA.imageY) * imageDimensions.second
         val distAB = sqrt(targetRelX * targetRelX + targetRelY * targetRelY)
         if (distAB < 1e-9) return null
 
         // Target point on AB line at fraction
         val targetX = px + targetRelX * fraction
         val targetY = py + targetRelY * fraction
-        val distTargetFromA = sqrt((targetX - px) * (targetX - px) + (targetY - py) * (targetY - py))
+        val distTargetFromA =
+            sqrt((targetX - px) * (targetX - px) + (targetY - py) * (targetY - py))
 
         // For the GPS point to land exactly on the target after rotation, distances must match.
         if (kotlin.math.abs(distFromA - distTargetFromA) > 1e-6) return null
@@ -95,10 +96,14 @@ object MapOrientation {
         imageDimensions: Pair<Float, Float>,
         tolerancePx: Float = 1e-3f
     ): Boolean {
-        val expectedRelX = cal.pointA.imageX + (cal.pointB.imageX - cal.pointA.imageX) * expectedFraction
-        val expectedRelY = cal.pointA.imageY + (cal.pointB.imageY - cal.pointA.imageY) * expectedFraction
+        val expectedRelX =
+            cal.pointA.imageX + (cal.pointB.imageX - cal.pointA.imageX) * expectedFraction
+        val expectedRelY =
+            cal.pointA.imageY + (cal.pointB.imageY - cal.pointA.imageY) * expectedFraction
 
-        val actualAbs = MapCalibrationUtils.gpsToImageAbs(actualGps, cal, imageDimensions, northAngleDeg) ?: return false
+        val actualAbs =
+            MapCalibrationUtils.gpsToImageAbs(actualGps, cal, imageDimensions, northAngleDeg)
+                ?: return false
         val expectedAbsX = expectedRelX * imageDimensions.first
         val expectedAbsY = expectedRelY * imageDimensions.second
 
@@ -113,8 +118,8 @@ object MapOrientation {
     data class OrientedCalibration(
         val calibration: ru.bondarenko.orientvibe.ng.model.MapCalibration,
         val northAngleDeg: Float,           // degrees; positive = clockwise rotation of map Y-axis from screen-up
-        val trueBearingDeg: Double,         // geographic bearing from A to B
-        val rawMagneticBearingDeg: Double,  // compass bearing from A to B (true - declination)
+        val trueBearingDeg: Float,         // geographic bearing from A to B
+        val rawMagneticBearingDeg: Float,  // compass bearing from A to B (true - declination)
         val scaleMetersPerPixel: Double     // meters per source pixel at this calibration
     ) {
         /** Image position of point B in absolute pixels (for given imageDimensions). */
@@ -137,14 +142,23 @@ object MapOrientation {
         fun distanceABPixels(imageDimensions: Pair<Float, Float>): Double {
             val a = pointAImagePos(imageDimensions)
             val b = pointBImagePos(imageDimensions)
-            return kotlin.math.sqrt((b.first - a.first).toDouble() * (b.first - a.first) +
-                                  (b.second - a.second).toDouble() * (b.second - a.second))
+            return kotlin.math.sqrt(
+                (b.first - a.first).toDouble() * (b.first - a.first) +
+                        (b.second - a.second).toDouble() * (b.second - a.second)
+            )
         }
 
         /** Convert GPS coordinate to absolute image pixels, applying magnetic alignment. */
-        fun gpsToImageAbs(gps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate,
-                          imageDimensions: Pair<Float, Float>): Pair<Float, Float>? {
-            return MapCalibrationUtils.gpsToImageAbs(gps, calibration, imageDimensions, northAngleDeg)
+        fun gpsToImageAbs(
+            gps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate,
+            imageDimensions: Pair<Float, Float>
+        ): Pair<Float, Float>? {
+            return MapCalibrationUtils.gpsToImageAbs(
+                gps,
+                calibration,
+                imageDimensions,
+                northAngleDeg
+            )
         }
 
         /** Convert GPS coordinate to relative (0..1) image position. */
@@ -153,7 +167,10 @@ object MapOrientation {
         }
 
         /** Convert image pixel to GPS coordinate (uses uncalibrated frame, ignores northAngle). */
-        fun imageToGps(imageX: Float, imageY: Float): ru.bondarenko.orientvibe.ng.model.GpsCoordinate? {
+        fun imageToGps(
+            imageX: Float,
+            imageY: Float
+        ): ru.bondarenko.orientvibe.ng.model.GpsCoordinate? {
             return MapCalibrationUtils.imageToGps(imageX, imageY, calibration)
         }
     }
@@ -164,11 +181,19 @@ object MapOrientation {
         pointAImageRel: Pair<Float, Float>,  // relative (0..1) on the image
         pointBGps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate,
         pointBImageRel: Pair<Float, Float>,  // relative (0..1) on the image
-        magneticDeclination: Double
+        magneticDeclination: Float
     ): OrientedCalibration? {
         val cal = MapGeometry.computeCalibrationRaw(
-            ru.bondarenko.orientvibe.ng.model.CalibrationPoint(pointAGps, pointAImageRel.first, pointAImageRel.second),
-            ru.bondarenko.orientvibe.ng.model.CalibrationPoint(pointBGps, pointBImageRel.first, pointBImageRel.second),
+            ru.bondarenko.orientvibe.ng.model.CalibrationPoint(
+                pointAGps,
+                pointAImageRel.first,
+                pointAImageRel.second
+            ),
+            ru.bondarenko.orientvibe.ng.model.CalibrationPoint(
+                pointBGps,
+                pointBImageRel.first,
+                pointBImageRel.second
+            ),
             magneticDeclination
         ) ?: return null
 

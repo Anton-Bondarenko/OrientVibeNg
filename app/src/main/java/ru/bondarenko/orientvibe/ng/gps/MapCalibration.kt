@@ -16,13 +16,13 @@ object MapCalibrationUtils {
     fun calibrate(
         pointA: CalibrationPoint,
         pointB: CalibrationPoint,
-        magneticDeclination: Double
+        magneticDeclination: Float
     ): MapCalibration? {
         return MapGeometry.computeCalibrationRaw(pointA, pointB, magneticDeclination)
     }
 
     /** Returns the physical magnetic declination used for northAngle computation. */
-    fun effectiveDeclination(cal: MapCalibration): Double {
+    fun effectiveDeclination(cal: MapCalibration): Float {
         return cal.physicalDeclination
     }
 
@@ -39,13 +39,13 @@ object MapCalibrationUtils {
     fun magneticBearing(
         from: GpsCoordinate,
         to: GpsCoordinate,
-        magneticDeclination: Double
-    ): Double {
+        magneticDeclination: Float
+    ): Float {
         val trueBearing = bearing(from, to)
         return MapGeometry.magneticBearing(trueBearing, magneticDeclination)
     }
 
-    fun bearing(from: GpsCoordinate, to: GpsCoordinate): Double {
+    fun bearing(from: GpsCoordinate, to: GpsCoordinate): Float {
         return MapGeometry.bearing(from, to)
     }
 
@@ -123,7 +123,7 @@ object MapCalibrationUtils {
             latitude = Math.toDegrees(lat1Rad + angDist),
             longitude = startGPS.longitude
         )
-        val declination = ru.bondarenko.orientvibe.ng.gps.calculateMagneticDeclination(startGPS.latitude, startGPS.longitude)
+        val declination = calculateMagneticDeclination(startGPS.latitude, startGPS.longitude)
         return MapGeometry.computeCalibrationRaw(
             CalibrationPoint(gps = startGPS, imageX = startPointImageX, imageY = startPointImageY),
             CalibrationPoint(gps = northGps, imageX = startPointImageX, imageY = startPointImageY + 1f),
@@ -152,7 +152,7 @@ object MapCalibrationUtils {
         finishPointImageX: Float,
         finishPointImageY: Float,
         currentFixGPS: GpsCoordinate,
-        magneticDeclination: Double = 0.0
+        magneticDeclination: Float = 0f
     ): BindResult {
         // Use actual GPS coordinates directly — two-point calibration guarantees
         // gpsToImage(pointB.gps) returns pointB.imageCoords exactly.

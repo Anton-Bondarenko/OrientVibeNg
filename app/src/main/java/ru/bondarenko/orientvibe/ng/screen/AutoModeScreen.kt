@@ -117,7 +117,7 @@ fun AutoModeScreen() {
         isBinding = false
     }
 
-    // Обработка переккалибровки (масштаб) по второму КП
+    // Обработка перекалибровки (масштаб) по второму КП
     LaunchedEffect(pendingScale) {
         if (!pendingScale) return@LaunchedEffect
         pendingScale = false
@@ -532,59 +532,59 @@ fun AutoModeScreen() {
                                 color = Color.Black
                             )
                         }
-                    }
 
-                    // Кнопки привязки — вертикально под номером CP
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.padding(top = 8.dp)
-                    ) {
-                        // Кнопка "Здесь" — зелёная когда _boundGps == null (ещё не привязано)
-                        val boundHereGreen = !hasBoundCp
-                        androidx.compose.material3.Button(
-                            onClick = {
-                                autoVm.setCurrentControl(currentControl.value)
-                                isBindEnabled && run {
-                                    pendingBind = currentControl.value
-                                    true
-                                }
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            enabled = isBindEnabled,
-                            colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                                containerColor = if (boundHereGreen) GreenReadyDark else MaterialTheme.colorScheme.primary
-                            )
+                        // Кнопки привязки
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(1.dp),
+                            modifier = Modifier.padding(all = 3.dp)
                         ) {
-                            Text(
-                                text = "Здесь",
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
+                            // Кнопка "Здесь" — зелёная когда _boundGps == null (ещё не привязано)
+                            val boundHereGreen = !hasBoundCp
+                            androidx.compose.material3.Button(
+                                onClick = {
+                                    autoVm.setCurrentControl(currentControl.value)
+                                    isBindEnabled && run {
+                                        pendingBind = currentControl.value
+                                        true
+                                    }
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                enabled = isBindEnabled,
+                                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                    containerColor = if (boundHereGreen) GreenReadyDark else MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Text(
+                                    text = "Здесь",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
 
-                        // Кнопка "масштаб" — зелёная когда _boundGps != null (уже привязано)
-                        val boundScaleGreen = hasBoundCp
-                        androidx.compose.material3.Button(
-                            onClick = {
-                                autoVm.setCurrentControl(currentControl.value)
-                                isScaleEnabled && run {
-                                    pendingScale = true
-                                    true
-                                }
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            enabled = isScaleEnabled,
-                            colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                                containerColor = if (boundScaleGreen) GreenReadyDark else MaterialTheme.colorScheme.primary
-                            )
-                        ) {
-                            Text(
-                                text = "масштаб",
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isScaleEnabled) Color.Black else Color.Gray
-                            )
+                            // Кнопка "масштаб" — зелёная когда _boundGps != null (уже привязано)
+                            val boundScaleGreen = hasBoundCp
+                            androidx.compose.material3.Button(
+                                onClick = {
+                                    autoVm.setCurrentControl(currentControl.value)
+                                    isScaleEnabled && run {
+                                        pendingScale = true
+                                        true
+                                    }
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                enabled = isScaleEnabled,
+                                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                    containerColor = if (boundScaleGreen) GreenReadyDark else MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Text(
+                                    text = "Масштаб",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isScaleEnabled) Color.Black else Color.Gray
+                                )
+                            }
                         }
                     }
                 }

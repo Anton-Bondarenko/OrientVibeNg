@@ -1,48 +1,27 @@
 package ru.bondarenko.orientvibe.ng.gps
 
+import android.hardware.GeomagneticField
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Simplified WMM2020 dipole-model magnetic declination calculator.
- *
- * Uses the position of the *magnetic north pole* (the point where a compass needle
- * points straight down) and computes the great-circle bearing from the user's location
- * toward that pole. Declination = bearingToPole − 0 (= trueNorth), i.e. the angle by which
- * magnetic north deviates from geographic north at that location.
- *
- * Magnetic pole position (WMM2020 epoch) and secular drift:
- *   lat ≈ 86.5°N, lon ≈ 171.0°E (2020.0) → drifting ~55 km/yr toward Siberia
- *   Converted to annual rate in degrees ≈ +0.005°/yr lon, −0.003°/yr lat
- *
- * Accuracy: ~2–4° for 2020–2030 range at mid-latitudes; much better near the equator.
- * Sufficient for orienteering — far better than a constant 5°.
- */
-fun calculateMagneticDeclination(latitude: Double, longitude: Double, epochYear: Double = 2026.0): Double {
-    val t = epochYear - 2020.0 // years since WMM2020 epoch
+ * Получаем склонение в градусах (положительное — на восток, отрицательное — на запад)
+ **/
+fun calculateMagneticDeclination(
+    latitude: Double,
+    longitude: Double,
+    timeMillis: Long = System.currentTimeMillis()
+): Float {
+    val geomagneticField = GeomagneticField(
+        latitude.toFloat(),
+        longitude.toFloat(),
+        0f,
+        timeMillis
+    )
 
-    // Magnetic north pole position at *epochYear* (interpolated from WMM2020 + secular variation)
-    val poleLat = 86.5 + (-0.003) * t     // ~86.5°N in 2020, drifting slowly southward
-    val poleLon = 171.0 + 0.005 * t        // ~171°E in 2020, drifting eastward
-
-    // Great-circle bearing from (lat, lon) → magnetic north pole
-    val latRad = Math.toRadians(latitude)
-    val poleLatRad = Math.toRadians(poleLat)
-    val dLon = Math.toRadians(poleLon - longitude)
-
-    val y = sin(dLon) * cos(poleLatRad)
-    val x = cos(latRad) * sin(poleLatRad) -
-            sin(latRad) * cos(poleLatRad) * cos(dLon)
-
-    // Bearing from user → magnetic pole (0° = true north, clockwise positive)
-    var bearingToPole = (Math.toDegrees(atan2(y, x)) + 360.0) % 360.0
-
-    // Normalize to [-180, +180]
-    if (bearingToPole > 180.0) bearingToPole -= 360.0
-
-    return bearingToPole
+    return geomagneticField.declination
 }
 
 /**
@@ -54,14 +33,32 @@ object MapGeometry {
     private const val EARTH_RADIUS_METERS = 6_371_000.0
 
     /** True (geographic) bearing from *from* to *to*, in degrees [0, 360). */
-    fun bearing(from: GpsCoordinate, to: GpsCoordinate): Double {
+    fun bearing(from: GpsCoordinate, to: GpsCoordinate): Float {
         val lat1 = Math.toRadians(from.latitude)
         val lat2 = Math.toRadians(to.latitude)
         val dLon = Math.toRadians(to.longitude - from.longitude)
 
         val y = sin(dLon) * cos(lat2)
         val x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
-        return (Math.toDegrees(atan2(y, x)) + 360.0) % 360.0
+        return ((Math.toDegrees(atan2(y, x)) + 360f) % 360f).toFloat()
+    }
+
+    fun screenBearing(x1: Float, y1: Float, x2: Float, y2: Float): Float {
+        val dx = x2 - x1
+        val dy = y1 - y2
+
+        // Для угла с осью Y меняем dx и dy местами в atan2
+        val radians = atan2(dx, dy)
+
+        // Переводим радианы в градусы
+        var degrees = Math.toDegrees(radians.toDouble())
+
+        // Если вам нужен результат строго от 0 до 360 градусов:
+        if (degrees < 0) {
+            degrees += 360.0
+        }
+
+        return degrees.toFloat()
     }
 
     /** Haversine distance in metres between two GPS coordinates. */
@@ -88,7 +85,9 @@ object MapGeometry {
         // Use cos(from.lat) for longitude-to-meters conversion — matches offsetCoordinate,
         // computeCalibrationRaw, and gpsToImageRelative which all use from (anchor) as reference.
         val refLat = Math.toRadians(from.latitude)
-        return (to.longitude - from.longitude) * (Math.PI / 180.0) * EARTH_RADIUS_METERS * cos(refLat)
+        return (to.longitude - from.longitude) * (Math.PI / 180.0) * EARTH_RADIUS_METERS * cos(
+            refLat
+        )
     }
 
     /** Offset the starting GPS coordinate by a northward and eastward displacement (metres). */
@@ -104,7 +103,7 @@ object MapGeometry {
     }
 
     /** Magnetic bearing = trueBearing − declination (decl positive = east). */
-    fun magneticBearing(trueBearing: Double, declination: Double): Double {
+    fun magneticBearing(trueBearing: Float, declination: Float): Float {
         return trueBearing - declination
     }
 
@@ -121,7 +120,7 @@ object MapGeometry {
     fun computeCalibrationRaw(
         pointA: CalibrationPoint,
         pointB: CalibrationPoint,
-        magneticDeclination: Double
+        magneticDeclination: Float
     ): MapCalibration? {
         // Compute Rhumb distance using cos(pointA.gps.lat) for easting — matches offsetCoordinate,
         // gpsToImageRelative, and imageToGpsRelative which all use pointA (start) as reference.
@@ -140,7 +139,7 @@ object MapGeometry {
         val scaleMetersPerUnit = gpsDistance / imageDistance
         val trueBearing = bearing(pointA.gps, pointB.gps)
         val rawMagneticBearing = magneticBearing(trueBearing, magneticDeclination)
-        val hasXYFlip = cos(Math.toRadians(rawMagneticBearing)) < 0
+        val hasXYFlip = cos(Math.toRadians(rawMagneticBearing.toDouble())) < 0
 
         return MapCalibration(
             pointA = pointA,
@@ -204,5 +203,38 @@ object MapGeometry {
         val dNorth = -metersDy
 
         return offsetCoordinate(calibration.pointA.gps, dNorth, dEast)
+    }
+
+    /**
+     * Offset a GPS coordinate by a given bearing (degrees from true north) and distance (meters).
+     * Uses spherical earth approximation.
+     */
+    fun offsetGps(
+        from: GpsCoordinate,
+        bearingDeg: Float,
+        distanceMeters: Double
+    ): GpsCoordinate {
+        val earthRadius = 6_371_000.0
+        val angularDistance = distanceMeters / earthRadius
+        val bearingRad = Math.toRadians(bearingDeg.toDouble())
+        val lat1Rad = Math.toRadians(from.latitude)
+        val lon1Rad = Math.toRadians(from.longitude)
+
+        val lat2Rad = kotlin.math.asin(
+            kotlin.math.sin(lat1Rad) * kotlin.math.cos(angularDistance) +
+                    kotlin.math.cos(lat1Rad) * kotlin.math.sin(angularDistance) * kotlin.math.cos(
+                bearingRad
+            )
+        )
+
+        val lon2Rad = lon1Rad + kotlin.math.atan2(
+            kotlin.math.sin(bearingRad) * kotlin.math.sin(angularDistance) * kotlin.math.cos(lat1Rad),
+            kotlin.math.cos(angularDistance) - kotlin.math.sin(lat1Rad) * kotlin.math.sin(lat2Rad)
+        )
+
+        return GpsCoordinate(
+            latitude = Math.toDegrees(lat2Rad),
+            longitude = Math.toDegrees(lon2Rad)
+        )
     }
 }
