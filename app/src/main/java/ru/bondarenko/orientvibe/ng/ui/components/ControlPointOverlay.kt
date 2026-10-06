@@ -14,7 +14,6 @@ class ControlPointOverlay {
 
     // Source-to-view coordinate conversion — set externally
     var sourceToViewCoord: ((Float, Float) -> android.graphics.PointF?)? = null
-    var imageDimensions: Pair<Float, Float>? = null // (width, height) in source pixels
 
     private val controlCirclePaint = Paint().apply {
         color = ControlsRed
@@ -87,11 +86,10 @@ class ControlPointOverlay {
     }
 
     fun numDraw(box: BoundingBox, canvas: Canvas, idx: Int) {
-        val (sWidth, sHeight) = imageDimensions ?: return
-        val left = (box.centerX - box.width / 2f) * sWidth
-        val top = (box.centerY - box.height / 2f) * sHeight
-        val right = (box.centerX + box.width / 2f) * sWidth
-        val bottom = (box.centerY + box.height / 2f) * sHeight
+        val left = (box.centerX - box.width / 2f)
+        val top = (box.centerY - box.height / 2f)
+        val right = (box.centerX + box.width / 2f)
+        val bottom = (box.centerY + box.height / 2f)
         val toView = sourceToViewCoord ?: return
 
         val corner = toView(left, top) ?: return
@@ -135,14 +133,13 @@ class ControlPointOverlay {
     }
 
     fun controlDraw(box: BoundingBox, canvas: Canvas, idx: Int) {
-        val (sWidth, sHeight) = imageDimensions ?: return
-        val cx = box.centerX * sWidth
-        val cy = box.centerY * sHeight
+        val cx = box.centerX
+        val cy = box.centerY
         val toView = sourceToViewCoord ?: return
 
         val viewCenter = toView(cx, cy) ?: return
-        val viewEdgeX = toView(cx + box.width * sWidth / 2f, cy) ?: return
-        val viewEdgeY = toView(cx, cy + box.height * sHeight / 2f) ?: return
+        val viewEdgeX = toView(cx + box.width / 2f, cy) ?: return
+        val viewEdgeY = toView(cx, cy + box.height / 2f) ?: return
         val dxX = viewEdgeX.x - viewCenter.x
         val dyX = viewEdgeX.y - viewCenter.y
         val radiusX = sqrt((dxX * dxX + dyX * dyX).toDouble()).toFloat()
@@ -183,11 +180,10 @@ class ControlPointOverlay {
     }
 
     fun searchBoxDraw(box: BoundingBox, canvas: Canvas) {
-        val (sWidth, sHeight) = imageDimensions ?: return
-        val left = (box.centerX - (box.width * 6f) / 2f) * sWidth
-        val top = (box.centerY - (box.height * 6f) / 2f) * sHeight
-        val right = (box.centerX + (box.width * 6f) / 2f) * sWidth
-        val bottom = (box.centerY + (box.height * 6f) / 2f) * sHeight
+        val left = (box.centerX - (box.width * 6f) / 2f)
+        val top = (box.centerY - (box.height * 6f) / 2f)
+        val right = (box.centerX + (box.width * 6f) / 2f)
+        val bottom = (box.centerY + (box.height * 6f) / 2f)
         val toView = sourceToViewCoord ?: return
 
         val corner = toView(left, top) ?: return
@@ -205,16 +201,12 @@ class ControlPointOverlay {
     fun draw(canvas: Canvas) {
         if (controlsboundingBoxes.isEmpty() && numbersBoundingBoxes.isEmpty()) return
 
-        val (sWidth, sHeight) = imageDimensions ?: return
-        if (sWidth <= 0 || sHeight <= 0) return
-
         val toView = sourceToViewCoord ?: return
 
         // ── Прямоугольники для боксов номеров ──
 //        numbersBoundingBoxes.forEachIndexed { idx, box ->
 //            numDraw(box, canvas, idx)
 //        }
-
         // ── Круги контрольных пунктов ──
         controlsboundingBoxes.forEachIndexed { idx, box ->
             controlDraw(box, canvas, idx)

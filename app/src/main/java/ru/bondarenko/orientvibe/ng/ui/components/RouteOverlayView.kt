@@ -73,12 +73,9 @@ class RouteOverlay {
     // Source-to-view coordinate conversion — set externally
     var sourceToViewCoord: ((Float, Float) -> android.graphics.PointF?)? = null
     var viewToSourceCoord: ((Float, Float) -> android.graphics.PointF?)? = null
-    var imageDimensions: Pair<Float, Float>? = null // (width, height) in source pixels
 
     private fun sourceToView(p: RoutePoint): android.graphics.PointF? {
-        val (sWidth, sHeight) = imageDimensions ?: return null
-        if (sWidth <= 0 || sHeight <= 0) return null
-        return sourceToViewCoord?.invoke(p.x * sWidth, p.y * sHeight)
+        return sourceToViewCoord?.invoke(p.x, p.y)
     }
 
     private fun hitTestStart(vx: Float, vy: Float): Boolean {
@@ -113,12 +110,11 @@ class RouteOverlay {
 
             MotionEvent.ACTION_MOVE -> {
                 if (dragging != Dragging.NONE) {
-                    val (sWidth, sHeight) = imageDimensions ?: return true
                     val viewToSource = viewToSourceCoord ?: return true
                     val sourcePt = viewToSource(vx, vy)
-                    if (sourcePt != null && sWidth > 0 && sHeight > 0) {
-                        val relX = sourcePt.x / sWidth
-                        val relY = sourcePt.y / sHeight
+                    if (sourcePt != null) {
+                        val relX = sourcePt.x
+                        val relY = sourcePt.y
                         when (dragging) {
                             Dragging.START -> dragListener?.onStartPointDragged(relX, relY)
                             Dragging.FINISH -> dragListener?.onFinishPointDragged(relX, relY)
@@ -135,11 +131,10 @@ class RouteOverlay {
                     return true
                 }
                 // Forward as tap
-                val (sWidth, sHeight) = imageDimensions ?: return false
                 val viewToSource = viewToSourceCoord ?: return false
                 val sourcePt = viewToSource(vx, vy)
-                if (sourcePt != null && sWidth > 0 && sHeight > 0) {
-                    tapListener?.onMapTap(sourcePt.x / sWidth, sourcePt.y / sHeight)
+                if (sourcePt != null) {
+                    tapListener?.onMapTap(sourcePt.x, sourcePt.y)
                     return true
                 }
             }
@@ -150,16 +145,14 @@ class RouteOverlay {
     fun draw(canvas: Canvas) {
         val sp = startPoint
         val fp = finishPoint
-        val (sWidth, sHeight) = imageDimensions ?: return
-        if (sWidth <= 0 || sHeight <= 0) return
         val toView = sourceToViewCoord ?: return
 
         // Draw route line from start to finish
         if (sp != null && fp != null) {
-            val sx = sp.x * sWidth
-            val sy = sp.y * sHeight
-            val fx = fp.x * sWidth
-            val fy = fp.y * sHeight
+            val sx = sp.x
+            val sy = sp.y
+            val fx = fp.x
+            val fy = fp.y
 
             val viewS = toView(sx, sy) ?: return
             val viewF = toView(fx, fy) ?: return
@@ -203,15 +196,14 @@ class RouteOverlay {
 
         // Draw start point (triangle rotated to point toward finish)
         if (sp != null) {
-            val sx = sp.x * sWidth
-            val sy = sp.y * sHeight
+            val sx = sp.x
+            val sy = sp.y
             val viewS = toView(sx, sy) ?: return
 
             val angle = if (fp != null) {
-                val (sWidth, sHeight) = imageDimensions ?: 0f to 0f
                 atan2(
-                    ((fp.y - sp.y) * sHeight).toDouble(),
-                    ((fp.x - sp.x) * sWidth).toDouble()
+                    ((fp.y - sp.y)).toDouble(),
+                    ((fp.x - sp.x)).toDouble()
                 ).toFloat()
             } else {
                 -(Math.PI.toFloat() / 2)
@@ -253,8 +245,8 @@ class RouteOverlay {
 
         // Draw finish point (double circle)
         if (fp != null) {
-            val fx = fp.x * sWidth
-            val fy = fp.y * sHeight
+            val fx = fp.x
+            val fy = fp.y
             val viewF = toView(fx, fy) ?: return
 
             val outerRadius = 24f

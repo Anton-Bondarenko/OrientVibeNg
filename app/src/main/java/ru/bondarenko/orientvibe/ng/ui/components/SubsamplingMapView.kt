@@ -3,7 +3,6 @@
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.PointF
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -17,9 +16,6 @@ import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
 import ru.bondarenko.orientvibe.ng.gps.TrackPoint
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.model.RoutePoint
-import kotlin.math.atan2
-import kotlin.math.pow
-import kotlin.math.sqrt
 
 class OverlayMapView(
     context: Context,
@@ -130,7 +126,7 @@ class OverlayMapView(
         calibrationPointBGps?.let { gpsB ->
             val cal = trackOverlay.calibration ?: return@let
             val imageCoords = MapCalibrationUtils.gpsToImageAbs(
-                gpsB, cal, Pair(sWidth, sHeight), trackOverlay.northAngle
+                gpsB, cal, trackOverlay.northAngle
             ) ?: return@let
             val viewPt = sourceToViewCoord(imageCoords.first, imageCoords.second)
             if (viewPt != null) {
@@ -228,6 +224,7 @@ fun SubsamplingMapView(
             override fun onNorthAngleChanged(angleDegrees: Float) {
                 onNorthAngleChanged?.invoke(angleDegrees)
             }
+
             override fun onNorthAngleReset() {
                 onNorthAngleReset?.invoke()
             }

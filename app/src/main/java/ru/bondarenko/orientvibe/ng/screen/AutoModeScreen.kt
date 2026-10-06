@@ -80,10 +80,6 @@ fun AutoModeScreen() {
 
     // Версия калибровки — триггер для recomposition при повторной калибровке
     val calibrationVersion by autoVm.calibrationVersion.collectAsState()
-
-    // Первая привязанная КП — для кнопки "масштаб"
-    val boundCpNumber by autoVm.boundCpNumber.collectAsState()
-
     var infoMessage by remember { mutableStateOf("Авто-режим: выберите карту") }
     var isInfoVisible by remember { mutableStateOf(true) }
 
@@ -94,17 +90,17 @@ fun AutoModeScreen() {
     var isScaling by remember { mutableStateOf(false) }
 
     // Кнопка "Здесь" активна только когда currentControl совпадает с номером найденного CP
-    val hasMatchingCp = mapState.controlsBoundingBoxes.any { it.number == currentControl.value }
+    val hasMatchingCp = mapState.controlsBoundingBoxes.any { it.number == currentControl.num }
     val isBindEnabled = !isBinding && hasMatchingCp
 
     // Состояние первой привязки и кнопки "масштаб"
     val hasBoundCp = autoVm.hasBoundCp
     val detectedCpNumbers = autoVm.getDetectedCpNumbers()
-    val targetExistsInDetected = detectedCpNumbers.contains(currentControl.value)
+    val targetExistsInDetected = detectedCpNumbers.contains(currentControl.num)
 
     // "масштаб" активна когда: есть привязка, текущий CP ≠ привязанный CP, и выбранный CP найден на карте
     val isScaleEnabled =
-        hasBoundCp && (boundCpNumber != currentControl.value) && targetExistsInDetected && !isScaling
+        hasBoundCp && targetExistsInDetected && !isScaling
 
     // Обработка привязки GPS → контрольная точка
     LaunchedEffect(pendingBind) {
@@ -495,7 +491,7 @@ fun AutoModeScreen() {
 
                         // Редактируемое число — отображаем currentControl.value, вводим вручную или кнопками +/−
                         OutlinedTextField(
-                            value = currentControl.value.toString(),
+                            value = currentControl.num.toString(),
                             onValueChange = { raw ->
                                 val filtered = raw.filter { it.isDigit() }
                                 if (filtered.isEmpty() || filtered.toIntOrNull() != null) {
@@ -543,9 +539,9 @@ fun AutoModeScreen() {
                             val boundHereGreen = !hasBoundCp
                             androidx.compose.material3.Button(
                                 onClick = {
-                                    autoVm.setCurrentControl(currentControl.value)
+                                    autoVm.setCurrentControl(currentControl.num)
                                     isBindEnabled && run {
-                                        pendingBind = currentControl.value
+                                        pendingBind = currentControl.num
                                         true
                                     }
                                 },
@@ -566,7 +562,7 @@ fun AutoModeScreen() {
                             val boundScaleGreen = hasBoundCp
                             androidx.compose.material3.Button(
                                 onClick = {
-                                    autoVm.setCurrentControl(currentControl.value)
+                                    autoVm.setCurrentControl(currentControl.num)
                                     isScaleEnabled && run {
                                         pendingScale = true
                                         true

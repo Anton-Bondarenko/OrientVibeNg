@@ -1,5 +1,6 @@
 package ru.bondarenko.orientvibe.ng.gps
 
+import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils.bindGpsToFinishWithTrack
 import ru.bondarenko.orientvibe.ng.model.CalibrationPoint
 import ru.bondarenko.orientvibe.ng.model.GpsCoordinate
 import ru.bondarenko.orientvibe.ng.model.MapCalibration
@@ -75,26 +76,12 @@ object MapCalibrationUtils {
     fun gpsToImageAbs(
         gps: GpsCoordinate,
         calibration: MapCalibration,
-        imageDimensions: Pair<Float, Float>,  // (width, height) — unused but kept for API compatibility
         northAngleDeg: Float  // degrees to rotate around pointA
     ): Pair<Float, Float>? {
-        val rel = gpsToImage(gps, calibration) ?: return null
-
-        if (northAngleDeg == 0f) return rel
-
-        val pivotX = calibration.pointA.imageX.toDouble()
-        val pivotY = calibration.pointA.imageY.toDouble()
-        val angle = Math.toRadians(northAngleDeg.toDouble())
-        val cosA = kotlin.math.cos(angle)
-        val sinA = kotlin.math.sin(angle)
-
-        // Rotate around pointA (pivot) by northAngleDeg
-        val dx = rel.first.toDouble() - pivotX
-        val dy = rel.second.toDouble() - pivotY
-        val rx = pivotX + dx * cosA - dy * sinA
-        val ry = pivotY + dx * sinA + dy * cosA
-
-        return Pair(rx.toFloat(), ry.toFloat())
+        val point = MapGeometry.gpsToImageAbs(gps, calibration, northAngleDeg)
+        return if (point != null) {
+            Pair(point.x, point.y)
+        } else null
     }
 
     /** Offset the starting GPS coordinate by a northward and eastward displacement (metres). */
@@ -117,7 +104,7 @@ object MapCalibrationUtils {
     ): MapCalibration {
         // Synthetic pointB: directly north of pointA (bearing 0), scale=1 m/px → minimal placeholder
         val earthRadius = 6371000.0
-        val angDist = 1.0 / earthRadius // 1 meter
+        val angDist = 2000.0 / earthRadius
         val lat1Rad = Math.toRadians(startGPS.latitude)
         val northGps = GpsCoordinate(
             latitude = Math.toDegrees(lat1Rad + angDist),
@@ -126,7 +113,11 @@ object MapCalibrationUtils {
         val declination = calculateMagneticDeclination(startGPS.latitude, startGPS.longitude)
         return MapGeometry.computeCalibrationRaw(
             CalibrationPoint(gps = startGPS, imageX = startPointImageX, imageY = startPointImageY),
-            CalibrationPoint(gps = northGps, imageX = startPointImageX, imageY = startPointImageY + 1f),
+            CalibrationPoint(
+                gps = northGps,
+                imageX = startPointImageX,
+                imageY = startPointImageY + 1f
+            ),
             declination
         )!!
     }
@@ -156,8 +147,13 @@ object MapCalibrationUtils {
     ): BindResult {
         // Use actual GPS coordinates directly — two-point calibration guarantees
         // gpsToImage(pointB.gps) returns pointB.imageCoords exactly.
-        val pointA = CalibrationPoint(gps = startGPS, imageX = startPointImageX, imageY = startPointImageY)
-        val pointB = CalibrationPoint(gps = currentFixGPS, imageX = finishPointImageX, imageY = finishPointImageY)
+        val pointA =
+            CalibrationPoint(gps = startGPS, imageX = startPointImageX, imageY = startPointImageY)
+        val pointB = CalibrationPoint(
+            gps = currentFixGPS,
+            imageX = finishPointImageX,
+            imageY = finishPointImageY
+        )
 
         val newCal = calibrate(pointA, pointB, magneticDeclination)
             ?: throw IllegalStateException("bindGpsToFinishWithTrack: calibration points too close")

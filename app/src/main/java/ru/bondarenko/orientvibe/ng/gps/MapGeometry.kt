@@ -1,5 +1,6 @@
 package ru.bondarenko.orientvibe.ng.gps
 
+import android.graphics.PointF
 import android.hardware.GeomagneticField
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -236,5 +237,71 @@ object MapGeometry {
             latitude = Math.toDegrees(lat2Rad),
             longitude = Math.toDegrees(lon2Rad)
         )
+    }
+
+    fun imageAbsToGps(
+        point: PointF,
+        calibration: MapCalibration?,
+        northAngle: Float
+    ): GpsCoordinate? {
+        val cal =
+            calibration ?: return null
+
+        val fullAngle =
+            -magneticBearing(northAngle, cal.magneticDeclination)
+        val pair = rotateAroundCalibration(point.x, point.y, cal, fullAngle);
+
+        return imageToGpsRelative(pair.first, pair.second, cal)
+    }
+
+    fun rotateAroundCalibration(
+        x: Float,
+        y: Float,
+        calibration: MapCalibration,
+        fullAngle: Float
+    ): Pair<Float, Float> {
+        val calAnchorGps = calibration.pointA.gps
+        val pivotImg = calAnchorGps.let { MapCalibrationUtils.gpsToImage(it, calibration) }
+        if (pivotImg != null) {
+            val px = pivotImg.first
+            val py = pivotImg.second
+            val angleRad = Math.toRadians(fullAngle.toDouble())
+            val cosA = cos(angleRad).toFloat()
+            val sinA = sin(angleRad).toFloat()
+            val dx = x - px
+            val dy = y - py
+
+            return Pair(px + dx * cosA - dy * sinA, py + dx * sinA + dy * cosA)
+        }
+        return Pair(x, y);
+    }
+
+    /**
+     * Convert a GPS coordinate to image coordinates (absolute pixels).
+     * Uses full calibration (scale + bearing rotation) plus optional northAngle adjustment.
+     */
+    fun gpsToImageAbs(
+        gps: GpsCoordinate,
+        calibration: MapCalibration?,
+        northAngle: Float
+    ): PointF? {
+        val cal =
+            calibration ?: return null
+
+        // gpsToImage returns ABSOLUTE pixels (pointA.imageX + relDx in pixels), NOT normalized 0..1
+        val imageCoords = gpsToImageRelative(gps, cal) ?: return null
+
+        var x = imageCoords.first
+        var y = imageCoords.second
+
+        // Step 2: Apply northAngle rotation around a fixed pivot.
+        // Use calibration pointA (the map anchor) as the rotation center, NOT trackPoints.first()
+        // because trim removes old points which changes the first element, causing visual drift.
+        val fullAngle =
+            magneticBearing(northAngle, cal.magneticDeclination)
+
+        val pair = rotateAroundCalibration(x, y, cal, fullAngle)
+
+        return PointF(pair.first, pair.second)
     }
 }

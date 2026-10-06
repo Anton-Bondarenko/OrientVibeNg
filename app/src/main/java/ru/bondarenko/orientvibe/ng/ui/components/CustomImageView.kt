@@ -133,8 +133,15 @@ open class CustomImageView(context: Context) : View(context) {
     }
 
     fun sourceToViewCoord(x: Float, y: Float): PointF? {
+        val sWidth = bitmap?.width?.toFloat() ?: 0f
+        val sHeight = bitmap?.height?.toFloat() ?: 0f
+        if (sWidth <= 0 || sHeight <= 0) {
+            imageMatrix.reset()
+            inverseMatrix.reset()
+            return null
+        }
         computeImageMatrix()
-        val pts = floatArrayOf(x, y)
+        val pts = floatArrayOf(x * sWidth, y * sHeight)
         imageMatrix.mapPoints(pts)
         return PointF(pts[0], pts[1])
     }
@@ -197,14 +204,9 @@ open class CustomImageView(context: Context) : View(context) {
     }
 
     protected fun updateOverlayCoords() {
-        val sWidth = bitmap?.width?.toFloat() ?: 0f
-        val sHeight = bitmap?.height?.toFloat() ?: 0f
-        routeOverlay.imageDimensions = Pair(sWidth, sHeight)
         routeOverlay.sourceToViewCoord = { x, y -> sourceToViewCoord(x, y) }
         routeOverlay.viewToSourceCoord = { x, y -> viewToSourceCoord(x, y) }
-        controlPointOverlay.imageDimensions = Pair(sWidth, sHeight)
         controlPointOverlay.sourceToViewCoord = { x, y -> sourceToViewCoord(x, y) }
-        trackOverlay.imageDimensions = Pair(sWidth, sHeight)
         trackOverlay.sourceToViewCoord = { x, y -> sourceToViewCoord(x, y) }
     }
 

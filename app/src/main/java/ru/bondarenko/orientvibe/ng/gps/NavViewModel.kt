@@ -140,8 +140,7 @@ class NavViewModel(
     fun getCurrentGpsImageAbs(northAngleDeg: Float): Pair<Float, Float>? {
         val fix = _gpsState.value.currentFix ?: return null
         val cal = calibration ?: return null
-        val dims = _imageDimensions ?: return null
-        return MapCalibrationUtils.gpsToImageAbs(fix.coordinate, cal, dims, northAngleDeg)
+        return MapCalibrationUtils.gpsToImageAbs(fix.coordinate, cal, northAngleDeg)
     }
 
     /** Check if image-space point is near any KP; returns index or -1. */
@@ -173,19 +172,6 @@ class NavViewModel(
 
     fun setAutoBindImageDimensions(dims: Pair<Float, Float>) {
         _imageDimensions = dims
-    }
-
-    // ── Coordinate Conversion ──
-
-    fun currentGpsToImage(): Pair<Float, Float>? {
-        val fix = _gpsState.value.currentFix ?: return null
-        val cal = calibration ?: return null
-        return MapCalibrationUtils.gpsToImage(fix.coordinate, cal)
-    }
-
-    fun imageToGps(imageX: Float, imageY: Float): GpsCoordinate? {
-        val cal = calibration ?: return null
-        return MapCalibrationUtils.imageToGps(imageX, imageY, cal)
     }
 
     fun distanceBetween(a: GpsCoordinate, b: GpsCoordinate): Double {

@@ -102,13 +102,13 @@ object MapOrientation {
             cal.pointA.imageY + (cal.pointB.imageY - cal.pointA.imageY) * expectedFraction
 
         val actualAbs =
-            MapCalibrationUtils.gpsToImageAbs(actualGps, cal, imageDimensions, northAngleDeg)
+            MapCalibrationUtils.gpsToImageAbs(actualGps, cal, northAngleDeg)
                 ?: return false
         val expectedAbsX = expectedRelX * imageDimensions.first
         val expectedAbsY = expectedRelY * imageDimensions.second
 
-        val dx = (actualAbs.first - expectedAbsX).toDouble()
-        val dy = (actualAbs.second - expectedAbsY).toDouble()
+        val dx = (actualAbs.first - expectedAbsX)
+        val dy = (actualAbs.second - expectedAbsY)
         return sqrt(dx * dx + dy * dy) < tolerancePx
     }
 
@@ -150,28 +150,13 @@ object MapOrientation {
 
         /** Convert GPS coordinate to absolute image pixels, applying magnetic alignment. */
         fun gpsToImageAbs(
-            gps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate,
-            imageDimensions: Pair<Float, Float>
+            gps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate
         ): Pair<Float, Float>? {
             return MapCalibrationUtils.gpsToImageAbs(
                 gps,
                 calibration,
-                imageDimensions,
                 northAngleDeg
             )
-        }
-
-        /** Convert GPS coordinate to relative (0..1) image position. */
-        fun gpsToImageRel(gps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate): Pair<Float, Float>? {
-            return MapCalibrationUtils.gpsToImage(gps, calibration)
-        }
-
-        /** Convert image pixel to GPS coordinate (uses uncalibrated frame, ignores northAngle). */
-        fun imageToGps(
-            imageX: Float,
-            imageY: Float
-        ): ru.bondarenko.orientvibe.ng.model.GpsCoordinate? {
-            return MapCalibrationUtils.imageToGps(imageX, imageY, calibration)
         }
     }
 
