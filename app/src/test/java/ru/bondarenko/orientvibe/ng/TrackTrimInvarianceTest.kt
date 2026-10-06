@@ -39,7 +39,7 @@ class TrackTrimInvarianceTest {
                 gps = GpsCoordinate(50.46, 30.51),
                 imageX = 0.9f, imageY = 0.1f
             ),
-            scaleMetersPerPixel = 0.354,
+            scaleMetersPerMap = 0.354,
             bearingDegrees = -5.0,
             magneticDeclination = 5.0,
             physicalDeclination = 5.0
@@ -133,13 +133,13 @@ class TrackTrimInvarianceTest {
                 gps = GpsCoordinate(50.46, 30.51),
                 imageX = 0.9f, imageY = 0.1f
             ),
-            scaleMetersPerPixel = 0.354,
+            scaleMetersPerMap = 0.354,
             bearingDegrees = -5.0,
             magneticDeclination = 5.0,
             physicalDeclination = 5.0
         )
 
-        val calScaleBefore = cal.scaleMetersPerPixel
+        val calScaleBefore = cal.scaleMetersPerMap
         val calBearingBefore = cal.bearingDegrees
 
         // Record enough to trigger trimming
@@ -161,7 +161,7 @@ class TrackTrimInvarianceTest {
         // The calibration object is immutable -- TrackRecorder never modifies it.
         assertEquals(
             "Calibration scale (meters/pixel) must not drift after trimming",
-            calScaleBefore, cal.scaleMetersPerPixel, 1e-9
+            calScaleBefore, cal.scaleMetersPerMap, 1e-9
         )
         assertEquals(
             "Calibration bearing must not drift after trimming",

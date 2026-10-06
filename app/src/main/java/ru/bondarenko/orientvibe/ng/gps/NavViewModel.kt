@@ -73,7 +73,7 @@ class NavViewModel(
                 } else {
                     0.0
                 }
-                val derivedMapScale = if (calibration != null) calibration!!.scaleMetersPerPixel else 0.0
+                val derivedMapScale = if (calibration != null) calibration!!.scaleMetersPerMap else 0.0
 
                 _gpsState.value = state.copy(
                     trackPoints = trackState.trackPoints,

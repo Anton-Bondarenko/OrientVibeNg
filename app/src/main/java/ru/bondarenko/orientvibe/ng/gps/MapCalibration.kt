@@ -30,11 +30,11 @@ object MapCalibrationUtils {
     // ─── Coordinate transforms ────────────────────────────────────────────
 
     fun gpsToImage(gps: GpsCoordinate, calibration: MapCalibration): Pair<Float, Float>? {
-        return MapGeometry.gpsToImageRelative(gps, calibration)
+        return MapGeometry.gpsToImageTrueNorth(gps, calibration)
     }
 
     fun imageToGps(imageX: Float, imageY: Float, calibration: MapCalibration): GpsCoordinate? {
-        return MapGeometry.imageToGpsRelative(imageX, imageY, calibration)
+        return MapGeometry.imageToGpsTrueNorth(imageX, imageY, calibration)
     }
 
     fun magneticBearing(
@@ -78,7 +78,7 @@ object MapCalibrationUtils {
         calibration: MapCalibration,
         northAngleDeg: Float  // degrees to rotate around pointA
     ): Pair<Float, Float>? {
-        val point = MapGeometry.gpsToImageAbs(gps, calibration, northAngleDeg)
+        val point = MapGeometry.gpsToImage(gps, calibration, northAngleDeg)
         return if (point != null) {
             Pair(point.x, point.y)
         } else null

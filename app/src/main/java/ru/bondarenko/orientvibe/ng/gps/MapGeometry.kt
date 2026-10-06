@@ -145,7 +145,7 @@ object MapGeometry {
         return MapCalibration(
             pointA = pointA,
             pointB = pointB,
-            scaleMetersPerPixel = scaleMetersPerUnit,
+            scaleMetersPerMap = scaleMetersPerUnit,
             bearingDegrees = rawMagneticBearing,
             magneticDeclination = magneticDeclination,
             physicalDeclination = magneticDeclination,
@@ -154,18 +154,9 @@ object MapGeometry {
     }
 
     /**
-     * Forward GPS→image transform (calibrated absolute pixel coordinates anchored at pointA).
-     *
-     * Returns coordinates relative to image origin (0, 0) using the map's calibration:
-     * - pointA.imageX/Y serve as the anchor position in calibrated space
-     * - Geographic offset (dNorth, dEast) is converted to pixels using scaleMetersPerPixel
-     *
-     * These are NOT [0,1] ratios — they are calibrated image-space coordinates suitable for:
-     * - Direct rendering (with proper scaling by actual image dimensions)
-     * - Rotation around calibration point A in image space
-     * - Distance preservation across different GPS ↔ image transforms
+     * Forward GPS→image transform
      */
-    fun gpsToImageRelative(
+    fun gpsToImageTrueNorth(
         gps: GpsCoordinate,
         calibration: MapCalibration
     ): Pair<Float, Float>? {
@@ -178,8 +169,8 @@ object MapGeometry {
 
         // Canonical mapping: north → up (negative Y in image space), east → right.
         // Convert geographic offsets to calibrated pixel distances.
-        val relDx = (dEast / calibration.scaleMetersPerPixel).toFloat()
-        val relDy = (-dNorth / calibration.scaleMetersPerPixel).toFloat()
+        val relDx = (dEast / calibration.scaleMetersPerMap).toFloat()
+        val relDy = (-dNorth / calibration.scaleMetersPerMap).toFloat()
 
         return Pair(
             calibration.pointA.imageX + relDx,
@@ -188,7 +179,7 @@ object MapGeometry {
     }
 
     /** Inverse image→GPS transform. */
-    fun imageToGpsRelative(
+    fun imageToGpsTrueNorth(
         imageX: Float,
         imageY: Float,
         calibration: MapCalibration
@@ -196,8 +187,8 @@ object MapGeometry {
         val relDx = (imageX - calibration.pointA.imageX).toDouble()
         val relDy = (imageY - calibration.pointA.imageY).toDouble()
 
-        var metersDx = relDx * calibration.scaleMetersPerPixel
-        var metersDy = relDy * calibration.scaleMetersPerPixel
+        var metersDx = relDx * calibration.scaleMetersPerMap
+        var metersDy = relDy * calibration.scaleMetersPerMap
 
         // Inverse of canonical: always direct mapping (no flip needed).
         val dEast = metersDx
@@ -239,7 +230,7 @@ object MapGeometry {
         )
     }
 
-    fun imageAbsToGps(
+    fun imageToGps(
         point: PointF,
         calibration: MapCalibration?,
         northAngle: Float
@@ -251,7 +242,7 @@ object MapGeometry {
             -magneticBearing(northAngle, cal.magneticDeclination)
         val pair = rotateAroundCalibration(point.x, point.y, cal, fullAngle);
 
-        return imageToGpsRelative(pair.first, pair.second, cal)
+        return imageToGpsTrueNorth(pair.first, pair.second, cal)
     }
 
     fun rotateAroundCalibration(
@@ -280,7 +271,7 @@ object MapGeometry {
      * Convert a GPS coordinate to image coordinates (absolute pixels).
      * Uses full calibration (scale + bearing rotation) plus optional northAngle adjustment.
      */
-    fun gpsToImageAbs(
+    fun gpsToImage(
         gps: GpsCoordinate,
         calibration: MapCalibration?,
         northAngle: Float
@@ -289,7 +280,7 @@ object MapGeometry {
             calibration ?: return null
 
         // gpsToImage returns ABSOLUTE pixels (pointA.imageX + relDx in pixels), NOT normalized 0..1
-        val imageCoords = gpsToImageRelative(gps, cal) ?: return null
+        val imageCoords = gpsToImageTrueNorth(gps, cal) ?: return null
 
         var x = imageCoords.first
         var y = imageCoords.second

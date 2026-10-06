@@ -3,10 +3,8 @@ package ru.bondarenko.orientvibe.ng
 import org.junit.Assert.*
 import org.junit.Test
 import ru.bondarenko.orientvibe.ng.gps.GpsCoordinate
-import ru.bondarenko.orientvibe.ng.gps.MapCalibration
 import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
 import ru.bondarenko.orientvibe.ng.gps.MapGeometry
-import ru.bondarenko.orientvibe.ng.model.CalibrationPoint
 
 /**
  * Tests for the "Здесь старт" (here is start) primary calibration flow.
@@ -68,8 +66,8 @@ class StartCalibrationTest {
 
         // 3. Scale must be physically meaningful (> 0)
         assertTrue(
-            "scale > 0 (got ${cal.scaleMetersPerPixel})",
-            cal.scaleMetersPerPixel > 0.01
+            "scale > 0 (got ${cal.scaleMetersPerMap})",
+            cal.scaleMetersPerMap > 0.01
         )
 
         // 4. Bearing для northward synthetic baseline ~ -5° (true bearing ~0° минус declination 5°)

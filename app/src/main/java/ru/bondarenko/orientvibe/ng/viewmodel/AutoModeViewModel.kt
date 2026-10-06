@@ -127,7 +127,7 @@ class AutoModeViewModel(
         val control = CurrentControl(
             num = cpNumber,
             boundingBox = controlBox,
-            gpsCoordinate = if (controlBox != null && _mapState.value.bitmap != null) MapGeometry.imageAbsToGps(
+            gpsCoordinate = if (controlBox != null && _mapState.value.bitmap != null) MapGeometry.imageToGps(
                 PointF(
                     controlBox.centerX,
                     controlBox.centerY
@@ -170,7 +170,7 @@ class AutoModeViewModel(
         // Преобразуем GPS → пиксели для валидации
         val projected = MapCalibrationUtils.gpsToImageAbs(gps, cal, 0f)
 
-        Log.d(tag, "bindGpsToCp: scale=${cal.scaleMetersPerPixel}m/px, projected=($projected)")
+        Log.d(tag, "bindGpsToCp: scale=${cal.scaleMetersPerMap}m/px, projected=($projected)")
 
         // Валидация: точка внутри границ изображения
         if (projected == null) {
@@ -221,7 +221,7 @@ class AutoModeViewModel(
 
         applyBind(bindResult, navVm)
 
-        val scaleStr = String.format("%.1f", bindResult.calibration.scaleMetersPerPixel)
+        val scaleStr = String.format("%.1f", bindResult.calibration.scaleMetersPerMap)
         return Pair(true, "CP #$currentNumber привязана: масштаб $scaleStr м/px")
     }
 
@@ -308,7 +308,7 @@ class AutoModeViewModel(
         val fullCal = ru.bondarenko.orientvibe.ng.gps.MapCalibration(
             pointA = pointA,
             pointB = pointB,
-            scaleMetersPerPixel = newCal.scaleMetersPerPixel,
+            scaleMetersPerMap = newCal.scaleMetersPerMap,
             bearingDegrees = trackBearing,
             magneticDeclination = magneticDeclination,
             physicalDeclination = magneticDeclination,
@@ -317,7 +317,7 @@ class AutoModeViewModel(
 
         Log.d(
             tag,
-            "recalibrateToTargetControl: NEW scale=${newCal.scaleMetersPerPixel}m/px, bearing=$trackBearing°, northAngle=$errNorthAngle°"
+            "recalibrateToTargetControl: NEW scale=${newCal.scaleMetersPerMap}m/px, bearing=$trackBearing°, northAngle=$errNorthAngle°"
         )
         Log.d(
             tag,
@@ -335,7 +335,7 @@ class AutoModeViewModel(
         // Инкрементируем версию калибровки — перерисовать трек
         _calibrationVersion.value++
 
-        val scaleStr = String.format("%.1f", newCal.scaleMetersPerPixel)
+        val scaleStr = String.format("%.1f", newCal.scaleMetersPerMap)
 
         return Pair(true, "Масштаб обновлён: $scaleStr м/px")
     }

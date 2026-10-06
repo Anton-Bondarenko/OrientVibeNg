@@ -85,7 +85,7 @@ class TrackOverlay {
      * Uses full calibration (scale + bearing rotation) plus optional northAngle adjustment.
      */
     private fun gpsToImageAbs(gps: GpsCoordinate): PointF? {
-        return MapGeometry.gpsToImageAbs(gps, calibration, northAngle)
+        return MapGeometry.gpsToImage(gps, calibration, northAngle)
     }
 
     /** Debug log tag */

@@ -445,7 +445,7 @@ fun MainScreen(
         viewModel.updateNorthAngle(result.northAngleDegrees)
 
         infoMessage =
-            "Масштаб: ${String.format("%.0f", result.calibration.scaleMetersPerPixel)} м/px"
+            "Масштаб: ${String.format("%.0f", result.calibration.scaleMetersPerMap)} м/px"
         isInfoVisible = true
     }
 

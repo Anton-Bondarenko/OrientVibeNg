@@ -4,7 +4,6 @@ import org.junit.Assert.*
 import org.junit.Test
 import ru.bondarenko.orientvibe.ng.gps.GpsFix
 import ru.bondarenko.orientvibe.ng.gps.GpsCoordinate
-import ru.bondarenko.orientvibe.ng.gps.TrackPoint
 import ru.bondarenko.orientvibe.ng.gps.TrackRecorder
 import ru.bondarenko.orientvibe.ng.gps.MAX_TRACK_POINTS
 import ru.bondarenko.orientvibe.ng.model.MapCalibration
@@ -201,7 +200,7 @@ class TrackRecorderTest {
                 gps = GpsCoordinate(50.46, 30.51),
                 imageX = 0.9f, imageY = 0.1f
             ),
-            scaleMetersPerPixel = 0.354,
+            scaleMetersPerMap = 0.354,
             bearingDegrees = -5.0,
             magneticDeclination = 5.0,
             physicalDeclination = 5.0

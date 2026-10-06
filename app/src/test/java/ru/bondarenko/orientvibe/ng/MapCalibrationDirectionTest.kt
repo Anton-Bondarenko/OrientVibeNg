@@ -3,7 +3,6 @@ package ru.bondarenko.orientvibe.ng
 import org.junit.Assert.*
 import org.junit.Test
 import kotlin.math.cos
-import kotlin.math.sin
 import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
 import ru.bondarenko.orientvibe.ng.gps.MapGeometry
 import ru.bondarenko.orientvibe.ng.gps.MapOrientation
@@ -48,7 +47,7 @@ class MapCalibrationDirectionTest {
 
     /** Convert a GPS coordinate to absolute image-space pixels. */
     private fun toImagePixels(cal: MapCalibration, gps: GpsCoordinate): Pair<Float, Float> {
-        val rel = MapGeometry.gpsToImageRelative(gps, cal)!!
+        val rel = MapGeometry.gpsToImageTrueNorth(gps, cal)!!
         // cal.pointA.imageX/Y are already in calibration space (helper-scaled to pixels),
         // and gpsToImageRelative returns values in that same pixel space — no extra scaling.
         return Pair(rel.first, rel.second)
@@ -400,10 +399,10 @@ class MapCalibrationDirectionTest {
 
         // REF is exactly pointA.gps — round-trip should return same coord
         val original = GpsCoordinate(45.002, 38.000)
-        val imageCoords = MapGeometry.gpsToImageRelative(original, cal)
+        val imageCoords = MapGeometry.gpsToImageTrueNorth(original, cal)
         assertNotNull("gpsToImage must not return null", imageCoords)
 
-        val recovered = MapGeometry.imageToGpsRelative(imageCoords!!.first, imageCoords.second, cal)
+        val recovered = MapGeometry.imageToGpsTrueNorth(imageCoords!!.first, imageCoords.second, cal)
         assertNotNull("imageToGps must not return null", recovered)
 
         assertEquals("Latitude after round-trip", original.latitude, recovered!!.latitude, 1e-8)
@@ -590,7 +589,7 @@ class MapCalibrationDirectionTest {
         val expectedScaleMpp = gpsDistance / imageDistance
 
         assertEquals("scaleMetersPerPixel computed from GPS distance / image distance",
-            expectedScaleMpp, cal.scaleMetersPerPixel, 0.001)
+            expectedScaleMpp, cal.scaleMetersPerMap, 0.001)
     }
 
     // -----------------------------------------------------------------------
@@ -624,7 +623,7 @@ class MapCalibrationDirectionTest {
         val py = cal.pointA.imageY
 
         // The AB line direction in unrotated image space (vector from A to B's calibrated position).
-        val relB = MapGeometry.gpsToImageRelative(cal.pointB.gps, cal)!!
+        val relB = MapGeometry.gpsToImageTrueNorth(cal.pointB.gps, cal)!!
         // relB is already in calibration-space pixels; no extra scaling needed.
         val absBX = relB.first
         val absBY = relB.second
@@ -674,7 +673,7 @@ class MapCalibrationDirectionTest {
             val gpsOff = offsetGpsTrueNorth(cal.pointA.gps, 45.0, distM)
 
             // northAngle that aligns this point with the AB direction
-            val rel = MapGeometry.gpsToImageRelative(gpsOff, cal)!!
+            val rel = MapGeometry.gpsToImageTrueNorth(gpsOff, cal)!!
             // rel is already in calibration-space pixels; no extra scaling needed.
             val absX = rel.first
             val absY = rel.second

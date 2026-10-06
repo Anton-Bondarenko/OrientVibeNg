@@ -44,7 +44,7 @@ class TrackRecalibrationTest {
                 gps = MapGeometry.offsetCoordinate(gpsA, dNorth = 0.0, dEast = 500.0),
                 imageX = 0.8f, imageY = 0.7f
             ),
-            scaleMetersPerPixel = MapGeometry.haversineDistance(
+            scaleMetersPerMap = MapGeometry.haversineDistance(
                 gpsA, MapGeometry.offsetCoordinate(gpsA, dNorth = 0.0, dEast = 500.0)
             ) / 600.0,
             bearingDegrees = MapGeometry.bearing(gpsA, MapGeometry.offsetCoordinate(gpsA, dNorth = 0.0, dEast = 500.0)),
@@ -100,7 +100,7 @@ class TrackRecalibrationTest {
         val calA = MapCalibration(
             pointA = CalibrationPoint(gps = gpsA, imageX = pointAX, imageY = pointAY),
             pointB = CalibrationPoint(gps = gpsB_1000, imageX = pointBX_1000, imageY = pointBY),
-            scaleMetersPerPixel = calAScale,
+            scaleMetersPerMap = calAScale,
             bearingDegrees = MapGeometry.bearing(gpsA, gpsB_1000),
             magneticDeclination = 5.0,
             physicalDeclination = 5.0
@@ -113,14 +113,14 @@ class TrackRecalibrationTest {
         val calB = MapCalibration(
             pointA = CalibrationPoint(gps = gpsA, imageX = pointAX, imageY = pointAY),
             pointB = CalibrationPoint(gps = gpsB_800, imageX = expectedPointBX_800.toFloat(), imageY = pointBY),
-            scaleMetersPerPixel = calAScale * realDistance / syntheticDistance,  // ~0.8x scale
+            scaleMetersPerMap = calAScale * realDistance / syntheticDistance,  // ~0.8x scale
             bearingDegrees = MapGeometry.bearing(gpsA, gpsB_800),
             magneticDeclination = 5.0,
             physicalDeclination = 5.0
         )
 
-        assertTrue("Scales must differ", calB.scaleMetersPerPixel.compareTo(calA.scaleMetersPerPixel) != 0)
-        val scaleRatio = calB.scaleMetersPerPixel / calA.scaleMetersPerPixel
+        assertTrue("Scales must differ", calB.scaleMetersPerMap.compareTo(calA.scaleMetersPerMap) != 0)
+        val scaleRatio = calB.scaleMetersPerMap / calA.scaleMetersPerMap
         assertTrue("Scale ratio ~0.8: $scaleRatio", kotlin.math.abs(scaleRatio - 0.8) < 0.015)
 
         // Point exactly at A: invariant under both calibrations (anchor).
@@ -155,7 +155,7 @@ class TrackRecalibrationTest {
         val relB = MapCalibrationUtils.gpsToImage(gpsTrackAlongLine, calB)!!
         // For on-line points: dNorth=0 so relDy=0. X shift = dEast/scale difference.
         val dEastTrack = MapGeometry.eastDistance(gpsA, gpsTrackAlongLine)
-        val expectedRelXShift = dEastTrack / calB.scaleMetersPerPixel - dEastTrack / calA.scaleMetersPerPixel
+        val expectedRelXShift = dEastTrack / calB.scaleMetersPerMap - dEastTrack / calA.scaleMetersPerMap
 
         // Relative (fractional) shift must match dEast/scale difference.
         val relXDiff = (relB.first - relA.first).toDouble()
@@ -185,7 +185,7 @@ class TrackRecalibrationTest {
                 gps = MapGeometry.offsetCoordinate(gpsStart, dNorth = 0.0, dEast = 600.0),
                 imageX = 0.9f, imageY = 0.1f
             ),
-            scaleMetersPerPixel = 600.0 / 800.0,
+            scaleMetersPerMap = 600.0 / 800.0,
             bearingDegrees = -90.0,
             magneticDeclination = 5.0,
             physicalDeclination = 5.0
@@ -252,7 +252,7 @@ class TrackRecalibrationTest {
         val cal = MapCalibration(
             pointA = pointA,
             pointB = pointB,
-            scaleMetersPerPixel = gpsDistance / imageDistance,
+            scaleMetersPerMap = gpsDistance / imageDistance,
             bearingDegrees = MapGeometry.bearing(gpsA, realFinishGps),
             magneticDeclination = 5.0,
             physicalDeclination = 5.0
@@ -260,7 +260,7 @@ class TrackRecalibrationTest {
 
         // Sanity: GPS distance matches expected ~500m and scale is correct
         assertTrue("GPS distance must be close to 500m: ${gpsDistance}", kotlin.math.abs(gpsDistance - 500.0) < 1.0)
-        assertEquals("Scale = gpsDist / imageDist", 500.0 / 550.0, cal.scaleMetersPerPixel, 0.001)
+        assertEquals("Scale = gpsDist / imageDist", 500.0 / 550.0, cal.scaleMetersPerMap, 0.001)
 
         // === Assertion 1: gpsToImage (no rotation) always returns exact pointB coords ===
         val unrotated = MapCalibrationUtils.gpsToImage(realFinishGps, cal)!!
@@ -303,7 +303,7 @@ class TrackRecalibrationTest {
                 gps = MapGeometry.offsetCoordinate(GpsCoordinate(50.45, 30.5), 0.0, 500.0),
                 imageX = 0.8f, imageY = 0.7f
             ),
-            scaleMetersPerPixel = MapGeometry.haversineDistance(GpsCoordinate(50.45, 30.5), GpsCoordinate(50.45 + 0.0045, 30.5)) / 600.0,
+            scaleMetersPerMap = MapGeometry.haversineDistance(GpsCoordinate(50.45, 30.5), GpsCoordinate(50.45 + 0.0045, 30.5)) / 600.0,
             bearingDegrees = -90.0,
             magneticDeclination = 5.0,
             physicalDeclination = 5.0
@@ -357,7 +357,7 @@ class TrackRecalibrationTest {
         val syntheticCal = MapCalibration(
             pointA = CalibrationPoint(gps = originalStartGps, imageX = startPointImageX, imageY = startPointImageY),
             pointB = CalibrationPoint(gps = syntheticFinishGps, imageX = 907f, imageY = -93f), // extrapolated along bearing
-            scaleMetersPerPixel = MapGeometry.haversineDistance(originalStartGps, syntheticFinishGps) / (kotlin.math.sqrt(800.0 * 800.0 + 693.0 * 693.0)),
+            scaleMetersPerMap = MapGeometry.haversineDistance(originalStartGps, syntheticFinishGps) / (kotlin.math.sqrt(800.0 * 800.0 + 693.0 * 693.0)),
             bearingDegrees = MapGeometry.bearing(originalStartGps, syntheticFinishGps),
             magneticDeclination = 5.0,
             physicalDeclination = 5.0
@@ -377,7 +377,7 @@ class TrackRecalibrationTest {
         val recalibratedCal = MapCalibration(
             pointA = CalibrationPoint(gps = originalStartGps, imageX = startPointImageX, imageY = startPointImageY),
             pointB = CalibrationPoint(gps = realFinishGps, imageX = finishPointImageX, imageY = startPointImageY), // same Y row
-            scaleMetersPerPixel = gpsDistanceReal / imageDistX,
+            scaleMetersPerMap = gpsDistanceReal / imageDistX,
             bearingDegrees = MapGeometry.bearing(originalStartGps, realFinishGps),
             magneticDeclination = 5.0,
             physicalDeclination = 5.0
@@ -502,7 +502,7 @@ class TrackRecalibrationTest {
 
         // Expected: track projected X = (track east-distance from start) / scale + startX
         val trackEastDistFromStart = MapGeometry.eastDistance(originalStartGps, trackGps)
-        val expectedTrackX = startImageX + (trackEastDistFromStart / calResult.scaleMetersPerPixel)
+        val expectedTrackX = startImageX + (trackEastDistFromStart / calResult.scaleMetersPerMap)
         val expectedTrackY = startImageY // no north offset because route is horizontal
 
         // ── Step 5: Verify all three coincide (currentFix GPS → finishPoint) ──
@@ -601,7 +601,7 @@ class TrackRecalibrationTest {
             val imageDistPx = kotlin.math.sqrt(dx2 * dx2 + dy2 * dy2)
             assertEquals(
                 "Label=$label: scale = gpsDist / imageDist",
-                gpsDist / imageDistPx, calResult.scaleMetersPerPixel, 1e-6
+                gpsDist / imageDistPx, calResult.scaleMetersPerMap, 1e-6
             )
         }
     }
@@ -644,7 +644,7 @@ class TrackRecalibrationTest {
         val recalibratedCal = MapCalibration(
             pointA = CalibrationPoint(gps = originalStartGps, imageX = startPointImageX, imageY = startPointImageY),
             pointB = CalibrationPoint(gps = realFinishGps, imageX = finishPointImageX, imageY = finishPointImageH),
-            scaleMetersPerPixel = gpsDistance / imageDistX,
+            scaleMetersPerMap = gpsDistance / imageDistX,
             bearingDegrees = MapGeometry.bearing(originalStartGps, realFinishGps),
             magneticDeclination = 5.0,
             physicalDeclination = 5.0
@@ -772,15 +772,15 @@ class TrackRecalibrationTest {
         assertEquals("Rhumb line distance (should be ~2000): $rhumbDist", 2000.0, rhumbDist, 1.0)
         assertEquals("haversine vs Rhumb close: h=$havDist r=$rhumbDist", havDist, rhumbDist, 5.0)
         // Scale should be Rhumb/imageDist exactly (per our fix)
-        assertEquals("scale = rhumbDist / imageDist", rhumbDist / imageDist, calResult.scaleMetersPerPixel, 0.01)
+        assertEquals("scale = rhumbDist / imageDist", rhumbDist / imageDist, calResult.scaleMetersPerMap, 0.01)
 
         // Check the projected dEast against finishImageX via FIXED gpsToImageRelative
         // Use cos(startLat) for easting (matching fixed gpsToImageRelative, NOT eastDistance's avgLat)
         val projDEastFixed = (pointB.gps.longitude - pointA.gps.longitude) *
                 (Math.PI / 180.0) * 6371000.0 * kotlin.math.cos(Math.toRadians(pointA.gps.latitude))
-        val expectedXFromRhumb = startImageX + projDEastFixed / calResult.scaleMetersPerPixel
+        val expectedXFromRhumb = startImageX + projDEastFixed / calResult.scaleMetersPerMap
         assertEquals(
-            "Projected X from fixed easting: scale=$rhumbDist/imageDist=$imageDist px, dE=$projDEastFixed, expectedX=${startImageX.toInt()}+${(projDEastFixed/calResult.scaleMetersPerPixel).toInt()} ≈ $expectedXFromRhumb vs finishImageX=$finishImageX",
+            "Projected X from fixed easting: scale=$rhumbDist/imageDist=$imageDist px, dE=$projDEastFixed, expectedX=${startImageX.toInt()}+${(projDEastFixed/calResult.scaleMetersPerMap).toInt()} ≈ $expectedXFromRhumb vs finishImageX=$finishImageX",
             finishImageX.toDouble(), expectedXFromRhumb, 0.01
         )
 
@@ -826,7 +826,7 @@ class TrackRecalibrationTest {
         )
         assertEquals(
             "Scale = gpsDistance / imageDistancePx",
-            gpsDistance / imageDistPxAssert, calResult.scaleMetersPerPixel, 1e-3
+            gpsDistance / imageDistPxAssert, calResult.scaleMetersPerMap, 1e-3
         )
 
         // ── Test 4: verify bearing vs declination relationship ──

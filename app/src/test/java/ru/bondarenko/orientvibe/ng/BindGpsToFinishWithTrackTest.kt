@@ -64,7 +64,7 @@ class BindGpsToFinishWithTrackTest {
         )
 
         // === Sanity checks ===
-        assertTrue("scale > 0: ${result.calibration.scaleMetersPerPixel}", result.calibration.scaleMetersPerPixel > 0.1)
+        assertTrue("scale > 0: ${result.calibration.scaleMetersPerMap}", result.calibration.scaleMetersPerMap > 0.1)
         assertTrue(
             "northAngle non-zero: ${result.northAngleDegrees}°",
             kotlin.math.abs(result.northAngleDegrees) > 0.1
@@ -134,7 +134,7 @@ class BindGpsToFinishWithTrackTest {
 
         System.err.println("DIAG: projected=($projectedCurrentGps, X=${projectedCurrentGps.first}, Y=${projectedCurrentGps.second})")
         System.err.println("DIAG: expected=($finishPointImageX, $finishPointImageY)")
-        System.err.println("DIAG: scale=${result.calibration.scaleMetersPerPixel}")
+        System.err.println("DIAG: scale=${result.calibration.scaleMetersPerMap}")
 
         assertEquals(
             "Diagonal: currentFix GPS X → finishPoint image X",
@@ -145,7 +145,7 @@ class BindGpsToFinishWithTrackTest {
             finishPointImageY.toDouble(), projectedCurrentGps.second.toDouble(), 0.01
         )
 
-        assertTrue("scale > 0: ${result.calibration.scaleMetersPerPixel}", result.calibration.scaleMetersPerPixel > 0.1)
+        assertTrue("scale > 0: ${result.calibration.scaleMetersPerMap}", result.calibration.scaleMetersPerMap > 0.1)
     }
 
     /**
@@ -255,7 +255,7 @@ class BindGpsToFinishWithTrackTest {
         assertEquals("Short walk: Y → finishPoint", finishPointImageY.toDouble(), projectedCurrentGps.second.toDouble(), 0.01)
 
         // Scale should be reasonable even for short distance
-        assertTrue("scale > 0 after short walk: ${result.calibration.scaleMetersPerPixel}", result.calibration.scaleMetersPerPixel > 0.01)
+        assertTrue("scale > 0 after short walk: ${result.calibration.scaleMetersPerMap}", result.calibration.scaleMetersPerMap > 0.01)
     }
 
     /**
@@ -378,7 +378,7 @@ class BindGpsToFinishWithTrackTest {
             unrotated.second.toDouble(), zeroProjected.second.toDouble(), 0.01
         )
 
-        System.err.println("NORTH: unrotated=($unrotated), absProj(northAngle)=(${result.calibration.scaleMetersPerPixel})")
+        System.err.println("NORTH: unrotated=($unrotated), absProj(northAngle)=(${result.calibration.scaleMetersPerMap})")
     }
 
     /**

@@ -36,7 +36,7 @@ data class CalibrationPoint(
 data class MapCalibration(
     val pointA: CalibrationPoint,
     val pointB: CalibrationPoint,
-    val scaleMetersPerPixel: Double,  // meters per image-pixel at the map
+    val scaleMetersPerMap: Double,  // meters per image-pixel at the map
     val bearingDegrees: Float,       // angle of the image Y-axis relative to true north
     val magneticDeclination: Float = 0f,   // magnetic declination at calibration location (degrees, positive = east)
     val physicalDeclination: Float = 0f,   // original magnetic declination before any coordinate flip adjustment

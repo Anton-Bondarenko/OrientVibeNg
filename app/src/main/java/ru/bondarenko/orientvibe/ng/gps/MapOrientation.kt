@@ -46,7 +46,7 @@ object MapOrientation {
         fraction: Double, // 0..1 along A→B line in image space
         imageDimensions: Pair<Float, Float>
     ): Float? {
-        val rel = MapGeometry.gpsToImageRelative(gps, calibration) ?: return null
+        val rel = MapGeometry.gpsToImageTrueNorth(gps, calibration) ?: return null
 
         // Position of GPS point in unrotated absolute pixels (relative to origin 0,0)
         val gpsAbsX = rel.first * imageDimensions.first
@@ -191,7 +191,7 @@ object MapOrientation {
             northAngleDeg = northAngle,
             trueBearingDeg = trueBearing,
             rawMagneticBearingDeg = rawMagBearing,
-            scaleMetersPerPixel = cal.scaleMetersPerPixel
+            scaleMetersPerPixel = cal.scaleMetersPerMap
         )
     }
 }
