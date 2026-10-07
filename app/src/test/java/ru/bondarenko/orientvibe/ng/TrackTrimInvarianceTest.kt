@@ -40,9 +40,9 @@ class TrackTrimInvarianceTest {
                 imageX = 0.9f, imageY = 0.1f
             ),
             scaleMetersPerMap = 0.354,
-            bearingDegrees = -5.0,
-            magneticDeclination = 5.0,
-            physicalDeclination = 5.0
+            bearingDegrees = -5.0f,
+            magneticDeclination = 5.0f,
+            physicalDeclination = 5.0f
         )
 
         // Record first GPS point and capture its image coordinates BEFORE trimming
@@ -134,9 +134,9 @@ class TrackTrimInvarianceTest {
                 imageX = 0.9f, imageY = 0.1f
             ),
             scaleMetersPerMap = 0.354,
-            bearingDegrees = -5.0,
-            magneticDeclination = 5.0,
-            physicalDeclination = 5.0
+            bearingDegrees = -5.0f,
+            magneticDeclination = 5.0f,
+            physicalDeclination = 5.0f
         )
 
         val calScaleBefore = cal.scaleMetersPerMap
@@ -165,7 +165,7 @@ class TrackTrimInvarianceTest {
         )
         assertEquals(
             "Calibration bearing must not drift after trimming",
-            calBearingBefore, cal.bearingDegrees, 1e-9
+            calBearingBefore, cal.bearingDegrees, 1e-9f
         )
 
         recorder.stopTracking()

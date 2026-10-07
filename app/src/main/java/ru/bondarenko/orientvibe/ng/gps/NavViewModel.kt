@@ -140,7 +140,7 @@ class NavViewModel(
     fun getCurrentGpsImageAbs(northAngleDeg: Float): Pair<Float, Float>? {
         val fix = _gpsState.value.currentFix ?: return null
         val cal = calibration ?: return null
-        return MapCalibrationUtils.gpsToImageAbs(fix.coordinate, cal, northAngleDeg)
+        return MapCalibrationUtils.gpsToImage(fix.coordinate, cal, northAngleDeg)
     }
 
     /** Check if image-space point is near any KP; returns index or -1. */

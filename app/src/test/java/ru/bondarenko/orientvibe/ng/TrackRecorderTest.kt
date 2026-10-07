@@ -201,9 +201,9 @@ class TrackRecorderTest {
                 imageX = 0.9f, imageY = 0.1f
             ),
             scaleMetersPerMap = 0.354,
-            bearingDegrees = -5.0,
-            magneticDeclination = 5.0,
-            physicalDeclination = 5.0
+            bearingDegrees = -5.0f,
+            magneticDeclination = 5.0f,
+            physicalDeclination = 5.0f
         )
     }
 }

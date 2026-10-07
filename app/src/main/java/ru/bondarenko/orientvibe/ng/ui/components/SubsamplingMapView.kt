@@ -125,7 +125,7 @@ class OverlayMapView(
         // the green GPS dot — both rotate around pointA and render consistently on screen.
         calibrationPointBGps?.let { gpsB ->
             val cal = trackOverlay.calibration ?: return@let
-            val imageCoords = MapCalibrationUtils.gpsToImageAbs(
+            val imageCoords = MapCalibrationUtils.gpsToImage(
                 gpsB, cal, trackOverlay.northAngle
             ) ?: return@let
             val viewPt = sourceToViewCoord(imageCoords.first, imageCoords.second)

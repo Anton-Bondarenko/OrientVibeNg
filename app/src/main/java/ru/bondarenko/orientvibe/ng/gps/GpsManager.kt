@@ -57,8 +57,6 @@ class GpsManager(private val context: Context) {
 
         val listener = object : LocationListener {
             override fun onLocationChanged(location: Location) {
-                Log.d(TAG, "onLocationChanged: lat=${location.latitude}, lon=${location.longitude}, " +
-                        "accuracy=${location.accuracy}m, bearing=${location.bearing}°, speed=${location.speed}m/s")
                 val fix = GpsFix(
                     coordinate = GpsCoordinate(
                         latitude = location.latitude,

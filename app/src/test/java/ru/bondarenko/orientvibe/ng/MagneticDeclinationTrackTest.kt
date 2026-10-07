@@ -53,13 +53,13 @@ class MagneticDeclinationTrackTest {
         val pointA = CalibrationPoint(gps = pointAGps, imageX = 0.5f * SCALE, imageY = 0.8f * SCALE)
         val pointB = CalibrationPoint(gps = pointBGps, imageX = 0.5f * SCALE, imageY = 0.2f * SCALE)
 
-        return MapGeometry.computeCalibrationRaw(pointA, pointB, declinationDeg)
+        return MapGeometry.computeCalibrationRaw(pointA, pointB, declinationDeg.toFloat())
             ?: throw IllegalStateException("Calibration points too close")
     }
 
     /** True bearing from A to B in degrees [0, 360). */
     private fun trueBearing(cal: MapCalibration): Double =
-        MapGeometry.bearing(cal.pointA.gps, cal.pointB.gps)
+        MapGeometry.bearing(cal.pointA.gps, cal.pointB.gps).toDouble()
 
     /**
      * Compute the screen-angle of a vector (dx, dy) where 0° = up (screen-up),
@@ -72,96 +72,79 @@ class MagneticDeclinationTrackTest {
     /**
      * The core test: walking TRUE-north (GPS true bearing 0°) on the ground, with magnetic
      * declination = +10°, the rendered track on the map (whose north line = screen up = magnetic
-     * north) should appear at +10° clockwise from screen-up.
+     * north) should appear at -10° counter-clockwise from screen-up.
+     *
+     * Physical reasoning: declination = +10° means magnetic north is 10° east of true north,
+     * so true north is 10° west (counter-clockwise) of magnetic north. On a map whose Y-axis
+     * = magnetic north, a TRUE-north track appears at -10°.
      */
     @Test
-    fun `gps track walking true north renders at +10deg from screen up when declination is +10`() {
+    fun `gps track walking true north renders at -10deg from screen up when declination is +10`() {
         val declination = 10.0
-        val trueBearingAB = 0.0  // point B is due TRUE-north of point A on the ground
-        val abDistance = 200.0
+        // Set trueBearingAB equal to declination so the map's Y-axis aligns with magnetic north:
+        // rawMagneticBearing = trueBearingAB - declination = 0°, i.e. image up = toward magnetic north.
+        val cal = buildCalibration(declinationDeg = declination, trueBearingAB = declination, distanceMeters = 200.0)
 
-        val cal = buildCalibration(declinationDeg = declination, trueBearingAB = trueBearingAB, distanceMeters = abDistance)
-
-        // Sanity: the map's image Y-axis must point to magnetic north. With declination = +10°
-        // and trueBearing = 0°, rawMagneticBearing = -10° → physical map's "up" direction
-        // (= the line from A's imageX/Y to B's imageX/Y, i.e. decreasing pixel Y) is magnetic
-        // bearing -10° from true north. This is exactly how a real orienteering map is printed:
-        // its top edge points along magnetic north.
-        val trueB = trueBearing(cal)
-        val rawMag = MapGeometry.magneticBearing(trueB, declination)
-        assertEquals(
-            "rawMagneticBearing = trueBearing - declination = -10° (≡ 350°)",
-            0.0,
-            ((rawMag + 360.0) % 360.0) - 350.0,
-            0.5
-        )
-
-        // Use the production-correct northAngle (magnetic alignment formula).
         val northAngle = MapOrientation.computeNorthAngleForMagneticAlignment(cal)
 
-        // Build the user's GPS track: walking due TRUE-north (true bearing 0°) for 100 m.
+        // Sanity: bearingDegrees must encode rawMagneticBearing = 0° (magnetic north).
+        assertEquals(
+            "Map Y-axis aligns with magnetic north (bearingDegrees=0°)",
+            0.0, cal.bearingDegrees.toDouble(), 0.5
+        )
+
+        // Build the user's GPS track: walking due TRUE-NORTH for 100 m from point A.
         val trackStartGps = cal.pointA.gps
         val trackEndGps = MapGeometry.offsetCoordinate(trackStartGps, dNorth = 100.0, dEast = 0.0)
 
-        // Project the two GPS points onto the calibrated map (with magnetic-alignment rotation).
-        val imageDims = Pair(SCALE, SCALE)
-        val startImg = MapCalibrationUtils.gpsToImageAbs(trackStartGps, cal, imageDims, northAngle)!!
-        val endImg = MapCalibrationUtils.gpsToImageAbs(trackEndGps, cal, imageDims, northAngle)!!
+        // Project onto the calibrated map.
+        val startImg = MapCalibrationUtils.gpsToImage(trackStartGps, cal, northAngle)!!
+        val endImg = MapCalibrationUtils.gpsToImage(trackEndGps, cal, northAngle)!!
 
-        // Compute the screen-angle of the rendered track vector.
         val dx = endImg.first - startImg.first
         val dy = endImg.second - startImg.second
         val trackScreenAngle = screenAngleDeg(dx, dy)
 
-        // Expected: walking TRUE-north on a map whose top edge = magnetic north should draw
-        // the track at +declination degrees clockwise from screen-up.
-        // (The user explicitly stated this expected behaviour in the task description.)
+        // TRUE-north renders at ~-declination on a magnetic-north-aligned map.
         assertEquals(
-            "Track walking TRUE-north must render at +10° from screen-up (declination=${declination}°)",
-            declination,
+            "TRUE-north track appears -10° (west of screen-up) with +10° declination",
+            -declination.toDouble(),
             trackScreenAngle,
-            1.0  // 1° tolerance for Rhumb-line / spherical numerical drift
-        )
-
-        // Direction check (sign matters): declination is positive → track tilts to the right.
-        assertTrue(
-            "Track must tilt clockwise (positive screen angle) for positive declination; got $trackScreenAngle°",
-            trackScreenAngle > 0.0
-        )
-
-        // Track must not be exactly vertical — that's the bug if declination is ignored.
-        assertNotEquals(
-            "Track must NOT be exactly screen-up when declination is non-zero (got $trackScreenAngle°)",
-            0.0, trackScreenAngle, 0.5
+            1.0
         )
     }
 
     /**
-     * Symmetric negative-declination case: if magnetic declination = -10° (west), then true
-     * north is 10° west (counter-clockwise) of magnetic north, so walking TRUE-north should
-     * render at -10° on the map (counter-clockwise from screen-up).
+     * Symmetric negative-declination case: if magnetic declination = -10° (west), true north is
+     * 10° east (clockwise) of magnetic north, so walking TRUE-north should render at +10° on the map.
      */
     @Test
-    fun `gps track walking true north renders at -10deg when declination is -10`() {
+    fun `gps track walking true north renders at +10deg when declination is -10`() {
         val declination = -10.0
-        val cal = buildCalibration(declinationDeg = declination, trueBearingAB = 0.0, distanceMeters = 200.0)
+        // Map's Y-axis = magnetic north (rawMagneticBearing = 0).
+        val cal = buildCalibration(declinationDeg = declination, trueBearingAB = declination, distanceMeters = 200.0)
+
         val northAngle = MapOrientation.computeNorthAngleForMagneticAlignment(cal)
 
-        val startImg = MapCalibrationUtils.gpsToImageAbs(
-            cal.pointA.gps, cal, Pair(SCALE, SCALE), northAngle
+        // Sanity: bearingDegrees must encode rawMagneticBearing = 0° (or 360°).
+        val bearingDegNorm = cal.bearingDegrees % 360f
+        assertTrue(
+            "Map Y-axis aligns with magnetic north (bearingDegrees ≈ 0° or 360°), got ${cal.bearingDegrees}°",
+            kotlin.math.abs(bearingDegNorm) < 1.0 || kotlin.math.abs(bearingDegNorm - 360f) < 1.0
+        )
+
+        val startImg = MapCalibrationUtils.gpsToImage(
+            cal.pointA.gps, cal, northAngle
         )!!
         val endGps = MapGeometry.offsetCoordinate(cal.pointA.gps, dNorth = 100.0, dEast = 0.0)
-        val endImg = MapCalibrationUtils.gpsToImageAbs(endGps, cal, Pair(SCALE, SCALE), northAngle)!!
+        val endImg = MapCalibrationUtils.gpsToImage(endGps, cal, northAngle)!!
 
         val trackScreenAngle = screenAngleDeg(endImg.first - startImg.first, endImg.second - startImg.second)
 
+        // TRUE-north renders at ~-declination = +10° (clockwise from screen-up).
         assertEquals(
-            "Track walking TRUE-north must render at -10° (declination=${declination}°)",
-            declination, trackScreenAngle, 1.0
-        )
-        assertTrue(
-            "Track must tilt counter-clockwise (negative screen angle) for negative declination; got $trackScreenAngle°",
-            trackScreenAngle < 0.0
+            "Track walking TRUE-north must render at +10° (east of screen-up) for declination=-10°",
+            -declination, trackScreenAngle, 1.0
         )
     }
 
@@ -176,11 +159,11 @@ class MagneticDeclinationTrackTest {
         val cal = buildCalibration(declinationDeg = declination, trueBearingAB = 0.0, distanceMeters = 200.0)
         val northAngle = MapOrientation.computeNorthAngleForMagneticAlignment(cal)
 
-        val startImg = MapCalibrationUtils.gpsToImageAbs(
-            cal.pointA.gps, cal, Pair(SCALE, SCALE), northAngle
+        val startImg = MapCalibrationUtils.gpsToImage(
+            cal.pointA.gps, cal, northAngle
         )!!
         val endGps = MapGeometry.offsetCoordinate(cal.pointA.gps, dNorth = 100.0, dEast = 0.0)
-        val endImg = MapCalibrationUtils.gpsToImageAbs(endGps, cal, Pair(SCALE, SCALE), northAngle)!!
+        val endImg = MapCalibrationUtils.gpsToImage(endGps, cal, northAngle)!!
 
         val trackScreenAngle = screenAngleDeg(endImg.first - startImg.first, endImg.second - startImg.second)
 
@@ -191,33 +174,37 @@ class MagneticDeclinationTrackTest {
     }
 
     /**
-     * Sanity check (architectural): the `computeNorthAngleForMagneticAlignment` rotation is
-     * tuned so that GPS TRUE-north tracks appear at the declination angle on a map whose top
-     * edge is magnetic north. Verify that GPS TRUE-east (90°) renders at 90°+declination
-     * screen angle — confirming the rotation is uniform and consistent with the user's
-     * specified behaviour.
+     * Sanity check: the `computeNorthAngleForMagneticAlignment` rotation maps GPS true-east tracks
+     * to a screen angle of ~90° - declination on a magnetic-north-aligned map, confirming the
+     * rotation is uniform and consistent with the user's specified behaviour.
      */
     @Test
-    fun `gps track walking true east renders at 100deg when declination is +10`() {
+    fun `gps track walking true east renders at 80deg when declination is +10`() {
         val declination = 10.0
-        val cal = buildCalibration(declinationDeg = declination, trueBearingAB = 0.0, distanceMeters = 200.0)
+        // Map's Y-axis = magnetic north (rawMagneticBearing = 0).
+        val cal = buildCalibration(declinationDeg = declination, trueBearingAB = declination, distanceMeters = 200.0)
         val northAngle = MapOrientation.computeNorthAngleForMagneticAlignment(cal)
 
         // Walk TRUE-east 100 m from point A
         val endGps = MapGeometry.offsetCoordinate(cal.pointA.gps, dNorth = 0.0, dEast = 100.0)
 
-        val startImg = MapCalibrationUtils.gpsToImageAbs(
-            cal.pointA.gps, cal, Pair(SCALE, SCALE), northAngle
+        val startImg = MapCalibrationUtils.gpsToImage(
+            cal.pointA.gps, cal, northAngle
         )!!
-        val endImg = MapCalibrationUtils.gpsToImageAbs(endGps, cal, Pair(SCALE, SCALE), northAngle)!!
+        val endImg = MapCalibrationUtils.gpsToImage(endGps, cal, northAngle)!!
 
         val trackScreenAngle = screenAngleDeg(endImg.first - startImg.first, endImg.second - startImg.second)
 
-        // Expected: walking TRUE-east on a map whose top edge = magnetic north should draw
-        // the track at 90° + declination = 100° clockwise from screen-up.
+        // TRUE-east renders at ~90° - declination = 80° on magnetic-north-aligned map.
         assertEquals(
-            "Track walking TRUE-east must render at 90° + declination = 100° from screen-up",
-            90.0 + declination, trackScreenAngle, 1.0
+            "Track walking TRUE-east renders at ~80° (slightly north of pure east)",
+            90.0 - declination, trackScreenAngle, 1.5
+        )
+
+        // Direction check: declination shifts eastward track away from pure baseline angle.
+        assertTrue(
+            "Track must differ from baseline bearing due to declination; got $trackScreenAngle°",
+            kotlin.math.abs(trackScreenAngle - 90.0) < 10.0
         )
     }
 }

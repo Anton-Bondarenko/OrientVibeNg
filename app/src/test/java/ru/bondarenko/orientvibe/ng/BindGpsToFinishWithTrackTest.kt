@@ -183,8 +183,8 @@ class BindGpsToFinishWithTrackTest {
         val projected = MapCalibrationUtils.gpsToImage(currentFixGPS, result.calibration)!!
         // gpsToImageAbs returns rotated coords that share the same coordinate frame as the green GPS dot,
         // ensuring both green dot and purple calibration point visually coincide on screen.
-        val absProjected = MapCalibrationUtils.gpsToImageAbs(
-            currentFixGPS, result.calibration, Pair(bmpW, bmpH), northAngleDeg
+        val absProjected = MapCalibrationUtils.gpsToImage(
+            currentFixGPS, result.calibration, northAngleDeg
         )!!
 
         // gpsToImage maps currentFixGPS to finishPoint (absolute coords, unrotated frame)
@@ -210,8 +210,8 @@ class BindGpsToFinishWithTrackTest {
         )
 
         // Verify: gpsToImageAbs with northAngle=0 DOES return finishPoint (proves northAngle causes rotation)
-        val zeroAngleProjected = MapCalibrationUtils.gpsToImageAbs(
-            currentFixGPS, result.calibration, Pair(bmpW, bmpH), 0f
+        val zeroAngleProjected = MapCalibrationUtils.gpsToImage(
+            currentFixGPS, result.calibration, 0f
         )!!
         assertEquals(
             "gpsToImageAbs with northAngle=0: X → finishPoint",
@@ -284,8 +284,8 @@ class BindGpsToFinishWithTrackTest {
         )
 
         // gpsToImageAbs returns same as gpsToImage (no separate rotation applied)
-        val zeroAngle = MapCalibrationUtils.gpsToImageAbs(
-            currentFixGPS, result.calibration, Pair(bmpW, bmpH), 0f
+        val zeroAngle = MapCalibrationUtils.gpsToImage(
+            currentFixGPS, result.calibration, 0f
         )!!
         assertEquals("northAngle=0: X", finishPointImageX.toDouble(), zeroAngle.first.toDouble(), 0.01)
         assertEquals("northAngle=0: Y", finishPointImageY.toDouble(), zeroAngle.second.toDouble(), 0.01)
@@ -366,8 +366,8 @@ class BindGpsToFinishWithTrackTest {
         )
 
         // Verify: gpsToImageAbs at northAngle=0 returns same as gpsToImage (proves pivot=pointA).
-        val zeroProjected = MapCalibrationUtils.gpsToImageAbs(
-            currentFixGPS, result.calibration, Pair(bmpW, bmpH), 0f
+        val zeroProjected = MapCalibrationUtils.gpsToImage(
+            currentFixGPS, result.calibration, 0f
         )!!
         assertEquals(
             "gpsToImageAbs(0) == gpsToImage at finishPoint (pivot=pointA)",
@@ -433,7 +433,7 @@ class BindGpsToFinishWithTrackTest {
             finishPointImageX = finishPointImageX,
             finishPointImageY = finishPointImageY,
             currentFixGPS = currentFixGPS,
-            magneticDeclination = declination
+            magneticDeclination = declination.toFloat()
         )
 
         // === Assertion 1: northAngle must equal -(trueBearing - declination) ===
@@ -454,11 +454,11 @@ class BindGpsToFinishWithTrackTest {
         // === Assertion 2: Rendered track screen angle ===
         // Use the calibration's bearing-derived northAngle to project start and finish GPS
         // onto the calibrated map, and check that the resulting vector tilts +10°.
-        val startImg = MapCalibrationUtils.gpsToImageAbs(
-            originalStartGps, result.calibration, Pair(bmpW, bmpH), result.northAngleDegrees
+        val startImg = MapCalibrationUtils.gpsToImage(
+            originalStartGps, result.calibration, result.northAngleDegrees
         )!!
-        val finishImg = MapCalibrationUtils.gpsToImageAbs(
-            currentFixGPS, result.calibration, Pair(bmpW, bmpH), result.northAngleDegrees
+        val finishImg = MapCalibrationUtils.gpsToImage(
+            currentFixGPS, result.calibration, result.northAngleDegrees
         )!!
         val dx = finishImg.first - startImg.first
         val dy = finishImg.second - startImg.second
@@ -494,7 +494,7 @@ class BindGpsToFinishWithTrackTest {
             finishPointImageX = finishPointImageX,
             finishPointImageY = finishPointImageY,
             currentFixGPS = currentFixGPS,
-            magneticDeclination = declination
+            magneticDeclination = declination.toFloat()
         )
 
         val trueBearing = MapGeometry.bearing(originalStartGps, currentFixGPS)

@@ -84,8 +84,9 @@ class TrackOverlay {
      * Convert a GPS coordinate to image coordinates (absolute pixels).
      * Uses full calibration (scale + bearing rotation) plus optional northAngle adjustment.
      */
-    private fun gpsToImageAbs(gps: GpsCoordinate): PointF? {
-        return MapGeometry.gpsToImage(gps, calibration, northAngle)
+    private fun gpsToImage(gps: GpsCoordinate): PointF? {
+        val pair = MapGeometry.gpsToImage(gps, calibration, northAngle)
+        return pair?.let { PointF(it.first, it.second) }
     }
 
     /** Debug log tag */
@@ -101,7 +102,7 @@ class TrackOverlay {
             var ptsInPath = 0
             for ((i, point) in trackPoints.withIndex()) {
                 val gp = point.gpsFix.coordinate
-                val imagePt = gpsToImageAbs(gp)
+                val imagePt = gpsToImage(gp)
                 if (imagePt == null) {
                     android.util.Log.w(TAG, "  pt[$i] gpsToImageAbs returned NULL")
                     continue
@@ -130,9 +131,8 @@ class TrackOverlay {
 
         // --- Draw current position with direction ---
         val fix = currentFix ?: return
-        val currentImage = gpsToImageAbs(fix.coordinate) ?: return
+        val currentImage = gpsToImage(fix.coordinate) ?: return
         val currentView = sourceToViewCoord?.invoke(currentImage.x, currentImage.y) ?: return
-
         // Draw position circle
         val radius = 20f
         canvas.drawCircle(currentView.x, currentView.y, radius, positionPaint)
@@ -149,7 +149,7 @@ class TrackOverlay {
         } % 360f
 
         val aheadGps = MapGeometry.offsetGps(fix.coordinate, bearingDeg, 200.0)
-        val aheadImage = gpsToImageAbs(aheadGps) ?: return
+        val aheadImage = gpsToImage(aheadGps) ?: return
         val aheadView = sourceToViewCoord?.invoke(aheadImage.x, aheadImage.y) ?: return
 
         val dx = aheadView.x - currentView.x

@@ -23,7 +23,7 @@ class ControlPointOverlay {
 
     private val controlFillPaint = Paint().apply {
         color = ControlsRed
-        alpha = 5
+        alpha = 15
         style = Paint.Style.FILL
     }
 

@@ -102,7 +102,7 @@ object MapOrientation {
             cal.pointA.imageY + (cal.pointB.imageY - cal.pointA.imageY) * expectedFraction
 
         val actualAbs =
-            MapCalibrationUtils.gpsToImageAbs(actualGps, cal, northAngleDeg)
+            MapCalibrationUtils.gpsToImage(actualGps, cal, northAngleDeg)
                 ?: return false
         val expectedAbsX = expectedRelX * imageDimensions.first
         val expectedAbsY = expectedRelY * imageDimensions.second
@@ -152,7 +152,7 @@ object MapOrientation {
         fun gpsToImageAbs(
             gps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate
         ): Pair<Float, Float>? {
-            return MapCalibrationUtils.gpsToImageAbs(
+            return MapCalibrationUtils.gpsToImage(
                 gps,
                 calibration,
                 northAngleDeg

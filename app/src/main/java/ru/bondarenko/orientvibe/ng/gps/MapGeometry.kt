@@ -137,9 +137,14 @@ object MapGeometry {
         val imageDistance = sqrt(dx * dx + dy * dy)
         if (imageDistance < 0.001) return null
 
-        val scaleMetersPerUnit = gpsDistance / imageDistance
+        // Вычисляем true bearing между точками для коррекции угла севера
         val trueBearing = bearing(pointA.gps, pointB.gps)
-        val rawMagneticBearing = magneticBearing(trueBearing, magneticDeclination)
+        // теперь измерим угол на изображении
+        val screenBearing =
+            screenBearing(pointA.imageX, pointA.imageY, pointB.imageX, pointB.imageY)
+
+        val scaleMetersPerUnit = gpsDistance / imageDistance
+        val rawMagneticBearing = trueBearing - screenBearing
         val hasXYFlip = cos(Math.toRadians(rawMagneticBearing.toDouble())) < 0
 
         return MapCalibration(
@@ -147,7 +152,7 @@ object MapGeometry {
             pointB = pointB,
             scaleMetersPerMap = scaleMetersPerUnit,
             bearingDegrees = rawMagneticBearing,
-            magneticDeclination = magneticDeclination,
+            magneticDeclination = rawMagneticBearing,
             physicalDeclination = magneticDeclination,
             hasXYFlip = hasXYFlip
         )
@@ -235,12 +240,24 @@ object MapGeometry {
         calibration: MapCalibration?,
         northAngle: Float
     ): GpsCoordinate? {
+        return imageToGps(point.x, point.y, calibration, northAngle)
+    }
+
+    /** JVM-safe version that accepts raw x/y floats — avoids PointF stub issues on JVM tests. */
+    fun imageToGps(
+        imageX: Float,
+        imageY: Float,
+        calibration: MapCalibration?,
+        northAngle: Float
+    ): GpsCoordinate? {
         val cal =
             calibration ?: return null
 
+        // Un-rotate the image coordinate by -fullAngle around the pivot.
+        // gpsToImage rotates by +θ; imageToGps must undo it with -θ for round-trip symmetry.
         val fullAngle =
-            -magneticBearing(northAngle, cal.magneticDeclination)
-        val pair = rotateAroundCalibration(point.x, point.y, cal, fullAngle);
+            magneticBearing(northAngle, cal.magneticDeclination)
+        val pair = rotateAroundCalibration(imageX, imageY, cal, -fullAngle)
 
         return imageToGpsTrueNorth(pair.first, pair.second, cal)
     }
@@ -251,8 +268,10 @@ object MapGeometry {
         calibration: MapCalibration,
         fullAngle: Float
     ): Pair<Float, Float> {
-        val calAnchorGps = calibration.pointA.gps
-        val pivotImg = calAnchorGps.let { MapCalibrationUtils.gpsToImage(it, calibration) }
+        // Always use the un-rotated (trueNorth) pivot for consistency between gpsToImage and imageToGps.
+        // If this depended on northAngle via gpsToImageAbs, the forward and inverse transforms
+        // would compute different pivots — breaking the round-trip invariant.
+        val pivotImg = gpsToImageTrueNorth(calibration.pointA.gps, calibration)
         if (pivotImg != null) {
             val px = pivotImg.first
             val py = pivotImg.second
@@ -268,6 +287,43 @@ object MapGeometry {
     }
 
     /**
+     * Поворачивает точку относительно заданного центра.
+     *
+     * @param x Координата X поворачиваемой точки
+     * @param y Координата Y поворачиваемой точки
+     * @param cx Координата X центра поворота
+     * @param cy Координата Y центра поворота
+     * @param angleInDegrees Угол поворота в градусах (положительный — против часовой стрелки)
+     * @return Пара новых координат (Pair<Double, Double>)
+     */
+    fun rotateAroundPoint(
+        x: Float,
+        y: Float,
+        cx: Float,
+        cy: Float,
+        angleInDegrees: Float
+    ): Pair<Float, Float> {
+        // Переводим угол из градусов в радианы
+        val radians = Math.toRadians(angleInDegrees.toDouble())
+        val cosA = cos(radians)
+        val sinA = sin(radians)
+
+        // Шаг 1: Сдвиг к началу координат (0, 0)
+        val translatedX = x - cx
+        val translatedY = y - cy
+
+        // Шаг 2: Поворот по формуле матрицы поворота
+        val rotatedX = translatedX * cosA - translatedY * sinA
+        val rotatedY = translatedX * sinA + translatedY * cosA
+
+        // Шаг 3: Обратный сдвиг к исходному центру
+        val newX = rotatedX + cx
+        val newY = rotatedY + cy
+
+        return Pair(newX.toFloat(), newY.toFloat())
+    }
+
+    /**
      * Convert a GPS coordinate to image coordinates (absolute pixels).
      * Uses full calibration (scale + bearing rotation) plus optional northAngle adjustment.
      */
@@ -275,7 +331,7 @@ object MapGeometry {
         gps: GpsCoordinate,
         calibration: MapCalibration?,
         northAngle: Float
-    ): PointF? {
+    ): Pair<Float, Float>? {
         val cal =
             calibration ?: return null
 
@@ -293,6 +349,6 @@ object MapGeometry {
 
         val pair = rotateAroundCalibration(x, y, cal, fullAngle)
 
-        return PointF(pair.first, pair.second)
+        return pair
     }
 }

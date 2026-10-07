@@ -73,15 +73,12 @@ object MapCalibrationUtils {
      * both use this function so they share the same coordinate frame before sourceToViewCoord()
      * applies the uniform canvas rotation in production rendering.
      */
-    fun gpsToImageAbs(
+    fun gpsToImage(
         gps: GpsCoordinate,
         calibration: MapCalibration,
         northAngleDeg: Float  // degrees to rotate around pointA
     ): Pair<Float, Float>? {
-        val point = MapGeometry.gpsToImage(gps, calibration, northAngleDeg)
-        return if (point != null) {
-            Pair(point.x, point.y)
-        } else null
+        return MapGeometry.gpsToImage(gps, calibration, northAngleDeg)
     }
 
     /** Offset the starting GPS coordinate by a northward and eastward displacement (metres). */
@@ -104,19 +101,21 @@ object MapCalibrationUtils {
     ): MapCalibration {
         // Synthetic pointB: directly north of pointA (bearing 0), scale=1 m/px → minimal placeholder
         val earthRadius = 6371000.0
-        val angDist = 2000.0 / earthRadius
+        val angDist = 4000.0 / earthRadius
         val lat1Rad = Math.toRadians(startGPS.latitude)
         val northGps = GpsCoordinate(
             latitude = Math.toDegrees(lat1Rad + angDist),
             longitude = startGPS.longitude
         )
         val declination = calculateMagneticDeclination(startGPS.latitude, startGPS.longitude)
+        var imgCoords = MapGeometry.rotateAroundPoint(startPointImageX, startPointImageY - 1f, startPointImageX, startPointImageY, -declination)
+
         return MapGeometry.computeCalibrationRaw(
             CalibrationPoint(gps = startGPS, imageX = startPointImageX, imageY = startPointImageY),
             CalibrationPoint(
                 gps = northGps,
-                imageX = startPointImageX,
-                imageY = startPointImageY + 1f
+                imageX = imgCoords.first,
+                imageY = imgCoords.second
             ),
             declination
         )!!

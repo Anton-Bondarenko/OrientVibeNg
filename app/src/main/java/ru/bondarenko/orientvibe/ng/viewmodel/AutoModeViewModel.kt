@@ -131,7 +131,7 @@ class AutoModeViewModel(
                 PointF(
                     controlBox.centerX,
                     controlBox.centerY
-                ), _calibration, _calibration?.magneticDeclination ?: 0f
+                ), _calibration, _mapState.value.northAngle
             ) else null
         )
         return control
@@ -168,7 +168,7 @@ class AutoModeViewModel(
         val cal = MapCalibrationUtils.calibrateSinglePoint(gps, imageX, imageY)
 
         // Преобразуем GPS → пиксели для валидации
-        val projected = MapCalibrationUtils.gpsToImageAbs(gps, cal, 0f)
+        val projected = MapCalibrationUtils.gpsToImage(gps, cal, 0f)
 
         Log.d(tag, "bindGpsToCp: scale=${cal.scaleMetersPerMap}m/px, projected=($projected)")
 
@@ -260,18 +260,21 @@ class AutoModeViewModel(
         val targetImageY = targetBox.centerY
 
         Log.d(tag, "===== recalibrateToTargetControl START =====")
-        Log.d(tag, "POINT A (bound): GPS=($boundGps), image=($boundImagePos)")
         Log.d(
             tag,
-            "POINT B (target CP#$targetNumber): GPS=(${currentFix.coordinate.latitude}, ${currentFix.coordinate.longitude}), image=($targetImageX, $targetImageY)"
+            "current fix lat=${currentFix.coordinate.latitude} lon=${currentFix.coordinate.longitude}"
         )
-        Log.d(tag, "All CP bounding boxes:")
-        for (cp in _mapState.value.controlsBoundingBoxes) {
-            Log.d(
-                tag,
-                "  CP#${cp.number} -> pixel(${cp.centerX}, ${cp.centerY}), w=${cp.width}, h=${cp.height}"
-            )
-        }
+        val currentImg =
+            MapGeometry.gpsToImage(currentFix.coordinate, _calibration, _mapState.value.northAngle)
+        Log.d(tag, "current img x=${currentImg?.first} y=${currentImg?.second}")
+        Log.d(tag, "control img x=${targetBox.centerX} y=${targetBox.centerY}")
+        val controlGps = MapGeometry.imageToGps(
+            targetBox.centerX,
+            targetBox.centerY,
+            _calibration,
+            _mapState.value.northAngle
+        )
+        Log.d(tag, "control gps lat=${controlGps?.latitude} lon=${controlGps?.longitude}")
 
         // Создаём точки калибровки и вызываем двухточечную калибровку
         val pointA = ru.bondarenko.orientvibe.ng.model.CalibrationPoint(
@@ -283,57 +286,22 @@ class AutoModeViewModel(
 
         // Вычисляем новую калибровку с магнитным склонением
         val declinationAuto = _calibration?.magneticDeclination ?: 0f
-        val newCal = ru.bondarenko.orientvibe.ng.gps.MapGeometry.computeCalibrationRaw(
+        val newCal = MapGeometry.computeCalibrationRaw(
             pointA,
             pointB,
             declinationAuto
         )
             ?: return Pair(false, "Точки слишком близко — нельзя рассчитать масштаб")
 
-        // Вычисляем true bearing между точками для коррекции угла севера
-        val trueBearing =
-            MapGeometry.bearing(pointA.gps, pointB.gps)
-        val magneticDeclination = declinationAuto
-        val trackBearing = MapGeometry.magneticBearing(
-            trueBearing,
-            magneticDeclination
-        )
-
-        // теперь измерим угол на изображении
-        val screenBearing =
-            MapGeometry.screenBearing(pointA.imageX, pointA.imageY, pointB.imageX, pointB.imageY)
-        val errNorthAngle = screenBearing - trackBearing;
-
-        // Создаём полную MapCalibration с обоими точками
-        val fullCal = ru.bondarenko.orientvibe.ng.gps.MapCalibration(
-            pointA = pointA,
-            pointB = pointB,
-            scaleMetersPerMap = newCal.scaleMetersPerMap,
-            bearingDegrees = trackBearing,
-            magneticDeclination = magneticDeclination,
-            physicalDeclination = magneticDeclination,
-            hasXYFlip = newCal.hasXYFlip
-        )
-
-        Log.d(
-            tag,
-            "recalibrateToTargetControl: NEW scale=${newCal.scaleMetersPerMap}m/px, bearing=$trackBearing°, northAngle=$errNorthAngle°"
-        )
-        Log.d(
-            tag,
-            "recalibrateToTargetControl: VALIDATION — CP#1 image=($boundImagePos), current GPS on track → target CP#$targetNumber at ($targetImageX, $targetImageY)"
-        )
         Log.d(tag, "===== recalibrateToTargetControl END =====")
 
         // Применяем новую калибровку через NavViewModel
-        navVm.applyNewCalibration(fullCal)
-        applyBind(BindResult(fullCal, boundGps, boundImagePos), navVm)
-
-        // Обновляем северный индикатор (raw, без коэрции [-45,45])
-        setNorthAngleRaw(errNorthAngle)
+        navVm.applyNewCalibration(newCal)
+        applyBind(BindResult(newCal, boundGps, boundImagePos), navVm)
 
         // Инкрементируем версию калибровки — перерисовать трек
         _calibrationVersion.value++
+        setCurrentControl(targetNumber)
 
         val scaleStr = String.format("%.1f", newCal.scaleMetersPerMap)
 
@@ -713,7 +681,7 @@ class AutoModeViewModel(
     // ── Map orientation ────────────────────────────────────────────────────
 
     fun updateNorthAngle(angle: Float) {
-        _mapState.value = _mapState.value.copy(northAngle = angle.coerceIn(-45f, 45f))
+        _mapState.value.copy(northAngle = angle.coerceIn(-45f, 45f)).also { _mapState.value = it }
     }
 
     /** Устанавливает северный угол без ограничения диапазона (для калибровки). */
