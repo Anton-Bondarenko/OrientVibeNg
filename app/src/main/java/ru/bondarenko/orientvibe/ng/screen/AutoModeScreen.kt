@@ -12,14 +12,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.AutoFixNormal
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.Card
@@ -531,14 +534,13 @@ fun AutoModeScreen() {
                             )
                         }
 
-                        // Кнопки привязки
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(1.dp),
-                            modifier = Modifier.padding(all = 3.dp)
+                        // ── Квадратные кнопки — две равные на всю ширину панели ──
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            // Кнопка "Здесь" — зелёная когда _boundGps == null (ещё не привязано)
-                            val boundHereGreen = !hasBoundCp
+                            // Кнопка "Здесь" — зелёная когда привязка ещё не сделана
+                            val bindGreen = !hasBoundCp
                             androidx.compose.material3.Button(
                                 onClick = {
                                     autoVm.setCurrentControl(currentControl.num)
@@ -550,18 +552,41 @@ fun AutoModeScreen() {
                                 shape = RoundedCornerShape(12.dp),
                                 enabled = isBindEnabled,
                                 colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                                    containerColor = if (boundHereGreen) GreenReadyDark else MaterialTheme.colorScheme.primary
-                                )
+                                    containerColor = if (bindGreen) GreenReadyDark else MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                                ),
+                                elevation = androidx.compose.material3.ButtonDefaults.buttonElevation(
+                                    defaultElevation = 6.dp,
+                                    pressedElevation = 12.dp,
+                                    disabledElevation = 0.dp
+                                ),
+                                modifier = Modifier.weight(0.5f).aspectRatio(1f)
                             ) {
-                                Text(
-                                    text = "Здесь",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.MyLocation,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(28.dp),
+                                            tint = Color.White
+                                        )
+                                        Text(
+                                            text = "A",
+                                            fontSize = 20.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White
+                                        )
+                                    }
+                                }
                             }
 
-                            // Кнопка "масштаб" — зелёная когда _boundGps != null (уже привязано)
-                            val boundScaleGreen = hasBoundCp
+                            // Кнопка "Масштаб" — зелёная когда привязка уже сделана
+                            val scaleGreen = hasBoundCp && isScaleEnabled
                             androidx.compose.material3.Button(
                                 onClick = {
                                     autoVm.setCurrentControl(currentControl.num)
@@ -573,15 +598,37 @@ fun AutoModeScreen() {
                                 shape = RoundedCornerShape(12.dp),
                                 enabled = isScaleEnabled,
                                 colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                                    containerColor = if (boundScaleGreen) GreenReadyDark else MaterialTheme.colorScheme.primary
-                                )
+                                    containerColor = if (scaleGreen) GreenReadyDark else MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                                ),
+                                elevation = androidx.compose.material3.ButtonDefaults.buttonElevation(
+                                    defaultElevation = 6.dp,
+                                    pressedElevation = 12.dp,
+                                    disabledElevation = 0.dp
+                                ),
+                                modifier = Modifier.weight(0.5f).aspectRatio(1f)
                             ) {
-                                Text(
-                                    text = "Масштаб",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isScaleEnabled) Color.Black else Color.Gray
-                                )
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                    ) {
+                                        Text(
+                                            text = "B",
+                                            fontSize = 20.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isScaleEnabled) Color.White else Color.Gray.copy(alpha = 0.5f)
+                                        )
+                                        Text(
+                                            text = ":1000",
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = if (isScaleEnabled) Color.White.copy(alpha = 0.85f) else Color.Gray.copy(alpha = 0.4f)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
