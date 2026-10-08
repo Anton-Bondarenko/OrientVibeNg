@@ -3,9 +3,9 @@ package ru.bondarenko.orientvibe.ng.viewmodel
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Matrix
-import android.media.ExifInterface
 import android.net.Uri
 import android.util.Log
+import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -390,7 +390,6 @@ class MapViewModel(
     }
 
     override fun onCleared() {
-        super.onCleared()
         mapDetector.close()
     }
 }

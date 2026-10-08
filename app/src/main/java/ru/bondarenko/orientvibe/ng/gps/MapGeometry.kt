@@ -164,7 +164,7 @@ object MapGeometry {
     fun gpsToImageTrueNorth(
         gps: GpsCoordinate,
         calibration: MapCalibration
-    ): Pair<Float, Float>? {
+    ): Pair<Float, Float> {
         val dNorth = northDistance(calibration.pointA.gps, gps)
         // Use cos(startLat) for easting — matches offsetCoordinate's reference.
         // Using cos(avgLat) (eastDistance) diverges when there's a non-zero dNorth,
@@ -188,7 +188,7 @@ object MapGeometry {
         imageX: Float,
         imageY: Float,
         calibration: MapCalibration
-    ): GpsCoordinate? {
+    ): GpsCoordinate {
         val relDx = (imageX - calibration.pointA.imageX).toDouble()
         val relDy = (imageY - calibration.pointA.imageY).toDouble()
 
@@ -272,18 +272,15 @@ object MapGeometry {
         // If this depended on northAngle via gpsToImageAbs, the forward and inverse transforms
         // would compute different pivots — breaking the round-trip invariant.
         val pivotImg = gpsToImageTrueNorth(calibration.pointA.gps, calibration)
-        if (pivotImg != null) {
-            val px = pivotImg.first
-            val py = pivotImg.second
-            val angleRad = Math.toRadians(fullAngle.toDouble())
-            val cosA = cos(angleRad).toFloat()
-            val sinA = sin(angleRad).toFloat()
-            val dx = x - px
-            val dy = y - py
+        val px = pivotImg.first
+        val py = pivotImg.second
+        val angleRad = Math.toRadians(fullAngle.toDouble())
+        val cosA = cos(angleRad).toFloat()
+        val sinA = sin(angleRad).toFloat()
+        val dx = x - px
+        val dy = y - py
 
-            return Pair(px + dx * cosA - dy * sinA, py + dx * sinA + dy * cosA)
-        }
-        return Pair(x, y);
+        return Pair(px + dx * cosA - dy * sinA, py + dx * sinA + dy * cosA)
     }
 
     /**

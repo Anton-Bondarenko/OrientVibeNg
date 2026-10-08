@@ -51,6 +51,7 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.accompanist.permissions)
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
     testImplementation(libs.junit)
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
     androidTestImplementation(platform(libs.androidx.compose.bom))

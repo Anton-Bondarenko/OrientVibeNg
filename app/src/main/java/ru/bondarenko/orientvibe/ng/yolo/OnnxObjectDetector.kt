@@ -288,7 +288,7 @@ class OnnxObjectDetector(private val context: Context) {
                 val outputInfo = output.info
                 Log.d(tag, "Output info: $outputInfo")
 
-                val outputValue = output.getValue()
+                val outputValue = output.value
                 when (outputValue) {
                     is FloatBuffer -> outputValue
                     is ByteBuffer -> {

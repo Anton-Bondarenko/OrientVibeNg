@@ -1,6 +1,5 @@
 package ru.bondarenko.orientvibe.ng.ui.theme
 
-import androidx.annotation.ColorInt
 import androidx.compose.ui.graphics.Color
 
 val Green80 = Color(0xFF81C784)
@@ -11,4 +10,5 @@ val Green40 = Color(0xFF4CAF50)
 val GreenGrey40 = Color(0xFF81C784)
 val LightGreen40 = Color(0xFFA5D6A7)
 
-val ControlsRed = 0xFFA81253.toInt()
+// ARGB color — kept as val (not const) because hex literal exceeds Int.MAX_VALUE; .toInt() truncates to RGB.
+val ControlsRed = 0xFFA81253.toInt() // RGB: A81253

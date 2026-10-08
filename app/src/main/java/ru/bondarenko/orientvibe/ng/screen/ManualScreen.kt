@@ -1,7 +1,5 @@
 ﻿package ru.bondarenko.orientvibe.ng.screen
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -430,7 +428,10 @@ fun MainScreen(
         // Use existing calibration's declination (from start-point calibration) as fallback;
         // if no calibration yet, calculate from current GPS fix.
         val declination = gpsState.calibration?.physicalDeclination
-            ?: ru.bondarenko.orientvibe.ng.gps.calculateMagneticDeclination(fix.coordinate.latitude, fix.coordinate.longitude)
+            ?: ru.bondarenko.orientvibe.ng.gps.calculateMagneticDeclination(
+                fix.coordinate.latitude,
+                fix.coordinate.longitude
+            )
         val result = MapCalibrationUtils.bindGpsToFinishWithTrack(
             startGPS = startGPS,
             startPointImageX = (mapState.startPoint?.x ?: 0f) * bmpW,
@@ -445,7 +446,13 @@ fun MainScreen(
         viewModel.updateNorthAngle(result.northAngleDegrees)
 
         infoMessage =
-            "Масштаб: ${String.format("%.0f", result.calibration.scaleMetersPerMap)} м/px"
+            "Масштаб: ${
+                String.format(
+                    java.util.Locale.ROOT,
+                    "%.0f",
+                    result.calibration.scaleMetersPerMap
+                )
+            } м/px"
         isInfoVisible = true
     }
 
@@ -453,7 +460,13 @@ fun MainScreen(
     LaunchedEffect(gpsState.startCalibrated, gpsState.finishCalibrated) {
         if (gpsState.startCalibrated && gpsState.finishCalibrated) {
             // Return to step 2 (route selection) after calibration
-            infoMessage = "Привязка: ${String.format("%.0f", gpsState.routeDistance ?: 0.0)} м"
+            infoMessage = "Привязка: ${
+                String.format(
+                    java.util.Locale.ROOT,
+                    "%.0f",
+                    gpsState.routeDistance ?: 0.0
+                )
+            } м"
             isInfoVisible = true
         }
     }
@@ -584,17 +597,6 @@ fun MainScreen(
     }
 
     val currentStep = steps[currentStepIndex]
-
-    // Location permission launcher — разрешения запрашиваются на StartScreen
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        if (permissions.getOrDefault(android.Manifest.permission.ACCESS_FINE_LOCATION, false) ||
-            permissions.getOrDefault(android.Manifest.permission.ACCESS_COARSE_LOCATION, false)
-        ) {
-            navViewModel.startGps()
-        }
-    }
 
     // Keep screen awake during navigation (step index 2)
     val view = LocalView.current
@@ -800,7 +802,7 @@ fun MainScreen(
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             val accuracyText = gpsState.currentFix?.let {
-                                "${String.format("%.0f", it.accuracy)} м"
+                                "${String.format(java.util.Locale.ROOT, "%.0f", it.accuracy)} м"
                             } ?: "—"
                             Text(
                                 text = "Точность позиционирования: $accuracyText. Продолжить?",

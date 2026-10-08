@@ -95,7 +95,7 @@ class NorthIndicator {
             }
             MotionEvent.ACTION_MOVE -> {
                 if (dragging) {
-                    val (ax, ay) = lineEnd()
+                    val (ax, _) = lineEnd()
                     val dx = (ax - event.x)/2 // для точности
                     // Angle from vertical: up = 0°, positive CW
                     val newAngle = (Math.toDegrees(

@@ -201,7 +201,7 @@ class ControlPointOverlay {
     fun draw(canvas: Canvas) {
         if (controlsboundingBoxes.isEmpty() && numbersBoundingBoxes.isEmpty()) return
 
-        val toView = sourceToViewCoord ?: return
+        sourceToViewCoord ?: return
 
         // ── Прямоугольники для боксов номеров ──
 //        numbersBoundingBoxes.forEachIndexed { idx, box ->

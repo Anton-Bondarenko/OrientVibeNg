@@ -7,8 +7,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
-import java.util.concurrent.atomic.AtomicReference
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.abs
 import kotlin.math.max
@@ -175,24 +175,36 @@ class MapDetector(private val context: Context) {
             val dedupedControls = dedupOverlappingBoxes(controlsBoxes)
             val dedupedNumbers = dedupOverlappingBoxes(numbersBoxes)
 
-            Log.d(tag, "Post-dedup: controls ${controlsBoxes.size}→${dedupedControls.size}, numbers ${numbersBoxes.size}→${dedupedNumbers.size}")
+            Log.d(
+                tag,
+                "Post-dedup: controls ${controlsBoxes.size}→${dedupedControls.size}, numbers ${numbersBoxes.size}→${dedupedNumbers.size}"
+            )
 
             // ── Этап 1: фильтрация КП по медиане размера и номеров по медиане высоты (ДО OCR/корреляции) ──
             val filteredControls = if (skipControlFiltering) {
-                Log.d(tag, "  [DIAG] Skipping control filtering — all ${dedupedControls.size} boxes passed")
+                Log.d(
+                    tag,
+                    "  [DIAG] Skipping control filtering — all ${dedupedControls.size} boxes passed"
+                )
                 dedupedControls
             } else {
                 filterControlsByMedianArea(dedupedControls)
             }
 
             val filteredNumbers = if (skipNumberFiltering) {
-                Log.d(tag, "  [DIAG] Skipping number filtering — all ${dedupedNumbers.size} boxes passed")
+                Log.d(
+                    tag,
+                    "  [DIAG] Skipping number filtering — all ${dedupedNumbers.size} boxes passed"
+                )
                 dedupedNumbers
             } else {
                 filterNumbersByMedianHeight(dedupedNumbers)
             }
 
-            Log.d(tag, "Post-filter: controls ${dedupedControls.size}→${filteredControls.size}, numbers ${dedupedNumbers.size}→${filteredNumbers.size}")
+            Log.d(
+                tag,
+                "Post-filter: controls ${dedupedControls.size}→${filteredControls.size}, numbers ${dedupedNumbers.size}→${filteredNumbers.size}"
+            )
 
             // Прогресс: фильтр завершён, переходим к OCR
             emitProgress(3, 4, "Распознавание номеров...")
@@ -208,8 +220,6 @@ class MapDetector(private val context: Context) {
 
             val detectedNumbers = digitResult.numbers.takeIf { it.isNotEmpty() }
                 ?: filteredNumbers  // fallback — original boxes when OCR fails
-            val digitPositions = digitResult.digitsPerNum
-
             // Прогресс: OCR завершён, переходим к привязке номеров к КП
             emitProgress(3, 4, "Привязка номеров...")
 
@@ -257,7 +267,9 @@ class MapDetector(private val context: Context) {
     }
 
     /** Slice size — совпадает с OnnxObjectDetector.inputImageWidth. */
-    private companion object { val SLICE_SIZE = 640 }
+    private companion object {
+        const val SLICE_SIZE = 640
+    }
 
     /** Recognises digits inside each number bounding box via OCR, returns boxes with assembled numbers. */
     private suspend fun detectAndAssembleNumbers(
@@ -275,7 +287,16 @@ class MapDetector(private val context: Context) {
             // Пропускаем OCR для боксов, обрезанных границами тайла.
             // Они содержат только часть объекта (детектирована на краю тайла).
             // За счёт избыточного наложения — полная версия есть в соседнем тайле.
-            Log.d(tag, "NUM#${numbersBoxes.indexOf(numberBox)} tileId=${numberBox.tileId} cx=${"%.4f".format(numberBox.centerX)} cy=${"%.4f".format(numberBox.centerY)} w=${"%.4f".format(numberBox.width)} h=${"%.4f".format(numberBox.height)} conf=${"%.3f".format(numberBox.confidence)}")
+            Log.d(
+                tag,
+                "NUM#${numbersBoxes.indexOf(numberBox)} tileId=${numberBox.tileId} cx=${
+                    "%.4f".format(numberBox.centerX)
+                } cy=${"%.4f".format(numberBox.centerY)} w=${"%.4f".format(numberBox.width)} h=${
+                    "%.4f".format(
+                        numberBox.height
+                    )
+                } conf=${"%.3f".format(numberBox.confidence)}"
+            )
             // bbox tileId указывает, в каком слайсе YOLO обнаружил число.
             // Координаты cx/cy/w/h всегда в нормализованных координатах полного изображения — ROI корректен.
             // Раньше мы пропускали OCR для bbox, частично выходящих за границы слайса, но это приводило
@@ -284,21 +305,39 @@ class MapDetector(private val context: Context) {
             // Теперь OCR запускается всегда — ROI берётся из полной картинки.
             if (numberBox.tileId != null) {
                 val tileIdx = numberBox.tileId!!
-                val numSlicesXPerRow = kotlin.math.ceil(bitmap.width.toDouble() / (SLICE_SIZE - SLICE_SIZE / 5)).toInt()
+                val numSlicesXPerRow =
+                    kotlin.math.ceil(bitmap.width.toDouble() / (SLICE_SIZE - SLICE_SIZE / 5))
+                        .toInt()
                 val col = tileIdx / numSlicesXPerRow
                 val row = tileIdx % numSlicesXPerRow
                 val offsetX = col * (SLICE_SIZE - SLICE_SIZE / 5)
                 val offsetY = row * (SLICE_SIZE - SLICE_SIZE / 5)
 
                 // Конвертируем bbox из абсолютных пикселей → локальные координаты тайла
-                val leftNorm = numberBox.centerX - numberBox.width / 2f - offsetX / bitmap.width.toFloat()
-                val rightNorm = numberBox.centerX + numberBox.width / 2f - offsetX / bitmap.width.toFloat()
-                val topNorm = numberBox.centerY - numberBox.height / 2f - offsetY / bitmap.height.toFloat()
-                val bottomNorm = numberBox.centerY + numberBox.height / 2f - offsetY / bitmap.height.toFloat()
+                val leftNorm =
+                    numberBox.centerX - numberBox.width / 2f - offsetX / bitmap.width.toFloat()
+                val rightNorm =
+                    numberBox.centerX + numberBox.width / 2f - offsetX / bitmap.width.toFloat()
+                val topNorm =
+                    numberBox.centerY - numberBox.height / 2f - offsetY / bitmap.height.toFloat()
+                val bottomNorm =
+                    numberBox.centerY + numberBox.height / 2f - offsetY / bitmap.height.toFloat()
 
-                Log.d(tag, "  slice=$tileIdx [$col,$row] offsetX=$offsetX offsetY=$offsetY bounds=tl=${"%.4f".format(leftNorm)} tr=${"%.4f".format(rightNorm)} bl=${"%.4f".format(topNorm)} br=${"%.4f".format(bottomNorm)}")
+                Log.d(
+                    tag,
+                    "  slice=$tileIdx [$col,$row] offsetX=$offsetX offsetY=$offsetY bounds=tl=${
+                        "%.4f".format(leftNorm)
+                    } tr=${"%.4f".format(rightNorm)} bl=${"%.4f".format(topNorm)} br=${
+                        "%.4f".format(
+                            bottomNorm
+                        )
+                    }"
+                )
                 if (leftNorm < 0 || rightNorm >= 1 || topNorm < 0 || bottomNorm >= 1) {
-                    Log.d(tag, "  bbox частично вне слайса #$tileIdx, но OCR запускаем — координаты полн. изображения ROI корректен")
+                    Log.d(
+                        tag,
+                        "  bbox частично вне слайса #$tileIdx, но OCR запускаем — координаты полн. изображения ROI корректен"
+                    )
                 }
             }
 
@@ -317,7 +356,10 @@ class MapDetector(private val context: Context) {
                 (cyPx + halfH * DIGIT_ROI_EXPANSION_FACTOR).coerceAtMost(bitmap.height.toFloat())
                     .toInt()
 
-            Log.d(tag, "  cx=$cxPx cy=$cyPx halfW=$halfW halfH=$halfH rawROI=[$roiX1,$roiY1]-$roiX2,$roiY2 sz=${roiX2-roiX1}x${roiY2-roiY1}")
+            Log.d(
+                tag,
+                "  cx=$cxPx cy=$cyPx halfW=$halfW halfH=$halfH rawROI=[$roiX1,$roiY1]-$roiX2,$roiY2 sz=${roiX2 - roiX1}x${roiY2 - roiY1}"
+            )
 
             if (roiX2 - roiX1 < 8 || roiY2 - roiY1 < 8) {
                 Log.w(tag, "  >>> SKIP ROI too small: ${roiX2 - roiX1}x${roiY2 - roiY1}")
@@ -363,14 +405,23 @@ class MapDetector(private val context: Context) {
 //                        results.add(makeEmptyBox(numberBox))
                         return@let
                     }
-                    Log.d(tag, "  rawDigits=${digitDetections.size} on ${roiBitmap.width}x${roiBitmap.height}")
+                    Log.d(
+                        tag,
+                        "  rawDigits=${digitDetections.size} on ${roiBitmap.width}x${roiBitmap.height}"
+                    )
 
                     // Filter valid digits (classId 0-9) and convert ROI coords → original image coords
                     val validDigits = mutableListOf<Pair<BoundingBox, Int>>()
                     for (dr in digitDetections) {
-                        Log.d(tag, "    rawDigit classId=${dr.classId} conf=${"%.3f".format(dr.confidence)} box=[${dr.boundingBox.left}, ${dr.boundingBox.top}] [${dr.boundingBox.right}, ${dr.boundingBox.bottom}]")
+                        Log.d(
+                            tag,
+                            "    rawDigit classId=${dr.classId} conf=${"%.3f".format(dr.confidence)} box=[${dr.boundingBox.left}, ${dr.boundingBox.top}] [${dr.boundingBox.right}, ${dr.boundingBox.bottom}]"
+                        )
                         if (dr.confidence < DIG_CONFIDENCE || dr.classId !in 0..9) {
-                            Log.d(tag, "    filtered out: conf=${"%.3f".format(dr.confidence)} classId=${dr.classId}")
+                            Log.d(
+                                tag,
+                                "    filtered out: conf=${"%.3f".format(dr.confidence)} classId=${dr.classId}"
+                            )
                             continue
                         }
 
@@ -412,7 +463,10 @@ class MapDetector(private val context: Context) {
                     digitsPerNum.add(digitPositions)
                     var number = 0
                     for ((_, digitNum) in sorted) {
-                        Log.d(tag, "    digit=$digitNum conf=${"%.3f".format(sorted.find { it.second == digitNum }?.first?.confidence ?: 0f)}")
+                        Log.d(
+                            tag,
+                            "    digit=$digitNum conf=${"%.3f".format(sorted.find { it.second == digitNum }?.first?.confidence ?: 0f)}"
+                        )
                         number = number * 10 + digitNum
                     }
 
@@ -472,7 +526,10 @@ class MapDetector(private val context: Context) {
         return boxes.filter { box ->
             val area = box.width * box.height
             if (area < minArea) {
-                Log.d(tag, "    CP size check: area=${"%.4f".format(area)} median=${"%.4f".format(med)} diff=too-small (<30%% of med) FILTER")
+                Log.d(
+                    tag,
+                    "    CP size check: area=${"%.4f".format(area)} median=${"%.4f".format(med)} diff=too-small (<30%% of med) FILTER"
+                )
                 false
             } else {
                 val diff = abs(area - med) / med
@@ -483,13 +540,21 @@ class MapDetector(private val context: Context) {
                 val ratio = box.width / box.height
                 val ratioOk = ratio <= 2.5f
                 if (!ratioOk) {
-                    Log.d(tag, "    CP aspect check: w/h=${"%.2f".format(ratio)} median-area=${"%.4f".format(med)} diff=%.1f%% FILTER (elongated)"
-                        .format(diff * 100))
+                    Log.d(
+                        tag,
+                        "    CP aspect check: w/h=${"%.2f".format(ratio)} median-area=${
+                            "%.4f".format(med)
+                        } diff=%.1f%% FILTER (elongated)"
+                            .format(diff * 100)
+                    )
                 }
 
                 val keep = areaOk && ratioOk
-                Log.d(tag, "    CP size check: area=${"%.4f".format(area)} median=${"%.4f".format(med)} diff=%.1f%% ratio=%.2f %s"
-                    .format(diff * 100, ratio, if (keep) "KEEP" else "FILTER"))
+                Log.d(
+                    tag,
+                    "    CP size check: area=${"%.4f".format(area)} median=${"%.4f".format(med)} diff=%.1f%% ratio=%.2f %s"
+                        .format(diff * 100, ratio, if (keep) "KEEP" else "FILTER")
+                )
                 keep
             }
         }.takeIf { it.isNotEmpty() } ?: boxes.take(1) // guard: at least one
@@ -508,8 +573,11 @@ class MapDetector(private val context: Context) {
         return boxes.filter { box ->
             val diff = abs(box.height - med) / med
             val keep = diff < 0.25f
-            Log.d(tag, "    NUM height check: h=${"%.4f".format(box.height)} median=${"%.4f".format(med)} diff=%.1f%% %s"
-                .format(diff * 100, if (keep) "KEEP" else "FILTER"))
+            Log.d(
+                tag,
+                "    NUM height check: h=${"%.4f".format(box.height)} median=${"%.4f".format(med)} diff=%.1f%% %s"
+                    .format(diff * 100, if (keep) "KEEP" else "FILTER")
+            )
             keep
         }.takeIf { it.isNotEmpty() } ?: boxes.take(1) // guard: at least one
     }
@@ -549,17 +617,22 @@ class MapDetector(private val context: Context) {
             // Square half-side in relative coords: max(width, height) of CP bbox × 3
             // This is the "bbox_side / 2" where bbox_side = max(w*W, h*H) * 6
             // and we divide by W or H depending on axis — simplified to max(w,h)*3 in pure rel space.
-            val halfWidth = SEARCH_BOX_SIZE_MUL/2f * cp.width
-            val halfHeight = SEARCH_BOX_SIZE_MUL/2f * cp.height
+            val halfWidth = SEARCH_BOX_SIZE_MUL / 2f * cp.width
+            val halfHeight = SEARCH_BOX_SIZE_MUL / 2f * cp.height
 
             // Search: centers within square (relative coords)
             val candidates = numbers.filter { nb ->
                 abs(nb.centerX - cp.centerX) < halfWidth &&
-                abs(nb.centerY - cp.centerY) < halfHeight
+                        abs(nb.centerY - cp.centerY) < halfHeight
             }
 
             if (candidates.isEmpty()) {
-                Log.d(tag, "    CP#$i: search empty  cp=(${"%.4f".format(cp.centerX)}, ${"%.4f".format(cp.centerY)}) sz=${"%.4f".format(cp.width)}×${"%.4f".format(cp.height)} halfWidth=$halfWidth halfWidth=$halfHeight")
+                Log.d(
+                    tag,
+                    "    CP#$i: search empty  cp=(${"%.4f".format(cp.centerX)}, ${"%.4f".format(cp.centerY)}) sz=${
+                        "%.4f".format(cp.width)
+                    }×${"%.4f".format(cp.height)} halfWidth=$halfWidth halfWidth=$halfHeight"
+                )
                 continue
             }
 
@@ -567,7 +640,7 @@ class MapDetector(private val context: Context) {
             val closestPair = candidates.withIndex()
                 .filter { (_, nb) ->
                     abs(nb.centerX - cp.centerX) < halfWidth &&
-                    abs(nb.centerY - cp.centerY) < halfHeight
+                            abs(nb.centerY - cp.centerY) < halfHeight
                 }
                 .minByOrNull { (_, nb) ->
                     val dx = nb.centerX - cp.centerX
@@ -584,22 +657,38 @@ class MapDetector(private val context: Context) {
             val maxDistRel = 3f * cp.height
 
             if (distRel > maxDistRel) {
-                Log.d(tag, "    CP@$i: too far  cp=(${"%.4f".format(cp.centerX)}, ${"%.4f".format(cp.centerY)}, w=${
-                    "%.4f".format(
-                        cp.width
-                    )
-                }, h=${
-                    "%.4f".format(
-                        cp.height
-                    )
-                }) distRel=${"%.4f".format(distRel)} maxRel=${"%.4f".format(maxDistRel)} | numIdx=$numIdx nb=(${"%.4f".format(numBox.centerX)}, ${"%.4f".format(numBox.centerY)})")
+                Log.d(
+                    tag,
+                    "    CP@$i: too far  cp=(${"%.4f".format(cp.centerX)}, ${"%.4f".format(cp.centerY)}, w=${
+                        "%.4f".format(
+                            cp.width
+                        )
+                    }, h=${
+                        "%.4f".format(
+                            cp.height
+                        )
+                    }) distRel=${"%.4f".format(distRel)} maxRel=${"%.4f".format(maxDistRel)} | numIdx=$numIdx nb=(${
+                        "%.4f".format(
+                            numBox.centerX
+                        )
+                    }, ${"%.4f".format(numBox.centerY)})"
+                )
                 continue
             }
 
             // Number attached.
             result[i].number = numBox.number ?: cp.number
             attachedNumbers.add(numIdx)
-            Log.d(tag, "    CP@$i: attached NUM#$numIdx (value=${numBox.number}) distRel=${"%.4f".format(distRel)} cp=(${"%.4f".format(cp.centerX)}, ${"%.4f".format(cp.centerY)}) nb=(${"%.4f".format(numBox.centerX)}, ${"%.4f".format(numBox.centerY)})")
+            Log.d(
+                tag,
+                "    CP@$i: attached NUM#$numIdx (value=${numBox.number}) distRel=${
+                    "%.4f".format(distRel)
+                } cp=(${"%.4f".format(cp.centerX)}, ${"%.4f".format(cp.centerY)}) nb=(${
+                    "%.4f".format(
+                        numBox.centerX
+                    )
+                }, ${"%.4f".format(numBox.centerY)})"
+            )
         }
 
         return result

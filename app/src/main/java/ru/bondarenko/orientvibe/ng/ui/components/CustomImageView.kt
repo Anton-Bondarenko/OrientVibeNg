@@ -146,7 +146,7 @@ open class CustomImageView(context: Context) : View(context) {
         return PointF(pts[0], pts[1])
     }
 
-    fun viewToSourceCoord(x: Float, y: Float): PointF? {
+    fun viewToSourceCoord(x: Float, y: Float): PointF {
         computeImageMatrix()
         val pts = floatArrayOf(x, y)
         inverseMatrix.mapPoints(pts)

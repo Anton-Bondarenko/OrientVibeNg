@@ -224,7 +224,6 @@ class NavViewModel(
     }
 
     override fun onCleared() {
-        super.onCleared()
         gpsManager.onCleared()
     }
 

@@ -107,7 +107,7 @@ fun AutoModeScreen() {
         if (pendingBind == null) return@LaunchedEffect
         pendingBind = null
         isBinding = true
-        val (ok, msg) = autoVm.bindGpsToCurrentControl()
+        val (_, msg) = autoVm.bindGpsToCurrentControl()
         infoMessage = msg
         isInfoVisible = true
         isBinding = false
@@ -118,7 +118,7 @@ fun AutoModeScreen() {
         if (!pendingScale) return@LaunchedEffect
         pendingScale = false
         isScaling = true
-        val (ok, msg) = autoVm.recalibrateToTargetControl()
+        val (_, msg) = autoVm.recalibrateToTargetControl()
         infoMessage = msg
         isInfoVisible = true
         isScaling = false
@@ -357,6 +357,7 @@ fun AutoModeScreen() {
             val (accuracyColor, accuracyText) = when (accuracyLevel) {
                 AccuracyLevel.HIGH_ACCURACY -> GreenReady to "GPS: ${
                     String.format(
+                        java.util.Locale.ROOT,
                         "%.0f",
                         fix.accuracy
                     )
@@ -364,6 +365,7 @@ fun AutoModeScreen() {
 
                 AccuracyLevel.LOW_ACCURACY -> Color(0xFFFFC107) to "GPS: ${
                     String.format(
+                        java.util.Locale.ROOT,
                         "%.0f",
                         fix.accuracy
                     )

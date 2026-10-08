@@ -4,7 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.graphics.PointF
-import android.media.ExifInterface
+import androidx.exifinterface.media.ExifInterface
 import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -149,7 +149,7 @@ class AutoModeViewModel(
         gps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate,
         cpNumber: Int
     ): BindResult? {
-        val bmp = _mapState.value.bitmap ?: run {
+        _mapState.value.bitmap ?: run {
             Log.w(tag, "bindGpsToCp(cp#$cpNumber): bitmap is null")
             return null
         }
@@ -221,7 +221,7 @@ class AutoModeViewModel(
 
         applyBind(bindResult, navVm)
 
-        val scaleStr = String.format("%.1f", bindResult.calibration.scaleMetersPerMap)
+        val scaleStr = String.format(java.util.Locale.ROOT, "%.1f", bindResult.calibration.scaleMetersPerMap)
         return Pair(true, "CP #$currentNumber привязана: масштаб $scaleStr м/px")
     }
 
@@ -303,7 +303,7 @@ class AutoModeViewModel(
         _calibrationVersion.value++
         setCurrentControl(targetNumber)
 
-        val scaleStr = String.format("%.1f", newCal.scaleMetersPerMap)
+        val scaleStr = String.format(java.util.Locale.ROOT, "%.1f", newCal.scaleMetersPerMap)
 
         return Pair(true, "Масштаб обновлён: $scaleStr м/px")
     }
@@ -700,7 +700,6 @@ class AutoModeViewModel(
     }
 
     override fun onCleared() {
-        super.onCleared()
         mapDetector.close()
     }
 }
