@@ -49,6 +49,7 @@ import ru.bondarenko.orientvibe.ng.ui.components.MapTapListener
 import ru.bondarenko.orientvibe.ng.ui.components.SubsamplingMapView
 import ru.bondarenko.orientvibe.ng.ui.components.TopInfoPanel
 import ru.bondarenko.orientvibe.ng.R
+import ru.bondarenko.orientvibe.ng.gps.MapGeometry
 import ru.bondarenko.orientvibe.ng.viewmodel.MapViewModel
 
 private const val GPS_ACCURACY_LOW_THRESHOLD = 30f
@@ -410,7 +411,9 @@ fun MainScreen(
         val cal = MapCalibrationUtils.calibrateSinglePoint(
             startGPS = fix.coordinate,
             startPointImageX = (mapState.startPoint?.x ?: 0f) * bmpW,
-            startPointImageY = (mapState.startPoint?.y ?: 0f) * bmpH
+            startPointImageY = (mapState.startPoint?.y ?: 0f) * bmpH,
+            northAngle = mapState.northAngle,
+            imageProportion = bmpW/bmpH
         )
         navViewModel.applyStartCalibration(cal)
         navViewModel.startTracking()
@@ -429,7 +432,7 @@ fun MainScreen(
         // Use existing calibration's declination (from start-point calibration) as fallback;
         // if no calibration yet, calculate from current GPS fix.
         val declination = gpsState.calibration?.physicalDeclination
-            ?: ru.bondarenko.orientvibe.ng.gps.calculateMagneticDeclination(
+            ?: MapGeometry.calculateMagneticDeclination(
                 fix.coordinate.latitude,
                 fix.coordinate.longitude
             )
@@ -445,15 +448,6 @@ fun MainScreen(
 
         navViewModel.applyNewCalibration(result.calibration)
         viewModel.updateNorthAngle(result.northAngleDegrees)
-
-        infoMessage =
-            "Масштаб: ${
-                String.format(
-                    java.util.Locale.ROOT,
-                    "%.0f",
-                    result.calibration.scaleMetersPerMap
-                )
-            } м/px"
         isInfoVisible = true
     }
 
@@ -706,7 +700,9 @@ fun MainScreen(
                                     val newCal = MapCalibrationUtils.calibrateSinglePoint(
                                         startGPS = fix.coordinate,
                                         startPointImageX = kpAbsX,
-                                        startPointImageY = kpAbsY
+                                        startPointImageY = kpAbsY,
+                                        northAngle = mapState.northAngle,
+                                        imageProportion = imageW/imageH
                                     )
                                     navViewModel.applyNewCalibration(newCal)
                                     infoMessage = "КП ${kpIdx + 1} привязан к GPS"
@@ -774,7 +770,6 @@ fun MainScreen(
                 gpsState = gpsState,
                 routeDistance = gpsState.routeDistance,
                 currentDistanceFromStart = currentDistanceFromStart,
-                mapScale = gpsState.mapScale,
                 magneticBearing = gpsState.currentFix?.bearing?.minus(
                     gpsState.calibration?.bearingDegrees?.toFloat() ?: 0f
                 ),

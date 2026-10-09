@@ -12,6 +12,8 @@ import ru.bondarenko.orientvibe.ng.model.MapCalibration
  */
 object MapCalibrationUtils {
 
+    private const val DEFAULT_SCALE = 4000.0 // метров в карте по высоте
+
     // ─── Calibration ──────────────────────────────────────────────────────
 
     fun calibrate(
@@ -93,32 +95,30 @@ object MapCalibrationUtils {
      * Uses bearing=0 and scale=1 as defaults — meaningful only after two-point
      * recalibration via [bindGpsToFinishWithTrack]. Sets northAngle = 0 so the map
      * is not rotated until proper calibration arrives.
+     * А4 = 1.414 : 1
      */
     fun calibrateSinglePoint(
         startGPS: GpsCoordinate,
         startPointImageX: Float,
-        startPointImageY: Float
-    ): MapCalibration {
-        // Synthetic pointB: directly north of pointA (bearing 0), scale=1 m/px → minimal placeholder
-        val earthRadius = 6371000.0
-        val angDist = 4000.0 / earthRadius
-        val lat1Rad = Math.toRadians(startGPS.latitude)
-        val northGps = GpsCoordinate(
-            latitude = Math.toDegrees(lat1Rad + angDist),
-            longitude = startGPS.longitude
-        )
-        val declination = calculateMagneticDeclination(startGPS.latitude, startGPS.longitude)
-        var imgCoords = MapGeometry.rotateAroundPoint(startPointImageX, startPointImageY - 1f, startPointImageX, startPointImageY, -declination)
+        startPointImageY: Float,
+        northAngle: Float,
+        imageProportion: Float = 1.44f, // width/height
+        scaleMetersPerMapX: Double? = null,
+        scaleMetersPerMapY: Double? = null,
 
-        return MapGeometry.computeCalibrationRaw(
-            CalibrationPoint(gps = startGPS, imageX = startPointImageX, imageY = startPointImageY),
-            CalibrationPoint(
-                gps = northGps,
-                imageX = imgCoords.first,
-                imageY = imgCoords.second
+        ): MapCalibration {
+
+        return MapGeometry.calibrationSingle(
+            ru.bondarenko.orientvibe.ng.gps.CalibrationPoint(
+                gps = startGPS,
+                imageX = startPointImageX,
+                imageY = startPointImageY
             ),
-            declination
-        )!!
+            MapGeometry.calculateMagneticDeclination(startGPS.latitude, startGPS.longitude),
+            northAngle,
+            scaleMetersPerMapX ?: (DEFAULT_SCALE * imageProportion),//2700.0,
+            scaleMetersPerMapY ?: DEFAULT_SCALE//3900.0
+        )
     }
 
     // ─── Two-point finish calibration (track-based) ───────────────────────

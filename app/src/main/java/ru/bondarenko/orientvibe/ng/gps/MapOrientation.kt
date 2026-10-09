@@ -62,6 +62,8 @@ object MapOrientation {
         val distFromA = sqrt(dx0 * dx0 + dy0 * dy0)
 
         // Target position on AB line
+        if (calibration.pointB == null)
+            return null
         val targetRelX =
             (calibration.pointB.imageX - calibration.pointA.imageX) * imageDimensions.first
         val targetRelY =
@@ -85,33 +87,6 @@ object MapOrientation {
         return angleDiff.toFloat()
     }
 
-    /**
-     * Check if two image positions are approximately equal (within tolerance in pixels).
-     */
-    fun positionsEqual(
-        cal: ru.bondarenko.orientvibe.ng.model.MapCalibration,
-        expectedFraction: Double,
-        actualGps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate,
-        northAngleDeg: Float,
-        imageDimensions: Pair<Float, Float>,
-        tolerancePx: Float = 1e-3f
-    ): Boolean {
-        val expectedRelX =
-            cal.pointA.imageX + (cal.pointB.imageX - cal.pointA.imageX) * expectedFraction
-        val expectedRelY =
-            cal.pointA.imageY + (cal.pointB.imageY - cal.pointA.imageY) * expectedFraction
-
-        val actualAbs =
-            MapCalibrationUtils.gpsToImage(actualGps, cal, northAngleDeg)
-                ?: return false
-        val expectedAbsX = expectedRelX * imageDimensions.first
-        val expectedAbsY = expectedRelY * imageDimensions.second
-
-        val dx = (actualAbs.first - expectedAbsX)
-        val dy = (actualAbs.second - expectedAbsY)
-        return sqrt(dx * dx + dy * dy) < tolerancePx
-    }
-
     // ─── Compose helper for creating calibration with orientation info ───
 
     /** Result of computing a full oriented calibration. */
@@ -120,14 +95,19 @@ object MapOrientation {
         val northAngleDeg: Float,           // degrees; positive = clockwise rotation of map Y-axis from screen-up
         val trueBearingDeg: Float,         // geographic bearing from A to B
         val rawMagneticBearingDeg: Float,  // compass bearing from A to B (true - declination)
-        val scaleMetersPerPixel: Double     // meters per source pixel at this calibration
+        val scaleMetersPerPixelX: Double,     // meters per map
+        val scaleMetersPerPixelY: Double     //
     ) {
         /** Image position of point B in absolute pixels (for given imageDimensions). */
         fun pointBImagePos(imageDimensions: Pair<Float, Float>): Pair<Float, Float> {
-            return Pair(
-                calibration.pointB.imageX * imageDimensions.first,
-                calibration.pointB.imageY * imageDimensions.second
-            )
+            if (calibration.pointB == null){
+                return Pair(0f, 0f)
+            } else {
+                return Pair(
+                    calibration.pointB.imageX * imageDimensions.first,
+                    calibration.pointB.imageY * imageDimensions.second
+                )
+            }
         }
 
         /** Image position of point A in absolute pixels. */
@@ -191,7 +171,8 @@ object MapOrientation {
             northAngleDeg = northAngle,
             trueBearingDeg = trueBearing,
             rawMagneticBearingDeg = rawMagBearing,
-            scaleMetersPerPixel = cal.scaleMetersPerMap
+            scaleMetersPerPixelX = cal.scaleMetersPerMapX,
+            scaleMetersPerPixelY = cal.scaleMetersPerMapY
         )
     }
 }

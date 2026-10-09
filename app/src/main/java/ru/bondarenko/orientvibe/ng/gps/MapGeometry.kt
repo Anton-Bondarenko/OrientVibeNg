@@ -2,6 +2,7 @@ package ru.bondarenko.orientvibe.ng.gps
 
 import android.graphics.PointF
 import android.hardware.GeomagneticField
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -10,20 +11,6 @@ import kotlin.math.sqrt
 /**
  * Получаем склонение в градусах (положительное — на восток, отрицательное — на запад)
  **/
-fun calculateMagneticDeclination(
-    latitude: Double,
-    longitude: Double,
-    timeMillis: Long = System.currentTimeMillis()
-): Float {
-    val geomagneticField = GeomagneticField(
-        latitude.toFloat(),
-        longitude.toFloat(),
-        0f,
-        timeMillis
-    )
-
-    return geomagneticField.declination
-}
 
 /**
  * Pure-geometry GPS utilities — no Android SDK dependencies.
@@ -32,6 +19,21 @@ fun calculateMagneticDeclination(
 object MapGeometry {
 
     private const val EARTH_RADIUS_METERS = 6_371_000.0
+
+    fun calculateMagneticDeclination(
+        latitude: Double,
+        longitude: Double,
+        timeMillis: Long = System.currentTimeMillis()
+    ): Float {
+        val geomagneticField = GeomagneticField(
+            latitude.toFloat(),
+            longitude.toFloat(),
+            0f,
+            timeMillis
+        )
+
+        return geomagneticField.declination
+    }
 
     /** True (geographic) bearing from *from* to *to*, in degrees [0, 360). */
     fun bearing(from: GpsCoordinate, to: GpsCoordinate): Float {
@@ -121,8 +123,16 @@ object MapGeometry {
     fun computeCalibrationRaw(
         pointA: CalibrationPoint,
         pointB: CalibrationPoint,
-        magneticDeclination: Float
+        magneticDeclination: Float,
+        northAngle: Float = 0f
     ): MapCalibration? {
+        // Вычисляем true bearing между точками для коррекции угла севера
+        val trueBearing = bearing(pointA.gps, pointB.gps)
+        // теперь измерим угол на изображении
+        val screenBearing =
+            screenBearing(pointA.imageX, pointA.imageY, pointB.imageX, pointB.imageY) - northAngle
+        val rawMagneticBearing = trueBearing - screenBearing
+
         // Compute Rhumb distance using cos(pointA.gps.lat) for easting — matches offsetCoordinate,
         // gpsToImageRelative, and imageToGpsRelative which all use pointA (start) as reference.
         // Using eastDistance (cos(avgLat)) would diverge when dNorth ≠ 0 because avgLat ≠ pointA.lat.
@@ -132,29 +142,54 @@ object MapGeometry {
         val gpsDistance = sqrt(dNorth * dNorth + dEast * dEast)
         if (gpsDistance < 1.0) return null
 
-        val dx = (pointB.imageX - pointA.imageX).toDouble()
-        val dy = (pointB.imageY - pointA.imageY).toDouble()
+        // поворачиваем на трек на истинный север
+        val rotPointB = rotateAroundPoint(
+            pointB.imageX,
+            pointB.imageY,
+            pointA.imageX,
+            pointA.imageY,
+            (rawMagneticBearing + northAngle)
+        )
+        val dx = (rotPointB.first - pointA.imageX).toDouble()
+        val dy = (rotPointB.second - pointA.imageY).toDouble()
+
         val imageDistance = sqrt(dx * dx + dy * dy)
         if (imageDistance < 0.001) return null
 
-        // Вычисляем true bearing между точками для коррекции угла севера
-        val trueBearing = bearing(pointA.gps, pointB.gps)
-        // теперь измерим угол на изображении
-        val screenBearing =
-            screenBearing(pointA.imageX, pointA.imageY, pointB.imageX, pointB.imageY)
 
-        val scaleMetersPerUnit = gpsDistance / imageDistance
-        val rawMagneticBearing = trueBearing - screenBearing
+
+        val scaleMetersPerUnitX = abs(dEast / dx)
+        val scaleMetersPerUnitY = abs(dNorth / dy)
         val hasXYFlip = cos(Math.toRadians(rawMagneticBearing.toDouble())) < 0
 
         return MapCalibration(
             pointA = pointA,
             pointB = pointB,
-            scaleMetersPerMap = scaleMetersPerUnit,
+            scaleMetersPerMapX = scaleMetersPerUnitX,
+            scaleMetersPerMapY = scaleMetersPerUnitY,
             bearingDegrees = rawMagneticBearing,
             magneticDeclination = rawMagneticBearing,
             physicalDeclination = magneticDeclination,
             hasXYFlip = hasXYFlip
+        )
+    }
+
+    /**
+     * Калибровка по одной точке
+     */
+    fun calibrationSingle(
+        pointA: CalibrationPoint, magneticDeclination: Float,
+        northAngle: Float = 0f, scaleX: Double, scaleY: Double
+    ): MapCalibration {
+        return MapCalibration(
+            pointA = pointA,
+            pointB = null,
+            scaleMetersPerMapX = scaleX,
+            scaleMetersPerMapY = scaleY,
+            bearingDegrees = magneticDeclination,
+            magneticDeclination = magneticDeclination + northAngle,
+            physicalDeclination = magneticDeclination,
+            hasXYFlip = cos(Math.toRadians((magneticDeclination + northAngle).toDouble())) < 0
         )
     }
 
@@ -174,8 +209,8 @@ object MapGeometry {
 
         // Canonical mapping: north → up (negative Y in image space), east → right.
         // Convert geographic offsets to calibrated pixel distances.
-        val relDx = (dEast / calibration.scaleMetersPerMap).toFloat()
-        val relDy = (-dNorth / calibration.scaleMetersPerMap).toFloat()
+        val relDx = (dEast / calibration.scaleMetersPerMapX).toFloat()
+        val relDy = (-dNorth / calibration.scaleMetersPerMapY).toFloat()
 
         return Pair(
             calibration.pointA.imageX + relDx,
@@ -192,8 +227,8 @@ object MapGeometry {
         val relDx = (imageX - calibration.pointA.imageX).toDouble()
         val relDy = (imageY - calibration.pointA.imageY).toDouble()
 
-        var metersDx = relDx * calibration.scaleMetersPerMap
-        var metersDy = relDy * calibration.scaleMetersPerMap
+        var metersDx = relDx * calibration.scaleMetersPerMapX
+        var metersDy = relDy * calibration.scaleMetersPerMapY
 
         // Inverse of canonical: always direct mapping (no flip needed).
         val dEast = metersDx
@@ -218,15 +253,15 @@ object MapGeometry {
         val lon1Rad = Math.toRadians(from.longitude)
 
         val lat2Rad = kotlin.math.asin(
-            kotlin.math.sin(lat1Rad) * kotlin.math.cos(angularDistance) +
-                    kotlin.math.cos(lat1Rad) * kotlin.math.sin(angularDistance) * kotlin.math.cos(
+            sin(lat1Rad) * cos(angularDistance) +
+                    cos(lat1Rad) * sin(angularDistance) * cos(
                 bearingRad
             )
         )
 
-        val lon2Rad = lon1Rad + kotlin.math.atan2(
-            kotlin.math.sin(bearingRad) * kotlin.math.sin(angularDistance) * kotlin.math.cos(lat1Rad),
-            kotlin.math.cos(angularDistance) - kotlin.math.sin(lat1Rad) * kotlin.math.sin(lat2Rad)
+        val lon2Rad = lon1Rad + atan2(
+            sin(bearingRad) * sin(angularDistance) * cos(lat1Rad),
+            cos(angularDistance) - sin(lat1Rad) * sin(lat2Rad)
         )
 
         return GpsCoordinate(

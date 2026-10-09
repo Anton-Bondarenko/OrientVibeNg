@@ -35,8 +35,9 @@ data class CalibrationPoint(
  */
 data class MapCalibration(
     val pointA: CalibrationPoint,
-    val pointB: CalibrationPoint,
-    val scaleMetersPerMap: Double,  // meters per image-pixel at the map
+    val pointB: CalibrationPoint? = null,
+    val scaleMetersPerMapX: Double,  // meters per image-pixel at the map
+    val scaleMetersPerMapY: Double,  // meters per image-pixel at the map
     val bearingDegrees: Float,       // angle of the image Y-axis relative to true north
     val magneticDeclination: Float = 0f,   // magnetic declination at calibration location (degrees, positive = east)
     val physicalDeclination: Float = 0f,   // original magnetic declination before any coordinate flip adjustment
@@ -81,7 +82,8 @@ data class GpsState(
     val isTracking: Boolean = false,
     // Производные поля — вычисляются при привязке GPS к карте
     val routeDistance: Double? = null,       // расстояние маршрута в метрах (масштаб карты)
-    val mapScale: Double? = null,            // масштаб карты (метры на пиксель)
+    val mapScaleX: Double? = null,            // масштаб карты
+    val mapScaleY: Double? = null,
     val originalStartGps: GpsCoordinate? = null  // исходная GPS точка старта для повторной калибровки
 ) {
     /**

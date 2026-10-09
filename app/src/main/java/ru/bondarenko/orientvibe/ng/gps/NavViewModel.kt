@@ -8,9 +8,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.model.GpsCoordinate
 import ru.bondarenko.orientvibe.ng.model.GpsState
-import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.model.MapCalibration
 
 /**
@@ -42,12 +42,13 @@ class NavViewModel(
                 val state = _gpsState.value
                 val hasBothCalibrations = state.startCalibrated && state.finishCalibrated
                 // Обновляем трек при каждом GPS-обновлении
-                val newTrackPoints = if (trackRecorder.getTrackData().isTracking && managerState.currentFix != null) {
-                    trackRecorder.recordPoint(managerState.currentFix, calibration)
-                    trackRecorder.getTrackData().trackPoints
-                } else {
-                    state.trackPoints
-                }
+                val newTrackPoints =
+                    if (trackRecorder.getTrackData().isTracking && managerState.currentFix != null) {
+                        trackRecorder.recordPoint(managerState.currentFix, calibration)
+                        trackRecorder.getTrackData().trackPoints
+                    } else {
+                        state.trackPoints
+                    }
                 _gpsState.value = state.copy(
                     isGpsEnabled = managerState.isGpsEnabled,
                     currentFix = managerState.currentFix,
@@ -73,14 +74,18 @@ class NavViewModel(
                 } else {
                     0.0
                 }
-                val derivedMapScale = if (calibration != null) calibration!!.scaleMetersPerMap else 0.0
+                val derivedMapScaleX =
+                    if (calibration != null) calibration!!.scaleMetersPerMapX else 0.0
+                val derivedMapScaleY =
+                    if (calibration != null) calibration!!.scaleMetersPerMapY else 0.0
 
                 _gpsState.value = state.copy(
                     trackPoints = trackState.trackPoints,
                     totalDistance = trackState.totalDistance,
                     isTracking = trackState.isTracking,
                     routeDistance = derivedRouteDistance.takeIf { it > 0.0 },
-                    mapScale = derivedMapScale.takeIf { it > 0.0 },
+                    mapScaleX = derivedMapScaleX.takeIf { it > 0.0 },
+                    mapScaleY = derivedMapScaleY.takeIf { it > 0.0 },
                     autoBindActive = _autoBindActive
                 )
             }
@@ -99,8 +104,14 @@ class NavViewModel(
 
     // ── GPS Control ──
 
-    fun startGps() { gpsManager.startGpsUpdates() }
-    fun stopGps() { gpsManager.stopGpsUpdates() }
+    fun startGps() {
+        gpsManager.startGpsUpdates()
+    }
+
+    fun stopGps() {
+        gpsManager.stopGpsUpdates()
+    }
+
     fun isGpsEnabled(): Boolean = gpsManager.isGpsEnabled()
 
     // ── Calibration ──
@@ -123,7 +134,6 @@ class NavViewModel(
             finishCalibrated = false
         )
     }
-
 
 
     // ── Auto-Bind GPS Mode (привязка "Здесь") ──
@@ -183,7 +193,11 @@ class NavViewModel(
         return MapCalibrationUtils.magneticBearing(from, to, declination)
     }
 
-    fun calculateDestinationCoordinate(start: GpsCoordinate, bearingMagnetic: Double, distanceMeters: Double): GpsCoordinate {
+    fun calculateDestinationCoordinate(
+        start: GpsCoordinate,
+        bearingMagnetic: Double,
+        distanceMeters: Double
+    ): GpsCoordinate {
         val earthRadius = 6371000.0
         val angularDistance = distanceMeters / earthRadius
         val bearingRad = Math.toRadians(bearingMagnetic)
@@ -192,24 +206,39 @@ class NavViewModel(
 
         val lat2Rad = kotlin.math.asin(
             kotlin.math.sin(lat1Rad) * kotlin.math.cos(angularDistance) +
-            kotlin.math.cos(lat1Rad) * kotlin.math.sin(angularDistance) * kotlin.math.cos(bearingRad)
+                    kotlin.math.cos(lat1Rad) * kotlin.math.sin(angularDistance) * kotlin.math.cos(
+                bearingRad
+            )
         )
         val lon2Rad = lon1Rad + kotlin.math.atan2(
             kotlin.math.sin(bearingRad) * kotlin.math.sin(angularDistance) * kotlin.math.cos(lat1Rad),
             kotlin.math.cos(angularDistance) - kotlin.math.sin(lat1Rad) * kotlin.math.sin(lat2Rad)
         )
-        return GpsCoordinate(latitude = Math.toDegrees(lat2Rad), longitude = Math.toDegrees(lon2Rad))
+        return GpsCoordinate(
+            latitude = Math.toDegrees(lat2Rad),
+            longitude = Math.toDegrees(lon2Rad)
+        )
     }
 
     // ── Track Recording ──
 
-    fun startTracking() { trackRecorder.startTracking() }
-    fun stopTracking() { trackRecorder.stopTracking() }
+    fun startTracking() {
+        trackRecorder.startTracking()
+    }
+
+    fun stopTracking() {
+        trackRecorder.stopTracking()
+    }
+
     fun recordTrackPoint() {
         val fix = _gpsState.value.currentFix ?: return
         trackRecorder.recordPoint(fix, calibration)
     }
-    fun clearTrack() { trackRecorder.clearTrack() }
+
+    fun clearTrack() {
+        trackRecorder.clearTrack()
+    }
+
     fun getTrackData() = trackRecorder.getTrackData()
 
     /** Применяет новую калибровку из MapCalibrationUtils (вся логика в Utils). */
