@@ -42,11 +42,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.res.ResourcesCompat
+import ru.bondarenko.orientvibe.ng.R
+
+
 import androidx.lifecycle.viewmodel.compose.viewModel
 import ru.bondarenko.orientvibe.ng.gps.NavViewModel
 import ru.bondarenko.orientvibe.ng.image.rememberCameraSource
@@ -76,7 +82,7 @@ fun AutoModeScreen() {
     val mapState by autoVm.mapState.collectAsState()
     val moveReadyAlert by autoVm.moveReadyAlert.collectAsState()
     val telemetryPoints by autoVm.telemetryPoints.collectAsState()
-    val currentControl by autoVm.currentControl.collectAsState()
+    val movementState by autoVm.movementState.collectAsState()
 
     // GPS состояние — источник для трека, калибровки и текущего фиксa
     val gps by navVm.gpsState.collectAsState()
@@ -93,13 +99,13 @@ fun AutoModeScreen() {
     var isScaling by remember { mutableStateOf(false) }
 
     // Кнопка "Здесь" активна только когда currentControl совпадает с номером найденного CP
-    val hasMatchingCp = mapState.controlsBoundingBoxes.any { it.number == currentControl.num }
+    val hasMatchingCp = mapState.controlsBoundingBoxes.any { it.number == movementState.currentControl.num }
     val isBindEnabled = !isBinding && hasMatchingCp
 
     // Состояние первой привязки и кнопки "масштаб"
     val hasBoundCp = autoVm.hasBoundCp
     val detectedCpNumbers = autoVm.getDetectedCpNumbers()
-    val targetExistsInDetected = detectedCpNumbers.contains(currentControl.num)
+    val targetExistsInDetected = detectedCpNumbers.contains(movementState.currentControl.num)
 
     // "масштаб" активна когда: есть привязка, текущий CP ≠ привязанный CP, и выбранный CP найден на карте
     val isScaleEnabled =
@@ -496,7 +502,7 @@ fun AutoModeScreen() {
 
                         // Редактируемое число — отображаем currentControl.value, вводим вручную или кнопками +/−
                         OutlinedTextField(
-                            value = currentControl.num.toString(),
+                            value = movementState.currentControl.num.toString(),
                             onValueChange = { raw ->
                                 val filtered = raw.filter { it.isDigit() }
                                 if (filtered.isEmpty() || filtered.toIntOrNull() != null) {
@@ -543,9 +549,9 @@ fun AutoModeScreen() {
                             val bindGreen = !hasBoundCp
                             androidx.compose.material3.Button(
                                 onClick = {
-                                    autoVm.setCurrentControl(currentControl.num)
+                                    autoVm.setCurrentControl(movementState.currentControl.num)
                                     isBindEnabled && run {
-                                        pendingBind = currentControl.num
+                                        pendingBind = movementState.currentControl.num
                                         true
                                     }
                                 },
@@ -561,27 +567,13 @@ fun AutoModeScreen() {
                                 ),
                                 modifier = Modifier.weight(0.5f).aspectRatio(1f)
                             ) {
-                                Box(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.MyLocation,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(28.dp),
-                                            tint = Color.White
-                                        )
-                                        Text(
-                                            text = "A",
-                                            fontSize = 20.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color.White
-                                        )
-                                    }
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    Icon(
+                                        painter = androidx.compose.ui.res.painterResource(R.drawable.icon_here),
+                                        contentDescription = "Здесь (A)",
+                                        modifier = Modifier.fillMaxSize().padding(6.dp),
+                                        tint = Color.Unspecified
+                                    )
                                 }
                             }
 
@@ -589,7 +581,7 @@ fun AutoModeScreen() {
                             val scaleGreen = hasBoundCp && isScaleEnabled
                             androidx.compose.material3.Button(
                                 onClick = {
-                                    autoVm.setCurrentControl(currentControl.num)
+                                    autoVm.setCurrentControl(movementState.currentControl.num)
                                     isScaleEnabled && run {
                                         pendingScale = true
                                         true
@@ -607,27 +599,13 @@ fun AutoModeScreen() {
                                 ),
                                 modifier = Modifier.weight(0.5f).aspectRatio(1f)
                             ) {
-                                Box(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(2.dp)
-                                    ) {
-                                        Text(
-                                            text = "B",
-                                            fontSize = 20.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isScaleEnabled) Color.White else Color.Gray.copy(alpha = 0.5f)
-                                        )
-                                        Text(
-                                            text = ":1000",
-                                            fontSize = 16.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = if (isScaleEnabled) Color.White.copy(alpha = 0.85f) else Color.Gray.copy(alpha = 0.4f)
-                                        )
-                                    }
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    Icon(
+                                        painter = androidx.compose.ui.res.painterResource(R.drawable.icon_scale),
+                                        contentDescription = "Масштаб (B)",
+                                        modifier = Modifier.fillMaxSize().padding(6.dp),
+                                        tint = Color.Unspecified
+                                    )
                                 }
                             }
                         }
@@ -637,3 +615,4 @@ fun AutoModeScreen() {
         }
     }
 }
+

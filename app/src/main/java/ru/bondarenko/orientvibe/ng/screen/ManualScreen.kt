@@ -48,6 +48,7 @@ import ru.bondarenko.orientvibe.ng.ui.components.MapDragListener
 import ru.bondarenko.orientvibe.ng.ui.components.MapTapListener
 import ru.bondarenko.orientvibe.ng.ui.components.SubsamplingMapView
 import ru.bondarenko.orientvibe.ng.ui.components.TopInfoPanel
+import ru.bondarenko.orientvibe.ng.R
 import ru.bondarenko.orientvibe.ng.viewmodel.MapViewModel
 
 private const val GPS_ACCURACY_LOW_THRESHOLD = 30f
@@ -546,7 +547,7 @@ fun MainScreen(
                     PanelButton(
                         id = "here_start",
                         text = "Здесь старт",
-                        icon = TargetIcon,
+                        iconRes = R.drawable.icon_here,
                         isActive = gpsState.startCalibrated,
                         onClick = {
                             val fix = gpsState.currentFix
@@ -561,7 +562,7 @@ fun MainScreen(
                     PanelButton(
                         id = "here_finish",
                         text = "Здесь финиш",
-                        icon = TargetIcon,
+                        iconRes = R.drawable.icon_here,
                         isActive = gpsState.finishCalibrated,
                         onClick = {
                             val fix = gpsState.currentFix
@@ -582,7 +583,7 @@ fun MainScreen(
                     PanelButton(
                         id = "auto_here",
                         text = "Здесь",
-                        icon = TargetIcon,
+                        iconRes = R.drawable.icon_here,
                         isActive = autoBindActive,
                         onClick = {
                             navViewModel.setAutoBindActive(!autoBindActive)

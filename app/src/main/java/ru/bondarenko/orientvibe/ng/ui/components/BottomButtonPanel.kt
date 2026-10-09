@@ -45,6 +45,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -227,34 +228,44 @@ private fun PanelButton(
             modifier = Modifier.fillMaxHeight(),
             contentAlignment = Alignment.Center
         ) {
-            if (button.icon != null && button.text.isNotEmpty()) {
+            // Shared icon tint logic
+            val isThisButtonCalibrated = when (button.id) {
+                "here_start", "here_finish" -> button.isActive
+                else -> false
+            }
+            val isThisButtonActive = when (button.id) {
+                "start" -> placingMode == PlacingMode.PLACING_START
+                "finish" -> placingMode == PlacingMode.PLACING_FINISH
+                else -> false
+            }
+            val iconTint = when {
+                !button.enabled -> DarkDisabledText
+                isThisButtonCalibrated -> Color(0xFF4CAF50) // green
+                isThisButtonActive -> Color(ControlsRed)
+                else -> contentColor
+            }
+
+            if ((button.icon != null || button.iconRes != null) && button.text.isNotEmpty()) {
                 // Show both icon and text in a column
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    // Determine icon tint: calibrated = green, active = red, default = contentColor
-                    val isThisButtonCalibrated = when (button.id) {
-                        "here_start", "here_finish" -> button.isActive
-                        else -> false
+                    if (button.icon != null) {
+                        Icon(
+                            imageVector = button.icon,
+                            contentDescription = null,
+                            tint = iconTint,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    } else {
+                        Icon(
+                            painter = painterResource(button.iconRes!!),
+                            contentDescription = null,
+                            tint = Color.Unspecified,
+                            modifier = Modifier.size(36.dp)
+                        )
                     }
-                    val isThisButtonActive = when (button.id) {
-                        "start" -> placingMode == PlacingMode.PLACING_START
-                        "finish" -> placingMode == PlacingMode.PLACING_FINISH
-                        else -> false
-                    }
-                    val iconTint = when {
-                        !button.enabled -> DarkDisabledText
-                        isThisButtonCalibrated -> Color(0xFF4CAF50) // green
-                        isThisButtonActive -> Color(ControlsRed)
-                        else -> contentColor
-                    }
-                    Icon(
-                        imageVector = button.icon,
-                        contentDescription = null,
-                        tint = iconTint,
-                        modifier = Modifier.size(24.dp)
-                    )
                     Text(
                         text = button.text,
                         fontWeight = FontWeight.Medium,
@@ -263,29 +274,23 @@ private fun PanelButton(
                         modifier = Modifier.padding(top = 2.dp)
                     )
                 }
-            } else if (button.icon != null) {
+            } else if (button.icon != null || button.iconRes != null) {
                 // Show only icon
-                val isThisButtonCalibrated = when (button.id) {
-                    "here_start", "here_finish" -> button.isActive
-                    else -> false
+                if (button.icon != null) {
+                    Icon(
+                        imageVector = button.icon,
+                        contentDescription = null,
+                        tint = iconTint,
+                        modifier = Modifier.size(40.dp)
+                    )
+                } else {
+                    Icon(
+                        painter = painterResource(button.iconRes!!),
+                        contentDescription = null,
+                        tint = Color.Unspecified,
+                        modifier = Modifier.size(40.dp)
+                    )
                 }
-                val isThisButtonActive = when (button.id) {
-                    "start" -> placingMode == PlacingMode.PLACING_START
-                    "finish" -> placingMode == PlacingMode.PLACING_FINISH
-                    else -> false
-                }
-                val iconTint = when {
-                    !button.enabled -> DarkDisabledText
-                    isThisButtonCalibrated -> Color(0xFF4CAF50) // green
-                    isThisButtonActive -> Color(ControlsRed)
-                    else -> contentColor
-                }
-                Icon(
-                    imageVector = button.icon,
-                    contentDescription = null,
-                    tint = iconTint,
-                    modifier = Modifier.size(40.dp)
-                )
             } else {
                 Text(
                     text = button.text,

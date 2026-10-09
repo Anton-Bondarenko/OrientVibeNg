@@ -49,6 +49,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.onnxruntime.android)
     implementation(libs.coil.compose)
+    implementation(libs.coil.svg)
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.accompanist.permissions)
     implementation("androidx.exifinterface:exifinterface:1.3.7")

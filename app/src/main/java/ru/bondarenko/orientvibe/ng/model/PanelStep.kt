@@ -4,6 +4,7 @@ data class PanelButton(
     val id: String,
     val text: String,
     val icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    val iconRes: Int? = null,
     val onClick: () -> Unit,
     val enabled: Boolean = true,
     val isActive: Boolean = false

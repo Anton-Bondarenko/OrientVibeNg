@@ -75,6 +75,5 @@ data class MoveReadyAlert(
 /** Текущая выбранная контрольная точка (редактируемое число). */
 data class CurrentControl(
     val num: Int = 1,
-    val boundingBox: BoundingBox? = null,
-    val gpsCoordinate: GpsCoordinate? = null
+    val boundingBox: BoundingBox? = null
 )
