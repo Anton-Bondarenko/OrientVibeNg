@@ -13,12 +13,12 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 interface MapTapListener {
-    fun onMapTap(relativeX: Float, relativeY: Float)
+    fun onMapTap(relativeX: Double, relativeY: Double)
 }
 
 interface MapDragListener {
-    fun onStartPointDragged(relativeX: Float, relativeY: Float)
-    fun onFinishPointDragged(relativeX: Float, relativeY: Float)
+    fun onStartPointDragged(relativeX: Double, relativeY: Double)
+    fun onFinishPointDragged(relativeX: Double, relativeY: Double)
 }
 
 private const val HIT_RADIUS = 40f // view-space pixels for tap/drag detection
@@ -29,7 +29,7 @@ class RouteOverlay {
     var finishPoint: RoutePoint? = null
     var tapListener: MapTapListener? = null
     var dragListener: MapDragListener? = null
-    var magneticBearing: Float? = null
+    var magneticBearing: Double? = null
 
     private var dragging: Dragging = Dragging.NONE
 
@@ -71,14 +71,14 @@ class RouteOverlay {
     }
 
     // Source-to-view coordinate conversion — set externally
-    var sourceToViewCoord: ((Float, Float) -> android.graphics.PointF?)? = null
-    var viewToSourceCoord: ((Float, Float) -> android.graphics.PointF?)? = null
+    var sourceToViewCoord: ((Double, Double) -> android.graphics.PointF?)? = null
+    var viewToSourceCoord: ((Double, Double) -> android.graphics.PointF?)? = null
 
     private fun sourceToView(p: RoutePoint): android.graphics.PointF? {
         return sourceToViewCoord?.invoke(p.x, p.y)
     }
 
-    private fun hitTestStart(vx: Float, vy: Float): Boolean {
+    private fun hitTestStart(vx: Double, vy: Double): Boolean {
         val sp = startPoint ?: return false
         val vs = sourceToView(sp) ?: return false
         val dx = vx - vs.x
@@ -86,7 +86,7 @@ class RouteOverlay {
         return dx * dx + dy * dy < HIT_RADIUS * HIT_RADIUS
     }
 
-    private fun hitTestFinish(vx: Float, vy: Float): Boolean {
+    private fun hitTestFinish(vx: Double, vy: Double): Boolean {
         val fp = finishPoint ?: return false
         val vf = sourceToView(fp) ?: return false
         val dx = vx - vf.x
@@ -101,8 +101,8 @@ class RouteOverlay {
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
                 dragging = when {
-                    hitTestStart(vx, vy) -> Dragging.START
-                    hitTestFinish(vx, vy) -> Dragging.FINISH
+                    hitTestStart(vx.toDouble(), vy.toDouble()) -> Dragging.START
+                    hitTestFinish(vx.toDouble(), vy.toDouble()) -> Dragging.FINISH
                     else -> Dragging.NONE
                 }
                 return dragging != Dragging.NONE
@@ -111,13 +111,13 @@ class RouteOverlay {
             MotionEvent.ACTION_MOVE -> {
                 if (dragging != Dragging.NONE) {
                     val viewToSource = viewToSourceCoord ?: return true
-                    val sourcePt = viewToSource(vx, vy)
+                    val sourcePt = viewToSource(vx.toDouble(), vy.toDouble())
                     if (sourcePt != null) {
                         val relX = sourcePt.x
                         val relY = sourcePt.y
                         when (dragging) {
-                            Dragging.START -> dragListener?.onStartPointDragged(relX, relY)
-                            Dragging.FINISH -> dragListener?.onFinishPointDragged(relX, relY)
+                            Dragging.START -> dragListener?.onStartPointDragged(relX.toDouble(), relY.toDouble())
+                            Dragging.FINISH -> dragListener?.onFinishPointDragged(relX.toDouble(), relY.toDouble())
                             Dragging.NONE -> {}
                         }
                     }
@@ -132,9 +132,9 @@ class RouteOverlay {
                 }
                 // Forward as tap
                 val viewToSource = viewToSourceCoord ?: return false
-                val sourcePt = viewToSource(vx, vy)
+                val sourcePt = viewToSource(vx.toDouble(), vy.toDouble())
                 if (sourcePt != null) {
-                    tapListener?.onMapTap(sourcePt.x, sourcePt.y)
+                    tapListener?.onMapTap(sourcePt.x.toDouble(), sourcePt.y.toDouble())
                     return true
                 }
             }
@@ -166,27 +166,27 @@ class RouteOverlay {
 
             val dxLine = viewF.x - viewS.x
             val dyLine = viewF.y - viewS.y
-            val len = sqrt((dxLine * dxLine + dyLine * dyLine).toDouble()).toFloat()
+            val len = sqrt((dxLine * dxLine + dyLine * dyLine).toDouble()).toDouble()
             if (len > 0) {
                 val ux = dxLine / len
                 val uy = dyLine / len
 
-                val arrowSize = 30f
-                val arrowAngle = 0.5f
+                val arrowSize = 30.0
+                val arrowAngle = 0.5
 
                 val path = Path().apply {
-                    moveTo(midX + ux * arrowSize, midY + uy * arrowSize)
+                    moveTo((midX + ux * arrowSize).toFloat(), (midY + uy * arrowSize).toFloat())
                     lineTo(
-                        midX - ux * arrowSize * cos(arrowAngle.toDouble()).toFloat() -
-                                uy * arrowSize * sin(arrowAngle.toDouble()).toFloat(),
-                        midY - uy * arrowSize * cos(arrowAngle.toDouble()).toFloat() +
-                                ux * arrowSize * sin(arrowAngle.toDouble()).toFloat()
+                        (midX - ux * arrowSize * cos(arrowAngle.toDouble()).toDouble() -
+                                uy * arrowSize * sin(arrowAngle.toDouble()).toDouble()).toFloat(),
+                        (midY - uy * arrowSize * cos(arrowAngle.toDouble()).toDouble() +
+                                ux * arrowSize * sin(arrowAngle.toDouble()).toDouble()).toFloat()
                     )
                     lineTo(
-                        midX - ux * arrowSize * cos(arrowAngle.toDouble()).toFloat() +
-                                uy * arrowSize * sin(arrowAngle.toDouble()).toFloat(),
-                        midY - uy * arrowSize * cos(arrowAngle.toDouble()).toFloat() -
-                                ux * arrowSize * sin(arrowAngle.toDouble()).toFloat()
+                        (midX - ux * arrowSize * cos(arrowAngle.toDouble()).toDouble() +
+                                uy * arrowSize * sin(arrowAngle.toDouble()).toDouble()).toFloat(),
+                        (midY - uy * arrowSize * cos(arrowAngle.toDouble()).toDouble() -
+                                ux * arrowSize * sin(arrowAngle.toDouble()).toDouble()).toFloat()
                     )
                     close()
                 }
@@ -204,14 +204,14 @@ class RouteOverlay {
                 atan2(
                     ((fp.y - sp.y)).toDouble(),
                     ((fp.x - sp.x)).toDouble()
-                ).toFloat()
+                ).toDouble()
             } else {
-                -(Math.PI.toFloat() / 2)
+                -(Math.PI.toDouble() / 2)
             }
 
             val size = 30f
-            val cosA = cos(angle.toDouble()).toFloat()
-            val sinA = sin(angle.toDouble()).toFloat()
+            val cosA = cos(angle.toDouble()).toDouble()
+            val sinA = sin(angle.toDouble()).toDouble()
 
             val h = size * 1.5f
             val w = size * 0.87f
@@ -222,21 +222,21 @@ class RouteOverlay {
             val p3x = -h * 2 / 3
             val p3y = w
 
-            fun rotate(x: Float, y: Float): Pair<Float, Float> {
+            fun rotate(x: Double, y: Double): Pair<Double, Double> {
                 return Pair(
                     viewS.x + x * cosA - y * sinA,
                     viewS.y + x * sinA + y * cosA
                 )
             }
 
-            val (r1x, r1y) = rotate(p1x, p1y)
-            val (r2x, r2y) = rotate(p2x, p2y)
-            val (r3x, r3y) = rotate(p3x, p3y)
+            val (r1x, r1y) = rotate(p1x.toDouble(), p1y.toDouble())
+            val (r2x, r2y) = rotate(p2x.toDouble(), p2y.toDouble())
+            val (r3x, r3y) = rotate(p3x.toDouble(), p3y.toDouble())
 
             val path = Path().apply {
-                moveTo(r1x, r1y)
-                lineTo(r2x, r2y)
-                lineTo(r3x, r3y)
+                moveTo(r1x.toFloat(), r1y.toFloat())
+                lineTo(r2x.toFloat(), r2y.toFloat())
+                lineTo(r3x.toFloat(), r3y.toFloat())
                 close()
             }
             canvas.drawPath(path, startPaint)

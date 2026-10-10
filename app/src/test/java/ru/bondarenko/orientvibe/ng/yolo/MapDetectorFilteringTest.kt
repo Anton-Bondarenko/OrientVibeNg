@@ -14,7 +14,7 @@ import ru.bondarenko.orientvibe.ng.model.BoundingBox
 class MapDetectorFilteringTest {
 
     /** Compute median — mirrors MapDetector.median logic */
-    private fun computeMedian(values: List<Float>): Float {
+    private fun computeMedian(values: List<Double>): Double {
         if (values.isEmpty()) throw IllegalArgumentException("empty")
         val sorted = values.sorted()
         val mid = sorted.size / 2
@@ -128,7 +128,7 @@ class MapDetectorFilteringTest {
 
     @Test
     fun filterControls_boundaryAt10Percent_filters() {
-        // Direct area construction avoids sqrt float-precision issues:
+        // Direct area construction avoids sqrt Double-precision issues:
         // baseBox area=0.01, highBox area=0.015 → diff = (0.015-0.01)/0.01 = 0.5 >= 0.1 → FILTERED
         val baseBox = BoundingBox(0.2f, 0.5f, 0.1f, 0.1f, 1f, "control_point")       // area=0.01
         val highBox = BoundingBox(0.8f, 0.5f, 0.1f, 0.15f, 1f, "control_point")       // area=0.015
@@ -193,7 +193,7 @@ class MapDetectorFilteringTest {
 
     @Test
     fun filterNumbers_boundaryAt25Percent_filters() {
-        // Direct height construction avoids float-precision edge cases:
+        // Direct height construction avoids Double-precision edge cases:
         // medH=0.1, highH=0.14 → diff=(0.14-0.1)/0.1 = 0.4 >= 0.25 → FILTERED
         val normalBox = BoundingBox(0.3f, 0.5f, 0.1f, 0.1f, 1f, "number")     // h=0.1
         val highBox   = BoundingBox(0.7f, 0.5f, 0.1f, 0.14f, 1f, "number")     // h=0.14

@@ -40,15 +40,15 @@ private val DataGreen = Color(0xFF4CAF50)
 fun TopInfoPanel(
     message: String,
     isVisible: Boolean = true,
-    progress: Float = 0f,
+    progress: Double = 0.0,
     isProcessing: Boolean = false,
     progressMessage: String? = null,
-    azimuth: Float? = null,
+    azimuth: Double? = null,
     gpsState: GpsState? = null,
     routeDistance: Double? = null,  // meters
     currentDistanceFromStart: Double? = null, // meters from start point
     mapScale: Double? = null,       // meters per pixel
-    magneticBearing: Float? = null, // current magnetic heading from GPS
+    magneticBearing: Double? = null, // current magnetic heading from GPS
     modifier: Modifier = Modifier
 ) {
     val alpha by animateFloatAsState(
@@ -104,7 +104,7 @@ fun TopInfoPanel(
                 if (isProcessing) {
                     Spacer(modifier = Modifier.height(4.dp))
                     LinearProgressIndicator(
-                        progress = { progress },
+                        progress = { progress.toFloat() },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(6.dp),

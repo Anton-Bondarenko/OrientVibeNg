@@ -72,7 +72,7 @@ class TrackTrimInvarianceTest {
             fix = GpsFix(
                 coordinate = GpsCoordinate(gpsA.latitude + i * 0.0001, gpsA.longitude + i * 0.0001),
                 accuracy = 5f,
-                bearing = (i * 10f).toFloat(),
+                bearing = (i * 10f).toDouble(),
                 speed = 1f,
                 timestamp = System.currentTimeMillis() + i * 1000L
             )
@@ -147,7 +147,7 @@ class TrackTrimInvarianceTest {
             val fix = GpsFix(
                 coordinate = GpsCoordinate(50.45 + i * 0.0001, 30.5 + i * 0.0001),
                 accuracy = 5f,
-                bearing = (i * 10f).toFloat(),
+                bearing = (i * 10f).toDouble(),
                 speed = 1f,
                 timestamp = System.currentTimeMillis() + i * 1000L
             )

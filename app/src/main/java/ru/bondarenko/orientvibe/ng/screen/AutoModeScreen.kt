@@ -239,7 +239,7 @@ fun AutoModeScreen() {
     // Map tap listener (для ручной корректировки точек)
     val tapListener = remember {
         object : MapTapListener {
-            override fun onMapTap(relativeX: Float, relativeY: Float) {
+            override fun onMapTap(relativeX: Double, relativeY: Double) {
                 // Auto mode doesn't use route points - tap is no-op
             }
         }
@@ -248,8 +248,8 @@ fun AutoModeScreen() {
     // Map drag listener (для перемещения точек маршрута)
     val dragListener = remember {
         object : MapDragListener {
-            override fun onStartPointDragged(relativeX: Float, relativeY: Float) {}
-            override fun onFinishPointDragged(relativeX: Float, relativeY: Float) {}
+            override fun onStartPointDragged(relativeX: Double, relativeY: Double) {}
+            override fun onFinishPointDragged(relativeX: Double, relativeY: Double) {}
         }
     }
 
@@ -275,7 +275,7 @@ fun AutoModeScreen() {
                 northAngle = mapState.northAngle,
                 onNorthAngleChanged = { angle -> autoVm.updateNorthAngle(angle) },
                 onNorthAngleReset = { autoVm.resetNorthAngle() },
-                mapRotation = 0f,
+                mapRotation = 0.0,
                 // Трек отображаем из telemetryPoints авто-режима — они не сбрасываются при повторной калибровке
                 trackPoints = autoVm.getTelemetryTrackPoints(),
                 calibrationVersionTrigger = calibrationVersion, // триггер пересчёта на каждом recalibration
@@ -286,8 +286,8 @@ fun AutoModeScreen() {
                 calibrationPointBGps = gps.calibration?.pointB?.gps,
                 calibrationImageDims = mapState.bitmap?.let { bm ->
                     Pair(
-                        bm.width.toFloat(),
-                        bm.height.toFloat()
+                        bm.width.toDouble(),
+                        bm.height.toDouble()
                     )
                 },
                 onAutoBindTap = { relX, relY -> false },
@@ -349,7 +349,7 @@ fun AutoModeScreen() {
                             modifier = Modifier.align(Alignment.CenterHorizontally)
                         )
                         LinearProgressIndicator(
-                            progress = { moveReadyAlert.progress },
+                            progress = { moveReadyAlert.progress.toFloat() },
                             color = progressColor,
                             trackColor = GreenReadyDark,
                             modifier = Modifier.fillMaxWidth()

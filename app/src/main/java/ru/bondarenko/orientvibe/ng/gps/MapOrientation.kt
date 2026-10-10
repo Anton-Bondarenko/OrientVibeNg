@@ -26,8 +26,8 @@ object MapOrientation {
      *
      * northAngle = -(rawMagneticBearing) where rawMagneticBearing = trueBearing - declination.
      */
-    fun computeNorthAngleForMagneticAlignment(calibration: ru.bondarenko.orientvibe.ng.model.MapCalibration): Float {
-        return (-calibration.bearingDegrees).toFloat()
+    fun computeNorthAngleForMagneticAlignment(calibration: ru.bondarenko.orientvibe.ng.model.MapCalibration): Double {
+        return (-calibration.bearingDegrees).toDouble()
     }
 
     /**
@@ -44,8 +44,8 @@ object MapOrientation {
         calibration: ru.bondarenko.orientvibe.ng.model.MapCalibration,
         gps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate,
         fraction: Double, // 0..1 along A→B line in image space
-        imageDimensions: Pair<Float, Float>
-    ): Float? {
+        imageDimensions: Pair<Double, Double>
+    ): Double? {
         val rel = MapGeometry.gpsToImageTrueNorth(gps, calibration) ?: return null
 
         // Position of GPS point in unrotated absolute pixels (relative to origin 0,0)
@@ -84,7 +84,7 @@ object MapOrientation {
         val currentAngle = kotlin.math.atan2(dy0, dx0)
         val targetAngle = kotlin.math.atan2(targetY - py, targetX - px)
         val angleDiff = (targetAngle - currentAngle) * 180.0 / PI
-        return angleDiff.toFloat()
+        return angleDiff.toDouble()
     }
 
     // ─── Compose helper for creating calibration with orientation info ───
@@ -92,16 +92,16 @@ object MapOrientation {
     /** Result of computing a full oriented calibration. */
     data class OrientedCalibration(
         val calibration: ru.bondarenko.orientvibe.ng.model.MapCalibration,
-        val northAngleDeg: Float,           // degrees; positive = clockwise rotation of map Y-axis from screen-up
-        val trueBearingDeg: Float,         // geographic bearing from A to B
-        val rawMagneticBearingDeg: Float,  // compass bearing from A to B (true - declination)
+        val northAngleDeg: Double,           // degrees; positive = clockwise rotation of map Y-axis from screen-up
+        val trueBearingDeg: Double,         // geographic bearing from A to B
+        val rawMagneticBearingDeg: Double,  // compass bearing from A to B (true - declination)
         val scaleMetersPerPixelX: Double,     // meters per map
         val scaleMetersPerPixelY: Double     //
     ) {
         /** Image position of point B in absolute pixels (for given imageDimensions). */
-        fun pointBImagePos(imageDimensions: Pair<Float, Float>): Pair<Float, Float> {
+        fun pointBImagePos(imageDimensions: Pair<Double, Double>): Pair<Double, Double> {
             if (calibration.pointB == null){
-                return Pair(0f, 0f)
+                return Pair(0.0, 0.0)
             } else {
                 return Pair(
                     calibration.pointB.imageX * imageDimensions.first,
@@ -111,7 +111,7 @@ object MapOrientation {
         }
 
         /** Image position of point A in absolute pixels. */
-        fun pointAImagePos(imageDimensions: Pair<Float, Float>): Pair<Float, Float> {
+        fun pointAImagePos(imageDimensions: Pair<Double, Double>): Pair<Double, Double> {
             return Pair(
                 calibration.pointA.imageX * imageDimensions.first,
                 calibration.pointA.imageY * imageDimensions.second
@@ -119,7 +119,7 @@ object MapOrientation {
         }
 
         /** Distance between A and B in absolute pixels. */
-        fun distanceABPixels(imageDimensions: Pair<Float, Float>): Double {
+        fun distanceABPixels(imageDimensions: Pair<Double, Double>): Double {
             val a = pointAImagePos(imageDimensions)
             val b = pointBImagePos(imageDimensions)
             return kotlin.math.sqrt(
@@ -131,7 +131,7 @@ object MapOrientation {
         /** Convert GPS coordinate to absolute image pixels, applying magnetic alignment. */
         fun gpsToImageAbs(
             gps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate
-        ): Pair<Float, Float>? {
+        ): Pair<Double, Double>? {
             return MapCalibrationUtils.gpsToImage(
                 gps,
                 calibration,
@@ -143,12 +143,12 @@ object MapOrientation {
     /** Create an oriented calibration from two GPS-to-image mapping points. */
     fun create(
         pointAGps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate,
-        pointAImageRel: Pair<Float, Float>,  // relative (0..1) on the image
+        pointAImageRel: Pair<Double, Double>,  // relative (0..1) on the image
         pointBGps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate,
-        pointBImageRel: Pair<Float, Float>,  // relative (0..1) on the image
-        magneticDeclination: Float
+        pointBImageRel: Pair<Double, Double>,  // relative (0..1) on the image
+        magneticDeclination: Double
     ): OrientedCalibration? {
-        val cal = MapGeometry.computeCalibrationRaw(
+        val cal = MapGeometry.computeCalibrationHard(
             ru.bondarenko.orientvibe.ng.model.CalibrationPoint(
                 pointAGps,
                 pointAImageRel.first,
@@ -164,7 +164,7 @@ object MapOrientation {
 
         val trueBearing = MapGeometry.bearing(pointAGps, pointBGps)
         val rawMagBearing = MapGeometry.magneticBearing(trueBearing, magneticDeclination)
-        val northAngle = (-rawMagBearing).toFloat()
+        val northAngle = (-rawMagBearing).toDouble()
 
         return OrientedCalibration(
             calibration = cal,

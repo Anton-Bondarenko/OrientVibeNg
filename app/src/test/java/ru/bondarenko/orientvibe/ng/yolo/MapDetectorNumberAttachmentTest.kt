@@ -13,11 +13,11 @@ class MapDetectorNumberAttachmentTest {
     // ── Pure-Kotlin mirrors of the Android framework functions used by Stage 2 ──
 
     /** Standard HSV→RGB → Int mirror of android.graphics.Color.HSVToColor */
-    private fun hsvToRgb(h: Float, s: Float, v: Float): Triple<Float, Float, Float> {
+    private fun hsvToRgb(h: Double, s: Double, v: Double): Triple<Double, Double, Double> {
         if (s == 0f) return Triple(v, v, v)
         val hue = if (h < 0f) h + 360f else h % 360f
         val c = v * s
-        val x = c * (1f - kotlin.math.abs((hue / 60f) % 2f - 1f).toFloat())
+        val x = c * (1f - kotlin.math.abs((hue / 60f) % 2f - 1f).toDouble())
         val m = v - c
         val (r1, g1, b1) = when ((hue / 60f).toInt() % 6) {
             0 -> Triple(c, x, 0f)
@@ -32,7 +32,7 @@ class MapDetectorNumberAttachmentTest {
 
     /** Mirror hue-shift color function from ControlPointOverlay */
     private fun detColor(index: Int): Int {
-        val hue = (index.toFloat() * 137.508f) % 360f
+        val hue = (index.toDouble() * 137.508f) % 360f
         val (r, g, b) = hsvToRgb(hue, 0.9f, 0.95f)
         return (-0x1000000) or
                 (((r * 255f).toInt() and 0xFF) shl 16) or
@@ -42,7 +42,7 @@ class MapDetectorNumberAttachmentTest {
 
     /** Mirror textColorForIndex from ControlPointOverlay (+60° hue shift for contrast) */
     private fun textColorForIndex(index: Int): Int {
-        val hue = (index.toFloat() * 137.508f + 60f) % 360f
+        val hue = (index.toDouble() * 137.508f + 60f) % 360f
         val (r, g, b) = hsvToRgb(hue, 1f, 1f)
         return (-0x1000000) or
                 (((r * 255f).toInt() and 0xFF) shl 16) or
@@ -59,12 +59,12 @@ class MapDetectorNumberAttachmentTest {
     ): List<BoundingBox> {
         val matched = controls.toMutableList()
         numbers.forEach { numBox ->
-            var bestDist = Float.MAX_VALUE
+            var bestDist = Double.MAX_VALUE
             var bestIdx = -1
             matched.forEachIndexed { idx, ctrl ->
                 val dx = ctrl.centerX - numBox.centerX
                 val dy = ctrl.centerY - numBox.centerY
-                val dist = kotlin.math.sqrt(dx * dx + dy * dy).toFloat()
+                val dist = kotlin.math.sqrt(dx * dx + dy * dy).toDouble()
                 if (dist < bestDist && dist < 0.05f) {
                     bestDist = dist
                     bestIdx = idx
@@ -164,7 +164,7 @@ class MapDetectorNumberAttachmentTest {
     @Test
     fun detColor_goldenAngleHueShift() {
         val hues = (0..10).map { idx ->
-            (idx.toFloat() * 137.508f) % 360f
+            (idx.toDouble() * 137.508f) % 360f
         }
         // Consecutive hues should advance by ~137.508° (accounting for mod 360 wrap)
         for (i in 1 until hues.size) {

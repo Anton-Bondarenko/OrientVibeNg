@@ -26,6 +26,7 @@ import ru.bondarenko.orientvibe.ng.model.AutoModeTelemetryPoint
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.model.GpsFix
 import ru.bondarenko.orientvibe.ng.model.GpsState
+import ru.bondarenko.orientvibe.ng.model.MapCalibration
 import ru.bondarenko.orientvibe.ng.model.MoveReadyAlert
 import ru.bondarenko.orientvibe.ng.model.MovementState
 import ru.bondarenko.orientvibe.ng.yolo.MapDetectionProgressListener
@@ -33,9 +34,9 @@ import ru.bondarenko.orientvibe.ng.yolo.MapDetectionResult
 import ru.bondarenko.orientvibe.ng.yolo.MapDetector
 
 /** Поворачивает bitmap на заданный угол. */
-private fun Bitmap.rotateBitmap(degrees: Float): Bitmap {
+private fun Bitmap.rotateBitmap(degrees: Double): Bitmap {
     val matrix = Matrix()
-    matrix.postRotate(degrees)
+    matrix.postRotate(degrees.toFloat())
     return Bitmap.createBitmap(this, 0, 0, width, height, matrix, true)
 }
 
@@ -144,7 +145,7 @@ class AutoModeViewModel(
             imageX,
             imageY,
             _mapState.value.northAngle,
-            bitmap.width.toFloat() / bitmap.height,
+            bitmap.width.toDouble() / bitmap.height,
             _calibration?.scaleMetersPerMapX,
             _calibration?.scaleMetersPerMapY
         )
@@ -215,9 +216,7 @@ class AutoModeViewModel(
         val navVm = navVm ?: return Pair(false, "NavViewModel не подключён")
 
         // Должна быть первая привязанная точка
-        val calibration = _calibration?: return Pair(false, "Сначала выполните привязку «Здесь»")
-//        val boundGps = _boundGps ?: return Pair(false, "Сначала выполните привязку «Здесь»")
-//        val boundImagePos = _boundImagePos ?: return Pair(false, "Нет данных первой привязки")
+        val calibration = _calibration ?: return Pair(false, "Сначала выполните привязку «Здесь»")
 
         // Текущий GPS fix — для вычисления текущего направления
         val gpsState = navVm.gpsState.value
@@ -240,33 +239,44 @@ class AutoModeViewModel(
 
         // Создаём точки калибровки и вызываем двухточечную калибровку
         val pointA = ru.bondarenko.orientvibe.ng.model.CalibrationPoint(
-            gps = calibration.pointA.gps, imageX = calibration.pointA.imageX, imageY = calibration.pointA.imageY
+            gps = calibration.pointA.gps,
+            imageX = calibration.pointA.imageX,
+            imageY = calibration.pointA.imageY
         )
         val pointB = ru.bondarenko.orientvibe.ng.model.CalibrationPoint(
             gps = currentFix.coordinate, imageX = targetImageX, imageY = targetImageY
         )
 
         // Вычисляем новую калибровку с магнитным склонением
-        val declinationAuto = _calibration?.magneticDeclination ?: 0f
-        val newCal = MapGeometry.computeCalibrationRaw(
+        val newCal = MapGeometry.computeCalibrationSoft(
             pointA,
             pointB,
-            declinationAuto,
-            _mapState.value.northAngle
+            _mapState.value.northAngle,
+            calibration,
+            getProportion()
         )
             ?: return Pair(false, "Точки слишком близко — нельзя рассчитать масштаб")
 
         Log.d(tag, "===== recalibrateToTargetControl END =====")
 
         // Применяем новую калибровку через NavViewModel
-        navVm.applyNewCalibration(newCal)
-        applyBind(BindResult(newCal), navVm)
+        applyNewCalibration(newCal)
+        setCurrentControl(targetNumber)
+        return Pair(true, "Масштаб обновлён")
+    }
 
+    private fun getProportion(): Double {
+        val bitmap = _mapState.value.bitmap
+        bitmap ?: return 1.44
+        return bitmap.width / bitmap.height.toDouble()
+    }
+
+    private fun applyNewCalibration(newCalibration: MapCalibration) {
+        val navVm = navVm ?: return
+        navVm.applyNewCalibration(newCalibration)
+        applyBind(BindResult(newCalibration), navVm)
         // Инкрементируем версию калибровки — перерисовать трек
         _calibrationVersion.value++
-        setCurrentControl(targetNumber)
-
-        return Pair(true, "Масштаб обновлён")
     }
 
     // Счётчик для отслеживания переходов точности GPS
@@ -440,8 +450,8 @@ class AutoModeViewModel(
             result.add(
                 ru.bondarenko.orientvibe.ng.gps.TrackPoint(
                     gpsFix = gpsFix,
-                    imageX = 0f, // не используется — пересчитывается через calibration в TrackOverlay
-                    imageY = 0f,
+                    imageX = 0.0, // не используется — пересчитывается через calibration в TrackOverlay
+                    imageY = 0.0,
                     distanceFromStart = totalDist,
                     timestamp = tp.timestamp
                 )
@@ -508,15 +518,15 @@ class AutoModeViewModel(
         val displayBm = if (orientation != ExifInterface.ORIENTATION_NORMAL) {
             when (orientation) {
                 ExifInterface.ORIENTATION_ROTATE_90, ExifInterface.ORIENTATION_TRANSPOSE -> rawBm.rotateBitmap(
-                    90f
+                    90.0
                 )
 
                 ExifInterface.ORIENTATION_ROTATE_180, ExifInterface.ORIENTATION_FLIP_VERTICAL -> rawBm.rotateBitmap(
-                    180f
+                    180.0
                 )
 
                 ExifInterface.ORIENTATION_ROTATE_270, ExifInterface.ORIENTATION_TRANSVERSE -> rawBm.rotateBitmap(
-                    270f
+                    270.0
                 )
 
                 else -> rawBm.copy(rawBm.config ?: android.graphics.Bitmap.Config.ARGB_8888, false)
@@ -544,13 +554,13 @@ class AutoModeViewModel(
 
                 when (orientation) {
                     ExifInterface.ORIENTATION_ROTATE_90, ExifInterface.ORIENTATION_TRANSPOSE -> displayBitmap =
-                        displayBitmap.rotateBitmap(90f)
+                        displayBitmap.rotateBitmap(90.0)
 
                     ExifInterface.ORIENTATION_ROTATE_180, ExifInterface.ORIENTATION_FLIP_VERTICAL -> displayBitmap =
-                        displayBitmap.rotateBitmap(180f)
+                        displayBitmap.rotateBitmap(180.0)
 
                     ExifInterface.ORIENTATION_ROTATE_270, ExifInterface.ORIENTATION_TRANSVERSE -> displayBitmap =
-                        displayBitmap.rotateBitmap(270f)
+                        displayBitmap.rotateBitmap(270.0)
 
                     else -> {}
                 }
@@ -590,10 +600,16 @@ class AutoModeViewModel(
             _mapState.value,
             ms,
             _calibration ?: return,
-            gpsFix
+            gpsFix,
+            getProportion()
         )
         // Всегда переприсваиваем → StateFlow emit → Compose перерисуется
         _movementState.value = result
+        val newCalib = result.newMapCalibration
+        if (newCalib != null) {
+            // Применяем новую калибровку через NavViewModel
+            applyNewCalibration(newCalib)
+        }
     }
 
     /** Запускает детекцию на уже повернутом bitmap. */
@@ -625,17 +641,17 @@ class AutoModeViewModel(
 
     // ── Map orientation ────────────────────────────────────────────────────
 
-    fun updateNorthAngle(angle: Float) {
-        _mapState.value.copy(northAngle = angle.coerceIn(-45f, 45f)).also { _mapState.value = it }
+    fun updateNorthAngle(angle: Double) {
+        _mapState.value.copy(northAngle = angle.coerceIn(-45.0, 45.0)).also { _mapState.value = it }
     }
 
     /** Устанавливает северный угол без ограничения диапазона (для калибровки). */
-    private fun setNorthAngleRaw(angle: Float) {
+    private fun setNorthAngleRaw(angle: Double) {
         _mapState.value = _mapState.value.copy(northAngle = angle)
     }
 
     fun resetNorthAngle() {
-        _mapState.value = _mapState.value.copy(northAngle = 0f)
+        _mapState.value = _mapState.value.copy(northAngle = 0.0)
     }
 
     // ── Utilities ──────────────────────────────────────────────────────────

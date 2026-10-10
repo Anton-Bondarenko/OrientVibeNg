@@ -106,7 +106,7 @@ class StartCalibrationTest {
         // Simulate a walking track: 10 steps of ~5m each, due east
         val steps = 10
         val stepSizeM = 5.0
-        var prevProjected: Pair<Float, Float>? = null
+        var prevProjected: Pair<Double, Double>? = null
 
         for (i in 1..steps) {
             // Eastward offset matches the same method used in production

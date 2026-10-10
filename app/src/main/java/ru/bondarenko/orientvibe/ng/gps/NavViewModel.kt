@@ -30,7 +30,7 @@ class NavViewModel(
 
     private var _autoBindActiveFlag = false
     private var _kpBoxes: List<BoundingBox> = emptyList()
-    private var _imageDimensions: Pair<Float, Float>? = null
+    private var _imageDimensions: Pair<Double, Double>? = null
     private val HIT_TEST_RADIUS_REL = 0.05f
 
     private val _gpsState = MutableStateFlow(GpsState())
@@ -147,14 +147,14 @@ class NavViewModel(
     fun getAutoBindActive(): Boolean = _autoBindActive
 
     /** Convert current GPS fix to absolute image-space coordinates (pixels). */
-    fun getCurrentGpsImageAbs(northAngleDeg: Float): Pair<Float, Float>? {
+    fun getCurrentGpsImageAbs(northAngleDeg: Double): Pair<Double, Double>? {
         val fix = _gpsState.value.currentFix ?: return null
         val cal = calibration ?: return null
         return MapCalibrationUtils.gpsToImage(fix.coordinate, cal, northAngleDeg)
     }
 
     /** Check if image-space point is near any KP; returns index or -1. */
-    fun checkKpHit(absX: Float, absY: Float): Int {
+    fun checkKpHit(absX: Double, absY: Double): Int {
         if (!_autoBindActiveFlag) return -1
         val dims = _imageDimensions ?: return -1
         if (dims.first <= 0f || dims.second <= 0f) return -1
@@ -180,7 +180,7 @@ class NavViewModel(
         _kpBoxes = boxes
     }
 
-    fun setAutoBindImageDimensions(dims: Pair<Float, Float>) {
+    fun setAutoBindImageDimensions(dims: Pair<Double, Double>) {
         _imageDimensions = dims
     }
 
@@ -188,8 +188,8 @@ class NavViewModel(
         return MapCalibrationUtils.haversineDistance(a, b)
     }
 
-    fun magneticBearingBetween(from: GpsCoordinate, to: GpsCoordinate): Float {
-        val declination = calibration?.physicalDeclination ?: 0f
+    fun magneticBearingBetween(from: GpsCoordinate, to: GpsCoordinate): Double {
+        val declination = calibration?.physicalDeclination ?: 0.0
         return MapCalibrationUtils.magneticBearing(from, to, declination)
     }
 

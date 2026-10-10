@@ -339,7 +339,7 @@ class BindGpsToFinishWithTrackTest {
 
         // KEY ASSERTION: northAngle must equal -true_bearing (declination-independent).
         // This ensures the correction angle aligns with geographic direction.
-        val expectedNorthAngle = -trueBearing.toFloat()
+        val expectedNorthAngle = -trueBearing.toDouble()
         assertEquals(
             "northAngle must equal -true_bearing, not -raw_mag_bearing",
             expectedNorthAngle.toDouble(),
@@ -433,12 +433,12 @@ class BindGpsToFinishWithTrackTest {
             finishPointImageX = finishPointImageX,
             finishPointImageY = finishPointImageY,
             currentFixGPS = currentFixGPS,
-            magneticDeclination = declination.toFloat()
+            magneticDeclination = declination.toDouble()
         )
 
         // === Assertion 1: northAngle must equal -(trueBearing - declination) ===
         val trueBearing = MapGeometry.bearing(originalStartGps, currentFixGPS)
-        val expectedNorthAngle = -(trueBearing - declination).toFloat()
+        val expectedNorthAngle = -(trueBearing - declination).toDouble()
         assertEquals(
             "northAngle must use rawMagneticBearing (trueBearing - declination), not raw trueBearing",
             expectedNorthAngle.toDouble(),
@@ -494,11 +494,11 @@ class BindGpsToFinishWithTrackTest {
             finishPointImageX = finishPointImageX,
             finishPointImageY = finishPointImageY,
             currentFixGPS = currentFixGPS,
-            magneticDeclination = declination.toFloat()
+            magneticDeclination = declination.toDouble()
         )
 
         val trueBearing = MapGeometry.bearing(originalStartGps, currentFixGPS)
-        val expectedNorthAngle = -(trueBearing - declination).toFloat()
+        val expectedNorthAngle = -(trueBearing - declination).toDouble()
         assertEquals(
             "northAngle must use rawMagneticBearing",
             expectedNorthAngle.toDouble(),

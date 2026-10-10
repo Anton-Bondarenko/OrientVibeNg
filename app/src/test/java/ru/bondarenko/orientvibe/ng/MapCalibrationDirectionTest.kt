@@ -26,8 +26,8 @@ class MapCalibrationDirectionTest {
     private fun calibrate(
         latA: Double, lonA: Double,
         latB: Double, lonB: Double,
-        imgAx: Float, imgAy: Float,
-        imgBx: Float, imgBy: Float,
+        imgAx: Double, imgAy: Double,
+        imgBx: Double, imgBy: Double,
         declination: Double = 0.0
     ): MapCalibration {
         // before creating CalibrationPoint.
@@ -39,11 +39,11 @@ class MapCalibrationDirectionTest {
             gps = GpsCoordinate(latB, lonB),
             imageX = imgBx, imageY = imgBy
         )
-        return MapGeometry.computeCalibrationRaw(pointA, pointB, declination.toFloat())!!
+        return MapGeometry.computeCalibrationHard(pointA, pointB, declination.toDouble())!!
     }
 
     /** Convert a GPS coordinate to absolute image-space pixels. */
-    private fun toImagePixels(cal: MapCalibration, gps: GpsCoordinate): Pair<Float, Float> {
+    private fun toImagePixels(cal: MapCalibration, gps: GpsCoordinate): Pair<Double, Double> {
         val rel = MapGeometry.gpsToImageTrueNorth(gps, cal)!!
         // cal.pointA.imageX/Y are already in calibration space (helper-scaled to pixels),
         // and gpsToImageRelative returns values in that same pixel space — no extra scaling.
@@ -263,7 +263,7 @@ class MapCalibrationDirectionTest {
         val walkToMagNorth = offsetGpsTrueNorth(cal.pointA.gps, magneticDir, 50.0)
 
         // Corrected northAngle: -(rawMagneticBearing) = +10° for this setup
-        val correctNorthAngle = (-rawMagneticBearing).toFloat()
+        val correctNorthAngle = (-rawMagneticBearing).toDouble()
 
         // With correct northAngle correction: should align Y axis to magnetic direction → zero east displacement.
         val imgWithCorrection = MapCalibrationUtils.gpsToImage(
@@ -323,7 +323,7 @@ class MapCalibrationDirectionTest {
 
         // Correct northAngle: -(rawMagneticBearing) ≈ -80° — aligns rotated frame's Y-axis to magnetic direction.
         // Note: old formula used -declination = -10°, which only works when trueBearing = 0°.
-        val correctNorthAngle = (-rawMagneticBearing).toFloat()
+        val correctNorthAngle = (-rawMagneticBearing).toDouble()
 
         // With correct northAngle correction: Y axis aligns with magnetic direction.
         // Walking along magnetic bearing from A produces mainly Y displacement on this map.
@@ -448,7 +448,7 @@ class MapCalibrationDirectionTest {
                 )
 
                 // Round-trip invariant: recovered GPS must match original.
-                // Float32 cos/sin/atan2 accumulation can reach ~1e-9 for longitude at certain angles.
+                // Double32 cos/sin/atan2 accumulation can reach ~1e-9 for longitude at certain angles.
                 val latDiff = kotlin.math.abs(gps.latitude - recoveredGps.latitude)
                 val lonDiff = kotlin.math.abs(gps.longitude - recoveredGps.longitude)
                 assertTrue(
@@ -492,7 +492,7 @@ class MapCalibrationDirectionTest {
             kotlin.math.abs(pivotImg.second - pivotFromGps.second) < 1e-6)
 
         // Step 3: forward rotation
-        val fullAngle = MapGeometry.magneticBearing(northAngle, cal.magneticDeclination.toFloat())
+        val fullAngle = MapGeometry.magneticBearing(northAngle, cal.magneticDeclination.toDouble())
         println("fullAngle=$fullAngle")
 
         val rotated = MapGeometry.rotateAroundCalibration(projected.first, projected.second, cal, fullAngle)
@@ -509,7 +509,7 @@ class MapCalibrationDirectionTest {
         println("recoveredGps=(${recoveredGps.latitude}, ${recoveredGps.longitude})")
 
         // Check each step of the round-trip in imageToGps
-        val recoveredFullAngle = MapGeometry.magneticBearing(northAngle, cal.magneticDeclination.toFloat())
+        val recoveredFullAngle = MapGeometry.magneticBearing(northAngle, cal.magneticDeclination.toDouble())
         println("recoveredFullAngle=$recoveredFullAngle")
         assertTrue("angles match", kotlin.math.abs(fullAngle - recoveredFullAngle) < 1e-10)
 
@@ -523,7 +523,7 @@ class MapCalibrationDirectionTest {
         val unrotatedY = pivotImg.second + dx * sinA + dy * cosA
         println("unrotated=($unrotatedX, $unrotatedY)")
         println("projected=(${projected.first}, ${projected.second})")
-        // Float32 rotation cos/sin accumulation gives ~2e-5 error — tolerance must account for this.
+        // Double32 rotation cos/sin accumulation gives ~2e-5 error — tolerance must account for this.
         assertEquals("unrotation recovers projected", projected.first.toDouble(), unrotatedX, 1e-4)
         assertEquals("unrotation recovers projected", projected.second.toDouble(), unrotatedY, 1e-4)
 
@@ -569,7 +569,7 @@ class MapCalibrationDirectionTest {
         val rotated = MapGeometry.rotateAroundCalibration(imageCoords.first, imageCoords.second, cal, fullAngle)
         println("rotated by rotateAroundCalibration = ($rotated)")
 
-        // Now call actual MapGeometry.gpsToImage (now returns Pair<Float, Float>)
+        // Now call actual MapGeometry.gpsToImage (now returns Pair<Double, Double>)
         val imagePt = MapGeometry.gpsToImage(gps, cal, 0f)
         println("MapGeometry.gpsToImage(gps, cal, 0f).first = ${imagePt?.first}, second = ${imagePt?.second}")
 
@@ -873,7 +873,7 @@ class MapCalibrationDirectionTest {
             val pointAngle = Math.toDegrees(kotlin.math.atan2(dY.toDouble(), dX.toDouble()))
 
             // The angle needed to align this direction with AB line
-            val alignAngle = (gpsBDirection - pointAngle).toFloat()
+            val alignAngle = (gpsBDirection - pointAngle).toDouble()
 
             val imgPt = MapCalibrationUtils.gpsToImage(gpsOff, cal, alignAngle)!!
             val dxRotated = imgPt.first - px
@@ -928,7 +928,7 @@ class MapCalibrationDirectionTest {
 
             // Walk along magnetic north from start: compute X in corrected frame
             // First get the magnetic direction (true bearing - declination)
-            val magneticDir = MapGeometry.magneticBearing(0.0f, declination.toFloat()).toDouble()
+            val magneticDir = MapGeometry.magneticBearing(0.0f, declination.toDouble()).toDouble()
             val walkGps = offsetGpsTrueNorth(startGps, magneticDir, 50.0)
 
             val startImg = MapCalibrationUtils.gpsToImage(startGps, cal, correctNorthAngle)!!

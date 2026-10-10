@@ -42,10 +42,10 @@ class TrackOverlay {
     var calibration: MapCalibration? = null
 
     /** North angle adjustment (degrees, 0 = up, positive = CW) */
-    var northAngle: Float = 0f
+    var northAngle: Double = 0.0
 
     // Source-to-view coordinate conversion — set externally
-    var sourceToViewCoord: ((Float, Float) -> PointF?)? = null
+    var sourceToViewCoord: ((Double, Double) -> PointF?)? = null
 
     private val trackPaint = Paint().apply {
         color = Color.argb(200, 0, 150, 255) // semi-transparent blue
@@ -86,7 +86,7 @@ class TrackOverlay {
      */
     private fun gpsToImage(gps: GpsCoordinate): PointF? {
         val pair = MapGeometry.gpsToImage(gps, calibration, northAngle)
-        return pair?.let { PointF(it.first, it.second) }
+        return pair?.let { PointF(it.first.toFloat(), it.second.toFloat()) }
     }
 
     /** Debug log tag */
@@ -108,7 +108,7 @@ class TrackOverlay {
                     continue
                 }
 
-                val viewPoint = sourceToViewCoord?.invoke(imagePt.x, imagePt.y)
+                val viewPoint = sourceToViewCoord?.invoke(imagePt.x.toDouble(), imagePt.y.toDouble())
                 if (viewPoint != null) {
                     ptsInPath++
                     if (first) {
@@ -132,7 +132,7 @@ class TrackOverlay {
         // --- Draw current position with direction ---
         val fix = currentFix ?: return
         val currentImage = gpsToImage(fix.coordinate) ?: return
-        val currentView = sourceToViewCoord?.invoke(currentImage.x, currentImage.y) ?: return
+        val currentView = sourceToViewCoord?.invoke(currentImage.x.toDouble(), currentImage.y.toDouble()) ?: return
         // Draw position circle
         val radius = 20f
         canvas.drawCircle(currentView.x, currentView.y, radius, positionPaint)
@@ -150,7 +150,7 @@ class TrackOverlay {
 
         val aheadGps = MapGeometry.offsetGps(fix.coordinate, bearingDeg, 200.0)
         val aheadImage = gpsToImage(aheadGps) ?: return
-        val aheadView = sourceToViewCoord?.invoke(aheadImage.x, aheadImage.y) ?: return
+        val aheadView = sourceToViewCoord?.invoke(aheadImage.x.toDouble(), aheadImage.y.toDouble()) ?: return
 
         val dx = aheadView.x - currentView.x
         val dy = aheadView.y - currentView.y
@@ -160,7 +160,7 @@ class TrackOverlay {
         // Draw direction arrow at ahead point
         val arrowSize = 15f
         val arrowAngle = 0.5f
-        val len = sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+        val len = sqrt((dx * dx + dy * dy).toDouble()).toDouble()
         if (len > 0) {
             val ux = dx / len
             val uy = dy / len
@@ -168,16 +168,16 @@ class TrackOverlay {
             val arrowPath = Path().apply {
                 moveTo(aheadView.x, aheadView.y)
                 lineTo(
-                    aheadView.x - ux * arrowSize * cos(arrowAngle.toDouble()).toFloat() -
-                            uy * arrowSize * sin(arrowAngle.toDouble()).toFloat(),
-                    aheadView.y - uy * arrowSize * cos(arrowAngle.toDouble()).toFloat() +
-                            ux * arrowSize * sin(arrowAngle.toDouble()).toFloat()
+                    (aheadView.x - ux * arrowSize * cos(arrowAngle.toDouble()).toDouble() -
+                            uy * arrowSize * sin(arrowAngle.toDouble()).toDouble()).toFloat(),
+                    (aheadView.y - uy * arrowSize * cos(arrowAngle.toDouble()).toDouble() +
+                            ux * arrowSize * sin(arrowAngle.toDouble()).toDouble()).toFloat()
                 )
                 lineTo(
-                    aheadView.x - ux * arrowSize * cos(arrowAngle.toDouble()).toFloat() +
-                            uy * arrowSize * sin(arrowAngle.toDouble()).toFloat(),
-                    aheadView.y - uy * arrowSize * cos(arrowAngle.toDouble()).toFloat() -
-                            ux * arrowSize * sin(arrowAngle.toDouble()).toFloat()
+                    (aheadView.x - ux * arrowSize * cos(arrowAngle.toDouble()).toDouble() +
+                            uy * arrowSize * sin(arrowAngle.toDouble()).toDouble()).toFloat(),
+                    (aheadView.y - uy * arrowSize * cos(arrowAngle.toDouble()).toDouble() -
+                            ux * arrowSize * sin(arrowAngle.toDouble()).toDouble()).toFloat()
                 )
                 close()
             }

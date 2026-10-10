@@ -28,7 +28,7 @@ class TrackRecorderTest {
             val fix = GpsFix(
                 coordinate = GpsCoordinate(50.45 + i * 0.0001, 30.5 + i * 0.0001),
                 accuracy = 5f,
-                bearing = (i * 10f).toFloat(),
+                bearing = (i * 10f).toDouble(),
                 speed = 1f,
                 timestamp = System.currentTimeMillis()
             )
@@ -69,7 +69,7 @@ class TrackRecorderTest {
             val fix = GpsFix(
                 coordinate = GpsCoordinate(50.45 + i * 0.0001, 30.5 + i * 0.0001),
                 accuracy = 5f,
-                bearing = (i * 10f).toFloat(),
+                bearing = (i * 10f).toDouble(),
                 speed = 1f,
                 timestamp = System.currentTimeMillis()
             )
@@ -99,7 +99,7 @@ class TrackRecorderTest {
             val fix = GpsFix(
                 coordinate = GpsCoordinate(50.45 + i * 0.0001, 30.5 + i * 0.0001),
                 accuracy = 5f,
-                bearing = (i * 10f).toFloat(),
+                bearing = (i * 10f).toDouble(),
                 speed = 1f,
                 timestamp = System.currentTimeMillis()
             )
@@ -112,7 +112,7 @@ class TrackRecorderTest {
             val fix = GpsFix(
                 coordinate = GpsCoordinate(50.45 + i * 0.0001, 30.5 + i * 0.0001),
                 accuracy = 5f,
-                bearing = (i * 10f).toFloat(),
+                bearing = (i * 10f).toDouble(),
                 speed = 1f,
                 timestamp = System.currentTimeMillis()
             )
@@ -147,7 +147,7 @@ class TrackRecorderTest {
             val fix = GpsFix(
                 coordinate = GpsCoordinate(50.45 + i * 0.0001, 30.5 + i * 0.0001),
                 accuracy = 5f,
-                bearing = (i * 10f).toFloat(),
+                bearing = (i * 10f).toDouble(),
                 speed = 1f,
                 timestamp = System.currentTimeMillis()
             )

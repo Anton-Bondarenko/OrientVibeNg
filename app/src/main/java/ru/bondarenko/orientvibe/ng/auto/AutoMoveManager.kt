@@ -1,6 +1,7 @@
 package ru.bondarenko.orientvibe.ng.auto
 
 import android.util.Log
+import ru.bondarenko.orientvibe.ng.gps.CalibrationPoint
 import ru.bondarenko.orientvibe.ng.gps.MapCalibration
 import ru.bondarenko.orientvibe.ng.gps.MapGeometry
 import ru.bondarenko.orientvibe.ng.model.AutoMapState
@@ -11,24 +12,24 @@ import ru.bondarenko.orientvibe.ng.model.GpsFix
 import ru.bondarenko.orientvibe.ng.model.MovementState
 
 /** Дистанция до КП, при которой считается что пришли (м) */
-const val AUTO_APPROACHED_DIST = 50f
+const val AUTO_APPROACHED_DIST = 100f
 const val DIST_GAP = 3f
 
 /** Минимальная дистанция от начальной точки, чтобы подтвердить уход (м) */
 private const val AUTO_MIN_MOVE_METERS = 3f
 
 /** Время стабильного увеличения дистанции (мс) */
-private const val AUTO_CONFIRM_TIMEOUT_MS = 5_000L
+private const val AUTO_CONFIRM_TIMEOUT_MS = 10_000L
 
 private const val TAG = "AutoMoveManager"
 
 /** Результат doMove — immutable, ViewModel делает reassignment и StateFlow нотифицирует наблюдателей. */
 data class DoMoveResult(
-    val distanceToTarget: Float,
+    val distanceToTarget: Double,
     val switchedControl: Boolean = false,
 ) {
     companion object {
-        fun noSwitch(dist: Float) = DoMoveResult(distanceToTarget = dist)
+        fun noSwitch(dist: Double) = DoMoveResult(distanceToTarget = dist)
     }
 }
 
@@ -37,8 +38,9 @@ class AutoMoveManager {
     private var _approachTimeMs: Long? = null
 
     /** Дистанция в момент первого приближения (baseline) */
-    private var _approachDistance: Float = 0f
+    private var _approachDistance: Double = 0.0
     private var _approachDetected: Boolean = false
+    private var _supposeControlHere: ru.bondarenko.orientvibe.ng.gps.GpsCoordinate? = null
 
     /**
      * Выполняет «движение»: вычисляет дистанцию до текущей КП.
@@ -55,7 +57,8 @@ class AutoMoveManager {
         autoMapState: AutoMapState,
         movementState: MovementState,
         mapCalibration: MapCalibration,
-        gpsFix: GpsFix
+        gpsFix: GpsFix,
+        proportion: Double
     ): MovementState {
         val boundingBox = movementState.currentControl.boundingBox
         if (boundingBox != null) {
@@ -64,10 +67,18 @@ class AutoMoveManager {
                     ?: gpsFix.coordinate
             val distance =
                 MapGeometry.haversineDistance(gpsFix.coordinate, currentControlCoordinates)
-                    .toFloat()
+                    .toDouble()
 
-            if (shouldSwitch(distance)) {
-                switchControl(autoMapState, movementState)
+            if (shouldSwitch(distance, gpsFix) && mapCalibration.pointB != null) {
+                movementState.newMapCalibration = switchControl(
+                    autoMapState,
+                    movementState,
+                    mapCalibration,
+                    autoMapState,
+                    proportion
+                )
+            } else {
+                movementState.newMapCalibration = null
             }
             _approachDistance = distance
             return movementState
@@ -78,7 +89,7 @@ class AutoMoveManager {
     /**
      * @return true если прошло ≥ 5с и дистанция стабильно выросла от baseline
      */
-    private fun shouldSwitch(distance: Float): Boolean {
+    private fun shouldSwitch(distance: Double, gpsFix: GpsFix): Boolean {
         // Первый вход в зону КП — фиксируем baseline
         if (distance < AUTO_APPROACHED_DIST && !_approachDetected) {
             _approachDetected = true
@@ -86,7 +97,10 @@ class AutoMoveManager {
 
         // удаляемся от КП
         if (_approachDistance < (distance + DIST_GAP) && _approachDetected) {
-            if (_approachTimeMs == null) _approachTimeMs = System.currentTimeMillis()
+            if (_approachTimeMs == null) {
+                _approachTimeMs = System.currentTimeMillis()
+                _supposeControlHere = gpsFix.coordinate
+            }
 
             val elapsed = System.currentTimeMillis() - _approachTimeMs!!
             if (elapsed >= AUTO_CONFIRM_TIMEOUT_MS) { // переключаемся на следующий
@@ -94,17 +108,25 @@ class AutoMoveManager {
             }
         } else {
             _approachTimeMs = null
+            _supposeControlHere = null
         }
         return false
     }
 
-    private fun detectionReset(){
+    private fun detectionReset() {
         _approachTimeMs = null
         _approachDetected = false
-        _approachDistance = Float.MAX_VALUE
+        _approachDistance = Double.MAX_VALUE
+        _supposeControlHere = null
     }
 
-    private fun switchControl(mapState: AutoMapState, ms: MovementState) {
+    private fun switchControl(
+        mapState: AutoMapState,
+        ms: MovementState,
+        mapCalibration: MapCalibration,
+        autoMapState: AutoMapState,
+        proportion: Double
+    ): MapCalibration? {
         val currentNum = ms.currentControl.num
         Log.d(TAG, "дошли до КП #$currentNum, переключение на следующую")
 
@@ -122,7 +144,18 @@ class AutoMoveManager {
             num = nextNum,
             boundingBox = nextBox
         )
+        var newCalibration: MapCalibration? = null
+        val supposeControlHere = _supposeControlHere
+        if (oldCurrentBox != null && supposeControlHere != null && mapCalibration.pointB != null) {
+            newCalibration = MapGeometry.computeCalibrationSoft(
+                mapCalibration.pointA,
+                CalibrationPoint(supposeControlHere, oldCurrentBox.centerX, oldCurrentBox.centerY),
+                autoMapState.northAngle, mapCalibration, proportion
+            )
+        }
         detectionReset()
+
+        return newCalibration
     }
 
     fun getBoundingBoxCoordinates(

@@ -13,9 +13,9 @@ data class GpsCoordinate(
  */
 data class GpsFix(
     val coordinate: GpsCoordinate,
-    val accuracy: Float,          // meters (lower = better)
-    val bearing: Float,           // degrees from true north (0..360)
-    val speed: Float,             // meters per second
+    val accuracy: Double,          // meters (lower = better)
+    val bearing: Double,           // degrees from true north (0..360)
+    val speed: Double,             // meters per second
     val timestamp: Long,          // System.currentTimeMillis()
     val altitude: Double = 0.0    // meters above sea level
 )
@@ -25,8 +25,8 @@ data class GpsFix(
  */
 data class CalibrationPoint(
     val gps: GpsCoordinate,
-    val imageX: Float,  // relative 0..1
-    val imageY: Float   // relative 0..1
+    val imageX: Double,  // relative 0..1
+    val imageY: Double   // relative 0..1
 )
 
 /**
@@ -38,10 +38,9 @@ data class MapCalibration(
     val pointB: CalibrationPoint? = null,
     val scaleMetersPerMapX: Double,  // meters per image-pixel at the map
     val scaleMetersPerMapY: Double,  // meters per image-pixel at the map
-    val bearingDegrees: Float,       // angle of the image Y-axis relative to true north
-    val magneticDeclination: Float = 0f,   // magnetic declination at calibration location (degrees, positive = east)
-    val physicalDeclination: Float = 0f,   // original magnetic declination before any coordinate flip adjustment
-    val hasXYFlip: Boolean = false     // metadata: true when cos(magneticBearing) < 0 (map north opposes screen-up); does not affect transform
+    val bearingDegrees: Double,       // angle of the image Y-axis relative to true north
+    val magneticDeclination: Double = 0.0,   // magnetic declination at calibration location (degrees, positive = east)
+    val physicalDeclination: Double = 0.0   // original magnetic declination before any coordinate flip adjustment
 )
 
 /**
@@ -49,8 +48,8 @@ data class MapCalibration(
  */
 data class TrackPoint(
     val gpsFix: GpsFix,
-    val imageX: Float,       // relative 0..1
-    val imageY: Float,       // relative 0..1
+    val imageX: Double,       // relative 0..1
+    val imageY: Double,       // relative 0..1
     val distanceFromStart: Double,  // meters
     val timestamp: Long
 )

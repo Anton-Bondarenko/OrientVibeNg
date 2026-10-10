@@ -14,41 +14,31 @@ object MapCalibrationUtils {
 
     private const val DEFAULT_SCALE = 4000.0 // метров в карте по высоте
 
-    // ─── Calibration ──────────────────────────────────────────────────────
-
-    fun calibrate(
-        pointA: CalibrationPoint,
-        pointB: CalibrationPoint,
-        magneticDeclination: Float
-    ): MapCalibration? {
-        return MapGeometry.computeCalibrationRaw(pointA, pointB, magneticDeclination)
-    }
-
     /** Returns the physical magnetic declination used for northAngle computation. */
-    fun effectiveDeclination(cal: MapCalibration): Float {
+    fun effectiveDeclination(cal: MapCalibration): Double {
         return cal.physicalDeclination
     }
 
     // ─── Coordinate transforms ────────────────────────────────────────────
 
-    fun gpsToImage(gps: GpsCoordinate, calibration: MapCalibration): Pair<Float, Float>? {
+    fun gpsToImage(gps: GpsCoordinate, calibration: MapCalibration): Pair<Double, Double>? {
         return MapGeometry.gpsToImageTrueNorth(gps, calibration)
     }
 
-    fun imageToGps(imageX: Float, imageY: Float, calibration: MapCalibration): GpsCoordinate? {
+    fun imageToGps(imageX: Double, imageY: Double, calibration: MapCalibration): GpsCoordinate? {
         return MapGeometry.imageToGpsTrueNorth(imageX, imageY, calibration)
     }
 
     fun magneticBearing(
         from: GpsCoordinate,
         to: GpsCoordinate,
-        magneticDeclination: Float
-    ): Float {
+        magneticDeclination: Double
+    ): Double {
         val trueBearing = bearing(from, to)
         return MapGeometry.magneticBearing(trueBearing, magneticDeclination)
     }
 
-    fun bearing(from: GpsCoordinate, to: GpsCoordinate): Float {
+    fun bearing(from: GpsCoordinate, to: GpsCoordinate): Double {
         return MapGeometry.bearing(from, to)
     }
 
@@ -78,8 +68,8 @@ object MapCalibrationUtils {
     fun gpsToImage(
         gps: GpsCoordinate,
         calibration: MapCalibration,
-        northAngleDeg: Float  // degrees to rotate around pointA
-    ): Pair<Float, Float>? {
+        northAngleDeg: Double  // degrees to rotate around pointA
+    ): Pair<Double, Double>? {
         return MapGeometry.gpsToImage(gps, calibration, northAngleDeg)
     }
 
@@ -99,10 +89,10 @@ object MapCalibrationUtils {
      */
     fun calibrateSinglePoint(
         startGPS: GpsCoordinate,
-        startPointImageX: Float,
-        startPointImageY: Float,
-        northAngle: Float,
-        imageProportion: Float = 1.44f, // width/height
+        startPointImageX: Double,
+        startPointImageY: Double,
+        northAngle: Double,
+        imageProportion: Double = 1.44, // width/height
         scaleMetersPerMapX: Double? = null,
         scaleMetersPerMapY: Double? = null,
 
@@ -128,7 +118,7 @@ object MapCalibrationUtils {
      */
     data class BindResult(
         val calibration: MapCalibration,
-        val northAngleDegrees: Float
+        val northAngleDegrees: Double
     )
 
     /** Full finish calibration using track direction + distance from original start to current GPS.
@@ -137,12 +127,12 @@ object MapCalibrationUtils {
      */
     fun bindGpsToFinishWithTrack(
         startGPS: GpsCoordinate,
-        startPointImageX: Float,
-        startPointImageY: Float,
-        finishPointImageX: Float,
-        finishPointImageY: Float,
+        startPointImageX: Double,
+        startPointImageY: Double,
+        finishPointImageX: Double,
+        finishPointImageY: Double,
         currentFixGPS: GpsCoordinate,
-        magneticDeclination: Float = 0f
+        magneticDeclination: Double = 0.0
     ): BindResult {
         // Use actual GPS coordinates directly — two-point calibration guarantees
         // gpsToImage(pointB.gps) returns pointB.imageCoords exactly.
@@ -154,7 +144,7 @@ object MapCalibrationUtils {
             imageY = finishPointImageY
         )
 
-        val newCal = calibrate(pointA, pointB, magneticDeclination)
+        val newCal = MapGeometry.computeCalibrationHard(pointA, pointB, magneticDeclination)
             ?: throw IllegalStateException("bindGpsToFinishWithTrack: calibration points too close")
 
         // North angle = -raw_magnetic_bearing = -(trueBearing - declination).
@@ -163,7 +153,7 @@ object MapCalibrationUtils {
         // northAngle = -rawMagneticBearing cancels that rotation so currentFixGPS
         // projects EXACTLY onto finishPoint after canvas rotation.
         val trueBearing = MapGeometry.bearing(pointA.gps, pointB.gps)
-        val northAngleDeg = -(trueBearing - magneticDeclination).toFloat()
+        val northAngleDeg = -(trueBearing - magneticDeclination).toDouble()
 
         return BindResult(newCal, northAngleDeg)
     }

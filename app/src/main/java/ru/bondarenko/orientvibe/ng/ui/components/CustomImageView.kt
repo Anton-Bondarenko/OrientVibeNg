@@ -25,10 +25,11 @@ open class CustomImageView(context: Context) : View(context) {
             field = value
 
             // Сброс состояния при загрузке нового изображения карты
-            mapScale = 1f
-            currentRotation = 0f
-            mapPanX = 0f
-            mapPanY = 0f
+            mapScale = 1.0
+            currentRotation = 0.0
+            mapPanX = 0.0
+            mapPanY = 0.0
+            proportion = 1.44
             routeOverlay.startPoint = null
             routeOverlay.finishPoint = null
             routeOverlay.tapListener = null
@@ -42,10 +43,11 @@ open class CustomImageView(context: Context) : View(context) {
             invalidate()
         }
 
-    protected var mapScale: Float = 1f
-    protected var currentRotation: Float = 0f
-    protected var mapPanX: Float = 0f
-    protected var mapPanY: Float = 0f
+    protected var mapScale: Double = 1.0
+    protected var currentRotation: Double = 0.0
+    protected var mapPanX: Double = 0.0
+    protected var mapPanY: Double = 0.0
+    protected var proportion: Double = 1.44
 
     val northIndicator = NorthIndicator()
     val routeOverlay = RouteOverlay()
@@ -57,19 +59,19 @@ open class CustomImageView(context: Context) : View(context) {
     var tapListener: MapTapListener? = null
     var dragListener: MapDragListener? = null
 
-    private var preNavScale: Float = 1f
-    private var preNavRotation: Float = 0f
-    private var preNavPanX: Float = 0f
-    private var preNavPanY: Float = 0f
+    private var preNavScale: Double = 1.0
+    private var preNavRotation: Double = 0.0
+    private var preNavPanX: Double = 0.0
+    private var preNavPanY: Double = 0.0
     private var savedTapListener: MapTapListener? = null
     private var savedDragListener: MapDragListener? = null
 
     var isInteractionEnabled: Boolean = true
-    var mapRotation: Float = 0f
+    var mapRotation: Double = 0.0
         set(value) {
             val previous = field
             field = value
-            if (previous == 0f && value != 0f) {
+            if (previous == 0.0 && value != 0.0) {
                 preNavScale = mapScale
                 preNavRotation = currentRotation
                 preNavPanX = mapPanX
@@ -79,7 +81,7 @@ open class CustomImageView(context: Context) : View(context) {
                 routeOverlay.tapListener = null
                 routeOverlay.dragListener = null
                 isInteractionEnabled = false
-            } else if (previous != 0f && value == 0f) {
+            } else if (previous != 0.0 && value == 0.0) {
                 mapScale = preNavScale
                 currentRotation = preNavRotation
                 mapPanX = preNavPanX
@@ -94,61 +96,61 @@ open class CustomImageView(context: Context) : View(context) {
         }
     var mapTransformApplied: Boolean = false
 
-    private val scaleMin = 0.2f
-    private val scaleMax = 10f
+    private val scaleMin = 0.2
+    private val scaleMax = 10.0
 
     private val imageMatrix = Matrix()
     private val inverseMatrix = Matrix()
 
-    fun setPan(x: Float, y: Float) {
+    fun setPan(x: Double, y: Double) {
         mapPanX = x
         mapPanY = y
         invalidate()
     }
 
-    fun setZoom(s: Float) {
+    fun setZoom(s: Double) {
         mapScale = s.coerceIn(scaleMin, scaleMax)
         invalidate()
     }
 
-    fun applyRotation(r: Float) {
+    fun applyRotation(r: Double) {
         currentRotation = r % 360f
         invalidate()
     }
 
     private fun computeImageMatrix() {
-        val sWidth = bitmap?.width?.toFloat() ?: 0f
-        val sHeight = bitmap?.height?.toFloat() ?: 0f
+        val sWidth = bitmap?.width?.toDouble() ?: 0.0
+        val sHeight = bitmap?.height?.toDouble() ?: 0.0
         if (sWidth <= 0 || sHeight <= 0) {
             imageMatrix.reset()
             inverseMatrix.reset()
             return
         }
         imageMatrix.reset()
-        imageMatrix.setTranslate(-sWidth / 2f, -sHeight / 2f)
-        imageMatrix.postScale(mapScale, mapScale)
-        imageMatrix.postRotate(currentRotation)
-        imageMatrix.postTranslate(width / 2f + mapPanX, height / 2f + mapPanY)
+        imageMatrix.setTranslate(-sWidth.toFloat() / 2f, -sHeight.toFloat() / 2f)
+        imageMatrix.postScale(mapScale.toFloat(), mapScale.toFloat())
+        imageMatrix.postRotate(currentRotation.toFloat())
+        imageMatrix.postTranslate((width / 2f + mapPanX).toFloat(), (height / 2f + mapPanY).toFloat())
         imageMatrix.invert(inverseMatrix)
     }
 
-    fun sourceToViewCoord(x: Float, y: Float): PointF? {
-        val sWidth = bitmap?.width?.toFloat() ?: 0f
-        val sHeight = bitmap?.height?.toFloat() ?: 0f
-        if (sWidth <= 0 || sHeight <= 0) {
+    fun sourceToViewCoord(x: Double, y: Double): PointF? {
+        val sWidth = bitmap?.width?.toDouble() ?: 0.0
+        val sHeight = bitmap?.height?.toDouble() ?: 0.0
+        if (sWidth <= 0|| sHeight <= 0) {
             imageMatrix.reset()
             inverseMatrix.reset()
             return null
         }
         computeImageMatrix()
-        val pts = floatArrayOf(x * sWidth, y * sHeight)
+        val pts = floatArrayOf((x * sWidth).toFloat(), (y * sHeight).toFloat())
         imageMatrix.mapPoints(pts)
         return PointF(pts[0], pts[1])
     }
 
-    fun viewToSourceCoord(x: Float, y: Float): PointF {
+    fun viewToSourceCoord(x: Double, y: Double): PointF {
         computeImageMatrix()
-        val pts = floatArrayOf(x, y)
+        val pts = floatArrayOf(x.toFloat(), y.toFloat())
         inverseMatrix.mapPoints(pts)
         return PointF(pts[0], pts[1])
     }
@@ -198,7 +200,7 @@ open class CustomImageView(context: Context) : View(context) {
         invalidate()
     }
 
-    fun updateNorthAngle(angle: Float) {
+    fun updateNorthAngle(angle: Double) {
         trackOverlay.northAngle = angle
         invalidate()
     }
@@ -215,33 +217,33 @@ open class CustomImageView(context: Context) : View(context) {
         val fp = routeOverlay.finishPoint
         if (sp == null || fp == null) return
 
-        val sWidth = bitmap?.width?.toFloat() ?: 0f
-        val sHeight = bitmap?.height?.toFloat() ?: 0f
+        val sWidth = bitmap?.width?.toDouble() ?: 0.0
+        val sHeight = bitmap?.height?.toDouble() ?: 0.0
         if (sWidth <= 0 || sHeight <= 0) return
 
         val dx = (fp.x - sp.x) * sWidth
         val dy = (fp.y - sp.y) * sHeight
-        val routeAngle = Math.toDegrees(atan2(dx.toDouble(), -dy.toDouble())).toFloat()
+        val routeAngle = Math.toDegrees(atan2(dx.toDouble(), -dy.toDouble())).toDouble()
 
         val rawOrientation = -routeAngle
         applyRotation(rawOrientation)
 
         val routeLength = sqrt(
             (dx * dx + dy * dy).toDouble()
-        ).toFloat()
+        ).toDouble()
 
-        val targetHeight = height * 0.8f
-        val newScale = if (routeLength > 0) targetHeight / routeLength else 1f
+        val targetHeight = height * 0.8
+        val newScale = if (routeLength > 0) targetHeight / routeLength else 1.0
         setZoom(newScale)
 
-        mapPanX = 0f
-        mapPanY = 0f
+        mapPanX = 0.0
+        mapPanY = 0.0
         invalidate()
 
         computeImageMatrix()
-        val midSrcX = ((sp.x + fp.x) / 2f) * sWidth
-        val midSrcY = ((sp.y + fp.y) / 2f) * sHeight
-        val mid = floatArrayOf(midSrcX, midSrcY)
+        val midSrcX = ((sp.x + fp.x) / 2.0) * sWidth
+        val midSrcY = ((sp.y + fp.y) / 2.0) * sHeight
+        val mid = floatArrayOf(midSrcX.toFloat(), midSrcY.toFloat())
         imageMatrix.mapPoints(mid)
         mapPanX += width / 2f - mid[0]
         mapPanY += height / 2f - mid[1]
@@ -257,8 +259,8 @@ open class CustomImageView(context: Context) : View(context) {
             }
 
             override fun onScale(detector: ScaleGestureDetector): Boolean {
-                val sWidth = bitmap?.width?.toFloat() ?: 0f
-                val sHeight = bitmap?.height?.toFloat() ?: 0f
+                val sWidth = bitmap?.width?.toDouble() ?: 0.0
+                val sHeight = bitmap?.height?.toDouble() ?: 0.0
                 if (sWidth <= 0 || sHeight <= 0) return false
 
                 val oldScale = mapScale
@@ -333,11 +335,11 @@ open class CustomImageView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
-        val sWidth = bitmap?.width?.toFloat() ?: 0f
-        val sHeight = bitmap?.height?.toFloat() ?: 0f
+        val sWidth = bitmap?.width?.toDouble() ?: 0.0
+        val sHeight = bitmap?.height?.toDouble() ?: 0.0
         if (sWidth <= 0 || sHeight <= 0) return
 
-        if (mapRotation != 0f && !mapTransformApplied) {
+        if (mapRotation != 0.0 && !mapTransformApplied) {
             applyMapTransform()
         }
 

@@ -255,11 +255,11 @@ class MapDetector(private val context: Context) {
         val width = (dr.boundingBox.right - dr.boundingBox.left) / bitmapWidth.toFloat()
         val height = (dr.boundingBox.bottom - dr.boundingBox.top) / bitmapHeight.toFloat()
         return BoundingBox(
-            centerX = left + width / 2f,
-            centerY = top + height / 2f,
-            width = width,
-            height = height,
-            confidence = dr.confidence,
+            centerX = left + width / 2.0,
+            centerY = top + height / 2.0,
+            width = width.toDouble(),
+            height = height.toDouble(),
+            confidence = dr.confidence.toDouble(),
             label = "",
             number = null,
             tileId = dr.tileId
@@ -347,13 +347,13 @@ class MapDetector(private val context: Context) {
             val halfH = (numberBox.height * bitmap.height) / 2f
 
             // Expand ROI: ±150% from number bbox — digits live there
-            val roiX1 = ((cxPx - halfW * DIGIT_ROI_EXPANSION_FACTOR).coerceAtLeast(0f)).toInt()
-            val roiY1 = ((cyPx - halfH * DIGIT_ROI_EXPANSION_FACTOR).coerceAtLeast(0f)).toInt()
+            val roiX1 = ((cxPx - halfW * DIGIT_ROI_EXPANSION_FACTOR).coerceAtLeast(0.0)).toInt()
+            val roiY1 = ((cyPx - halfH * DIGIT_ROI_EXPANSION_FACTOR).coerceAtLeast(0.0)).toInt()
             val roiX2 =
-                (cxPx + halfW * DIGIT_ROI_EXPANSION_FACTOR).coerceAtMost(bitmap.width.toFloat())
+                (cxPx + halfW * DIGIT_ROI_EXPANSION_FACTOR).coerceAtMost(bitmap.width.toDouble())
                     .toInt()
             val roiY2 =
-                (cyPx + halfH * DIGIT_ROI_EXPANSION_FACTOR).coerceAtMost(bitmap.height.toFloat())
+                (cyPx + halfH * DIGIT_ROI_EXPANSION_FACTOR).coerceAtMost(bitmap.height.toDouble())
                     .toInt()
 
             Log.d(
@@ -438,11 +438,11 @@ class MapDetector(private val context: Context) {
                         validDigits.add(
                             Pair(
                                 BoundingBox(
-                                    cx2,
-                                    cy2,
-                                    bw2,
-                                    bh2,
-                                    dr.confidence,
+                                    cx2.toDouble(),
+                                    cy2.toDouble(),
+                                    bw2.toDouble(),
+                                    bh2.toDouble(),
+                                    dr.confidence.toDouble(),
                                     "digit",
                                     null
                                 ), dr.classId
@@ -459,7 +459,7 @@ class MapDetector(private val context: Context) {
 
                     // Assemble digits left→right into a single number value.
                     val sorted = validDigits.sortedBy { p -> p.first.centerX }
-                    val digitPositions = sorted.map { (bb, d) -> Pair(bb.centerX, d.toFloat()) }
+                    val digitPositions = sorted.map { (bb, d) -> Pair(bb.centerX.toFloat(), d.toFloat()) }
                     digitsPerNum.add(digitPositions)
                     var number = 0
                     for ((_, digitNum) in sorted) {
@@ -519,7 +519,7 @@ class MapDetector(private val context: Context) {
     internal fun filterControlsByMedianArea(boxes: List<BoundingBox>): List<BoundingBox> {
         if (boxes.size <= 2) return boxes
 
-        val areas = boxes.map { it.width * it.height }
+        val areas = boxes.map { it.width.toFloat() * it.height.toFloat()}
         val med = median(areas) ?: return boxes
         val minArea = med * 0.30f // absolute floor: anything below 30% of median is tiny noise
 
@@ -567,7 +567,7 @@ class MapDetector(private val context: Context) {
     internal fun filterNumbersByMedianHeight(boxes: List<BoundingBox>): List<BoundingBox> {
         if (boxes.size <= 2) return boxes
 
-        val heights = boxes.map { it.height }
+        val heights = boxes.map { it.height.toFloat() }
         val med = median(heights) ?: return boxes
 
         return boxes.filter { box ->
@@ -747,14 +747,14 @@ class MapDetector(private val context: Context) {
                     val interRight = kotlin.math.min(x2a, x2b)
                     val interBottom = kotlin.math.min(y2a, y2b)
 
-                    val interW = max(0f, interRight - interLeft)
-                    val interH = max(0f, interBottom - interTop)
+                    val interW = max(0f, interRight.toFloat() - interLeft.toFloat())
+                    val interH = max(0f, interBottom.toFloat() - interTop.toFloat())
                     val interArea = interW * interH
 
                     val areaA = a.width * a.height
                     val areaB = b.width * b.height
                     val unionArea = areaA + areaB - interArea
-                    val iou = if (unionArea > 0f) interArea / unionArea else 0f
+                    val iou = if (unionArea > 0f) interArea / unionArea.toFloat() else 0f
 
                     if (iou > 0.5f) {
                         // Keep larger, remove smaller; if equal: remove j (later)

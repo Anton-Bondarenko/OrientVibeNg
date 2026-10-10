@@ -52,7 +52,7 @@ import ru.bondarenko.orientvibe.ng.R
 import ru.bondarenko.orientvibe.ng.gps.MapGeometry
 import ru.bondarenko.orientvibe.ng.viewmodel.MapViewModel
 
-private const val GPS_ACCURACY_LOW_THRESHOLD = 30f
+private const val GPS_ACCURACY_LOW_THRESHOLD = 30.0
 
 // Equilateral triangle pointing up (orienteering start symbol)
 // Side length = 30, centered at (24, 24)
@@ -210,7 +210,7 @@ fun MainScreen(
 
     // Auto-bind GPS state
     var autoBindActive by remember { mutableStateOf(gpsState.autoBindActive) }
-    var gpsImagePos by remember { mutableStateOf(Pair(0f, 0f)) }
+    var gpsImagePos by remember { mutableStateOf(Pair(0.0, 0.0)) }
 
     // Sync autoBindActive from gpsState
     LaunchedEffect(gpsState.autoBindActive) {
@@ -230,10 +230,10 @@ fun MainScreen(
                 gpsImagePos = pos
                 // Also update kpBoxes for hit testing
                 navViewModel.setAutoBindKpBoxes(mapState.controlsBoundingBoxes)
-                navViewModel.setAutoBindImageDimensions(mapState.bitmap!!.width.toFloat() to mapState.bitmap!!.height.toFloat())
-            } ?: run { gpsImagePos = Pair(0f, 0f) }
+                navViewModel.setAutoBindImageDimensions(mapState.bitmap!!.width.toDouble() to mapState.bitmap!!.height.toDouble())
+            } ?: run { gpsImagePos = Pair(0.0, 0.0) }
         } else {
-            gpsImagePos = Pair(0f, 0f)
+            gpsImagePos = Pair(0.0, 0.0)
         }
     }
 
@@ -283,13 +283,13 @@ fun MainScreen(
                     val dx = (fp.x - sp.x) * bmp.width
                     val dy = (fp.y - sp.y) * bmp.height
                     val routeAngle =
-                        Math.toDegrees(Math.atan2(dx.toDouble(), -dy.toDouble())).toFloat()
-                    (-routeAngle).toFloat()
+                        Math.toDegrees(Math.atan2(dx.toDouble(), -dy.toDouble())).toDouble()
+                    (-routeAngle).toDouble()
                 } else {
-                    0f
+                    0.0
                 }
             } else {
-                0f
+                0.0
             }
         }
 
@@ -378,7 +378,7 @@ fun MainScreen(
     // Map tap listener: when user taps the map, place route point
     val tapListener = remember {
         object : MapTapListener {
-            override fun onMapTap(relativeX: Float, relativeY: Float) {
+            override fun onMapTap(relativeX: Double, relativeY: Double) {
                 viewModel.placeRoutePoint(relativeX, relativeY)
             }
         }
@@ -387,11 +387,11 @@ fun MainScreen(
     // Map drag listener: when user drags start/finish points
     val dragListener = remember {
         object : MapDragListener {
-            override fun onStartPointDragged(relativeX: Float, relativeY: Float) {
+            override fun onStartPointDragged(relativeX: Double, relativeY: Double) {
                 viewModel.moveStartPoint(relativeX, relativeY)
             }
 
-            override fun onFinishPointDragged(relativeX: Float, relativeY: Float) {
+            override fun onFinishPointDragged(relativeX: Double, relativeY: Double) {
                 viewModel.moveFinishPoint(relativeX, relativeY)
             }
         }
@@ -401,8 +401,8 @@ fun MainScreen(
     val bindGpsToStart: () -> Unit = bindStart@{
 
         val fix = gpsState.currentFix ?: return@bindStart
-        val bmpW = mapState.bitmap?.width?.toFloat() ?: 1f
-        val bmpH = mapState.bitmap?.height?.toFloat() ?: 1f
+        val bmpW = mapState.bitmap?.width?.toDouble() ?: 0.0
+        val bmpH = mapState.bitmap?.height?.toDouble() ?: 0.0
 
         // Store original start GPS for later recalibration — канонический source в NavViewModel
         navViewModel.setOriginalStartGps(fix.coordinate)
@@ -410,8 +410,8 @@ fun MainScreen(
         // Одно-точечная калибровка (placeholder для будущей двух-точечной через "Здесь финиш")
         val cal = MapCalibrationUtils.calibrateSinglePoint(
             startGPS = fix.coordinate,
-            startPointImageX = (mapState.startPoint?.x ?: 0f) * bmpW,
-            startPointImageY = (mapState.startPoint?.y ?: 0f) * bmpH,
+            startPointImageX = (mapState.startPoint?.x ?: 0.0) * bmpW,
+            startPointImageY = (mapState.startPoint?.y ?: 0.0) * bmpH,
             northAngle = mapState.northAngle,
             imageProportion = bmpW/bmpH
         )
@@ -427,8 +427,8 @@ fun MainScreen(
         val fix = gpsState.currentFix ?: return@bindFinish
         val startGPS = navViewModel.getOriginalStartGps() ?: return@bindFinish
 
-        val bmpW = mapState.bitmap?.width?.toFloat() ?: 1f
-        val bmpH = mapState.bitmap?.height?.toFloat() ?: 1f
+        val bmpW = mapState.bitmap?.width?.toDouble() ?: 1.0
+        val bmpH = mapState.bitmap?.height?.toDouble() ?: 1.0
         // Use existing calibration's declination (from start-point calibration) as fallback;
         // if no calibration yet, calculate from current GPS fix.
         val declination = gpsState.calibration?.physicalDeclination
@@ -438,10 +438,10 @@ fun MainScreen(
             )
         val result = MapCalibrationUtils.bindGpsToFinishWithTrack(
             startGPS = startGPS,
-            startPointImageX = (mapState.startPoint?.x ?: 0f) * bmpW,
-            startPointImageY = (mapState.startPoint?.y ?: 0f) * bmpH,
-            finishPointImageX = (mapState.finishPoint?.x ?: 0f) * bmpW,
-            finishPointImageY = (mapState.finishPoint?.y ?: 0f) * bmpH,
+            startPointImageX = (mapState.startPoint?.x ?: 0.0) * bmpW,
+            startPointImageY = (mapState.startPoint?.y ?: 0.0) * bmpH,
+            finishPointImageX = (mapState.finishPoint?.x ?: 0.0) * bmpW,
+            finishPointImageY = (mapState.finishPoint?.y ?: 0.0) * bmpH,
             currentFixGPS = fix.coordinate,
             magneticDeclination = declination
         )
@@ -642,12 +642,12 @@ fun MainScreen(
                     calibration = gpsState.calibration,
                     currentFix = gpsState.currentFix,
                     autoBindActive = autoBindActive,
-                    gpsFixImagePos = gpsImagePos.takeIf { it != Pair(0f, 0f) },
+                    gpsFixImagePos = gpsImagePos.takeIf { it != Pair(0.0, 0.0) },
                     calibrationPointBGps = gpsState.calibration?.pointB?.gps,
                     calibrationImageDims = mapState.bitmap?.let { bm ->
                         Pair(
-                            bm.width.toFloat(),
-                            bm.height.toFloat()
+                            bm.width.toDouble(),
+                            bm.height.toDouble()
                         )
                     },
                     onAutoBindTap = { relX, relY ->
@@ -655,15 +655,15 @@ fun MainScreen(
                         val fix = gpsState.currentFix ?: return@SubsamplingMapView false
 
                         val sWidth =
-                            mapState.bitmap?.width?.toFloat() ?: return@SubsamplingMapView false
+                            mapState.bitmap?.width?.toDouble() ?: return@SubsamplingMapView false
                         val sHeight =
-                            mapState.bitmap?.height?.toFloat() ?: return@SubsamplingMapView false
+                            mapState.bitmap?.height?.toDouble() ?: return@SubsamplingMapView false
                         val tapAbsX = relX * sWidth
                         val tapAbsY = relY * sHeight
 
                         // Check proximity to KP circles using the current GPS position (not the tap)
                         val gpsPos = gpsImagePos
-                        if (gpsPos == Pair(0f, 0f)) return@SubsamplingMapView false
+                        if (gpsPos == Pair(0.0, 0.0)) return@SubsamplingMapView false
 
                         val kpIdx = navViewModel.checkKpHit(tapAbsX, tapAbsY)
                         if (kpIdx >= 0 && mapState.controlsBoundingBoxes.isNotEmpty()) {
@@ -682,8 +682,8 @@ fun MainScreen(
                                 // KP is near tap — now verify it's also near current GPS fix position
                                 val gpsAbsX = gpsPos.first
                                 val gpsAbsY = gpsPos.second
-                                val imageW = mapState.bitmap!!.width.toFloat()
-                                val imageH = mapState.bitmap!!.height.toFloat()
+                                val imageW = mapState.bitmap!!.width.toDouble()
+                                val imageH = mapState.bitmap!!.height.toDouble()
                                 val gpsRelX = gpsAbsX / imageW
                                 val gpsRelY = gpsAbsY / imageH
 
@@ -748,7 +748,7 @@ fun MainScreen(
             }
 
             // Lock icon in top-right when navigating
-            if (mapRotation != 0f) {
+            if (mapRotation != 0.0) {
                 androidx.compose.material3.Icon(
                     imageVector = Icons.Default.Lock,
                     contentDescription = "Навигация",
@@ -771,7 +771,7 @@ fun MainScreen(
                 routeDistance = gpsState.routeDistance,
                 currentDistanceFromStart = currentDistanceFromStart,
                 magneticBearing = gpsState.currentFix?.bearing?.minus(
-                    gpsState.calibration?.bearingDegrees?.toFloat() ?: 0f
+                    gpsState.calibration?.bearingDegrees ?: 0.0
                 ),
                 modifier = Modifier
                     .align(Alignment.TopCenter)

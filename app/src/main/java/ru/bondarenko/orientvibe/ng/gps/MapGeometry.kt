@@ -19,12 +19,14 @@ import kotlin.math.sqrt
 object MapGeometry {
 
     private const val EARTH_RADIUS_METERS = 6_371_000.0
+    private const val MAX_DELTA_DECLINATION = 1.0
+    private const val MAX_DELTA_SCALE = 200.0
 
     fun calculateMagneticDeclination(
         latitude: Double,
         longitude: Double,
         timeMillis: Long = System.currentTimeMillis()
-    ): Float {
+    ): Double {
         val geomagneticField = GeomagneticField(
             latitude.toFloat(),
             longitude.toFloat(),
@@ -32,21 +34,21 @@ object MapGeometry {
             timeMillis
         )
 
-        return geomagneticField.declination
+        return geomagneticField.declination.toDouble()
     }
 
     /** True (geographic) bearing from *from* to *to*, in degrees [0, 360). */
-    fun bearing(from: GpsCoordinate, to: GpsCoordinate): Float {
+    fun bearing(from: GpsCoordinate, to: GpsCoordinate): Double {
         val lat1 = Math.toRadians(from.latitude)
         val lat2 = Math.toRadians(to.latitude)
         val dLon = Math.toRadians(to.longitude - from.longitude)
 
         val y = sin(dLon) * cos(lat2)
         val x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
-        return ((Math.toDegrees(atan2(y, x)) + 360f) % 360f).toFloat()
+        return ((Math.toDegrees(atan2(y, x)) + 360f) % 360f).toDouble()
     }
 
-    fun screenBearing(x1: Float, y1: Float, x2: Float, y2: Float): Float {
+    fun screenBearing(x1: Double, y1: Double, x2: Double, y2: Double): Double {
         val dx = x2 - x1
         val dy = y1 - y2
 
@@ -61,7 +63,7 @@ object MapGeometry {
             degrees += 360.0
         }
 
-        return degrees.toFloat()
+        return degrees.toDouble()
     }
 
     /** Haversine distance in metres between two GPS coordinates. */
@@ -106,7 +108,7 @@ object MapGeometry {
     }
 
     /** Magnetic bearing = trueBearing − declination (decl positive = east). */
-    fun magneticBearing(trueBearing: Float, declination: Float): Float {
+    fun magneticBearing(trueBearing: Double, declination: Double): Double {
         return trueBearing - declination
     }
 
@@ -120,11 +122,11 @@ object MapGeometry {
      * that the physical map's north direction opposes screen-up, but does NOT affect the
      * coordinate transform (dEast/dNorth mapping is inherently correct for any bearing).
      */
-    fun computeCalibrationRaw(
+    fun computeCalibrationHard(
         pointA: CalibrationPoint,
         pointB: CalibrationPoint,
-        magneticDeclination: Float,
-        northAngle: Float = 0f
+        magneticDeclination: Double,
+        northAngle: Double = 0.0
     ): MapCalibration? {
         // Вычисляем true bearing между точками для коррекции угла севера
         val trueBearing = bearing(pointA.gps, pointB.gps)
@@ -148,29 +150,101 @@ object MapGeometry {
             pointB.imageY,
             pointA.imageX,
             pointA.imageY,
-            (rawMagneticBearing + northAngle)
+            (magneticDeclination + northAngle)
         )
-        val dx = (rotPointB.first - pointA.imageX).toDouble()
-        val dy = (rotPointB.second - pointA.imageY).toDouble()
+        val dx = (rotPointB.first - pointA.imageX)
+        val dy = (rotPointB.second - pointA.imageY)
 
         val imageDistance = sqrt(dx * dx + dy * dy)
         if (imageDistance < 0.001) return null
 
 
-
         val scaleMetersPerUnitX = abs(dEast / dx)
         val scaleMetersPerUnitY = abs(dNorth / dy)
-        val hasXYFlip = cos(Math.toRadians(rawMagneticBearing.toDouble())) < 0
 
         return MapCalibration(
             pointA = pointA,
             pointB = pointB,
             scaleMetersPerMapX = scaleMetersPerUnitX,
             scaleMetersPerMapY = scaleMetersPerUnitY,
-            bearingDegrees = rawMagneticBearing,
-            magneticDeclination = rawMagneticBearing,
-            physicalDeclination = magneticDeclination,
-            hasXYFlip = hasXYFlip
+            bearingDegrees = magneticDeclination,
+            magneticDeclination = magneticDeclination,
+            physicalDeclination = magneticDeclination
+        )
+    }
+
+    // умная калибровка
+    fun computeCalibrationSoft(
+        pointA: CalibrationPoint,
+        pointB: CalibrationPoint,
+        northAngle: Double = 0.0,
+        oldCalibration: MapCalibration,
+        proportion: Double
+    ): MapCalibration? {
+        // Вычисляем true bearing между точками для коррекции угла севера
+        val trueBearing = bearing(pointA.gps, pointB.gps)
+        // теперь измерим угол на изображении
+        val screenBearing =
+            screenBearing(pointA.imageX, pointA.imageY, pointB.imageX, pointB.imageY) - northAngle
+        var calculatedDeclination = trueBearing - screenBearing
+        // корректируем склонение не более одного градуса за раз
+        calculatedDeclination =
+            oldCalibration.magneticDeclination + (calculatedDeclination - oldCalibration.magneticDeclination).coerceIn(
+                -MAX_DELTA_DECLINATION, MAX_DELTA_DECLINATION
+            )
+        // Compute Rhumb distance using cos(pointA.gps.lat) for easting — matches offsetCoordinate,
+        // gpsToImageRelative, and imageToGpsRelative which all use pointA (start) as reference.
+        // Using eastDistance (cos(avgLat)) would diverge when dNorth ≠ 0 because avgLat ≠ pointA.lat.
+        val dNorth = northDistance(pointA.gps, pointB.gps)
+        val dEast = eastDistance(pointA.gps, pointB.gps)
+        val gpsDistance = sqrt(dNorth * dNorth + dEast * dEast)
+        if (gpsDistance < 100.0) return null
+
+        // поворачиваем на трек на истинный север
+        val rotPointB = rotateAroundPoint(
+            pointB.imageX,
+            pointB.imageY,
+            pointA.imageX,
+            pointA.imageY,
+            (calculatedDeclination + northAngle)
+        )
+        // калибруем по большему плечу, для второго пропорционально
+        val dx = (rotPointB.first - pointA.imageX)
+        val dy = (rotPointB.second - pointA.imageY)
+
+        var scaleMetersPerUnitX: Double
+        var scaleMetersPerUnitY: Double
+        if (abs(dNorth) < abs(dEast)) {
+            scaleMetersPerUnitX = abs(dEast / dx)
+            // если двухточечная калибровка уже была и масштаб уже примерно известен, то ограничиваем изменения масштаба
+            if (oldCalibration.pointB != null) {
+                scaleMetersPerUnitX += (scaleMetersPerUnitX - oldCalibration.scaleMetersPerMapX).coerceIn(
+                    -MAX_DELTA_SCALE, MAX_DELTA_SCALE
+                )
+            }
+            scaleMetersPerUnitY = scaleMetersPerUnitX / proportion
+        } else {
+            scaleMetersPerUnitY = abs(dNorth / dy)
+            // если двухточечная калибровка уже была и масштаб уже примерно известен, то ограничиваем изменения масштаба
+            if (oldCalibration.pointB != null) {
+                scaleMetersPerUnitY += (scaleMetersPerUnitY - oldCalibration.scaleMetersPerMapY).coerceIn(
+                    -MAX_DELTA_SCALE, MAX_DELTA_SCALE
+                )
+            }
+            scaleMetersPerUnitX = scaleMetersPerUnitY * proportion
+        }
+
+        val imageDistance = sqrt(dx * dx + dy * dy)
+        if (imageDistance < 0.01) return null
+
+        return MapCalibration(
+            pointA = pointA,
+            pointB = pointB,
+            scaleMetersPerMapX = scaleMetersPerUnitX,
+            scaleMetersPerMapY = scaleMetersPerUnitY,
+            bearingDegrees = calculatedDeclination,
+            magneticDeclination = calculatedDeclination + northAngle,
+            physicalDeclination = calculatedDeclination
         )
     }
 
@@ -178,8 +252,8 @@ object MapGeometry {
      * Калибровка по одной точке
      */
     fun calibrationSingle(
-        pointA: CalibrationPoint, magneticDeclination: Float,
-        northAngle: Float = 0f, scaleX: Double, scaleY: Double
+        pointA: CalibrationPoint, magneticDeclination: Double,
+        northAngle: Double = 0.0, scaleX: Double, scaleY: Double
     ): MapCalibration {
         return MapCalibration(
             pointA = pointA,
@@ -188,8 +262,7 @@ object MapGeometry {
             scaleMetersPerMapY = scaleY,
             bearingDegrees = magneticDeclination,
             magneticDeclination = magneticDeclination + northAngle,
-            physicalDeclination = magneticDeclination,
-            hasXYFlip = cos(Math.toRadians((magneticDeclination + northAngle).toDouble())) < 0
+            physicalDeclination = magneticDeclination
         )
     }
 
@@ -199,7 +272,7 @@ object MapGeometry {
     fun gpsToImageTrueNorth(
         gps: GpsCoordinate,
         calibration: MapCalibration
-    ): Pair<Float, Float> {
+    ): Pair<Double, Double> {
         val dNorth = northDistance(calibration.pointA.gps, gps)
         // Use cos(startLat) for easting — matches offsetCoordinate's reference.
         // Using cos(avgLat) (eastDistance) diverges when there's a non-zero dNorth,
@@ -209,8 +282,8 @@ object MapGeometry {
 
         // Canonical mapping: north → up (negative Y in image space), east → right.
         // Convert geographic offsets to calibrated pixel distances.
-        val relDx = (dEast / calibration.scaleMetersPerMapX).toFloat()
-        val relDy = (-dNorth / calibration.scaleMetersPerMapY).toFloat()
+        val relDx = (dEast / calibration.scaleMetersPerMapX).toDouble()
+        val relDy = (-dNorth / calibration.scaleMetersPerMapY).toDouble()
 
         return Pair(
             calibration.pointA.imageX + relDx,
@@ -220,8 +293,8 @@ object MapGeometry {
 
     /** Inverse image→GPS transform. */
     fun imageToGpsTrueNorth(
-        imageX: Float,
-        imageY: Float,
+        imageX: Double,
+        imageY: Double,
         calibration: MapCalibration
     ): GpsCoordinate {
         val relDx = (imageX - calibration.pointA.imageX).toDouble()
@@ -243,7 +316,7 @@ object MapGeometry {
      */
     fun offsetGps(
         from: GpsCoordinate,
-        bearingDeg: Float,
+        bearingDeg: Double,
         distanceMeters: Double
     ): GpsCoordinate {
         val earthRadius = 6_371_000.0
@@ -273,45 +346,44 @@ object MapGeometry {
     fun imageToGps(
         point: PointF,
         calibration: MapCalibration?,
-        northAngle: Float
+        northAngle: Double
     ): GpsCoordinate? {
-        return imageToGps(point.x, point.y, calibration, northAngle)
+        return imageToGps(point.x.toDouble(), point.y.toDouble(), calibration, northAngle)
     }
 
-    /** JVM-safe version that accepts raw x/y floats — avoids PointF stub issues on JVM tests. */
+    /** JVM-safe version that accepts raw x/y Doubles — avoids PointF stub issues on JVM tests. */
     fun imageToGps(
-        imageX: Float,
-        imageY: Float,
+        imageX: Double,
+        imageY: Double,
         calibration: MapCalibration?,
-        northAngle: Float
+        northAngle: Double
     ): GpsCoordinate? {
         val cal =
             calibration ?: return null
 
         // Un-rotate the image coordinate by -fullAngle around the pivot.
         // gpsToImage rotates by +θ; imageToGps must undo it with -θ for round-trip symmetry.
-        val fullAngle =
-            magneticBearing(northAngle, cal.magneticDeclination)
-        val pair = rotateAroundCalibration(imageX, imageY, cal, -fullAngle)
+        val fullAngle = northAngle + cal.magneticDeclination
+        val pair = rotateAroundCalibration(imageX, imageY, cal, fullAngle)
 
         return imageToGpsTrueNorth(pair.first, pair.second, cal)
     }
 
     fun rotateAroundCalibration(
-        x: Float,
-        y: Float,
+        x: Double,
+        y: Double,
         calibration: MapCalibration,
-        fullAngle: Float
-    ): Pair<Float, Float> {
+        fullAngle: Double
+    ): Pair<Double, Double> {
         // Always use the un-rotated (trueNorth) pivot for consistency between gpsToImage and imageToGps.
         // If this depended on northAngle via gpsToImageAbs, the forward and inverse transforms
         // would compute different pivots — breaking the round-trip invariant.
         val pivotImg = gpsToImageTrueNorth(calibration.pointA.gps, calibration)
         val px = pivotImg.first
         val py = pivotImg.second
-        val angleRad = Math.toRadians(fullAngle.toDouble())
-        val cosA = cos(angleRad).toFloat()
-        val sinA = sin(angleRad).toFloat()
+        val angleRad = Math.toRadians(fullAngle)
+        val cosA = cos(angleRad)
+        val sinA = sin(angleRad)
         val dx = x - px
         val dy = y - py
 
@@ -329,12 +401,12 @@ object MapGeometry {
      * @return Пара новых координат (Pair<Double, Double>)
      */
     fun rotateAroundPoint(
-        x: Float,
-        y: Float,
-        cx: Float,
-        cy: Float,
-        angleInDegrees: Float
-    ): Pair<Float, Float> {
+        x: Double,
+        y: Double,
+        cx: Double,
+        cy: Double,
+        angleInDegrees: Double
+    ): Pair<Double, Double> {
         // Переводим угол из градусов в радианы
         val radians = Math.toRadians(angleInDegrees.toDouble())
         val cosA = cos(radians)
@@ -352,7 +424,7 @@ object MapGeometry {
         val newX = rotatedX + cx
         val newY = rotatedY + cy
 
-        return Pair(newX.toFloat(), newY.toFloat())
+        return Pair(newX, newY)
     }
 
     /**
@@ -362,24 +434,23 @@ object MapGeometry {
     fun gpsToImage(
         gps: GpsCoordinate,
         calibration: MapCalibration?,
-        northAngle: Float
-    ): Pair<Float, Float>? {
+        northAngle: Double
+    ): Pair<Double, Double>? {
         val cal =
             calibration ?: return null
 
         // gpsToImage returns ABSOLUTE pixels (pointA.imageX + relDx in pixels), NOT normalized 0..1
         val imageCoords = gpsToImageTrueNorth(gps, cal) ?: return null
 
-        var x = imageCoords.first
-        var y = imageCoords.second
+        val x = imageCoords.first
+        val y = imageCoords.second
 
         // Step 2: Apply northAngle rotation around a fixed pivot.
         // Use calibration pointA (the map anchor) as the rotation center, NOT trackPoints.first()
         // because trim removes old points which changes the first element, causing visual drift.
-        val fullAngle =
-            magneticBearing(northAngle, cal.magneticDeclination)
+        val fullAngle = northAngle + cal.magneticDeclination
 
-        val pair = rotateAroundCalibration(x, y, cal, fullAngle)
+        val pair = rotateAroundCalibration(x, y, cal, -fullAngle)
 
         return pair
     }

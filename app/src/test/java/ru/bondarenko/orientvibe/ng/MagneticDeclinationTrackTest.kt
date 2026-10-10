@@ -53,7 +53,7 @@ class MagneticDeclinationTrackTest {
         val pointA = CalibrationPoint(gps = pointAGps, imageX = 0.5f * SCALE, imageY = 0.8f * SCALE)
         val pointB = CalibrationPoint(gps = pointBGps, imageX = 0.5f * SCALE, imageY = 0.2f * SCALE)
 
-        return MapGeometry.computeCalibrationRaw(pointA, pointB, declinationDeg.toFloat())
+        return MapGeometry.computeCalibrationHard(pointA, pointB, declinationDeg.toDouble())
             ?: throw IllegalStateException("Calibration points too close")
     }
 
@@ -65,7 +65,7 @@ class MagneticDeclinationTrackTest {
      * Compute the screen-angle of a vector (dx, dy) where 0° = up (screen-up),
      * 90° = right, 180° = down, 270° = left. Matches the convention used by TrackOverlay.
      */
-    private fun screenAngleDeg(dx: Float, dy: Float): Double {
+    private fun screenAngleDeg(dx: Double, dy: Double): Double {
         return Math.toDegrees(kotlin.math.atan2(dx.toDouble(), (-dy).toDouble()))
     }
 

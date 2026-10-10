@@ -62,9 +62,9 @@ class GpsManager(private val context: Context) {
                         latitude = location.latitude,
                         longitude = location.longitude
                     ),
-                    accuracy = location.accuracy,
-                    bearing = location.bearing,
-                    speed = location.speed,
+                    accuracy = location.accuracy.toDouble(),
+                    bearing = location.bearing.toDouble(),
+                    speed = location.speed.toDouble(),
                     timestamp = System.currentTimeMillis(),
                     altitude = location.altitude
                 )
@@ -133,9 +133,9 @@ class GpsManager(private val context: Context) {
                 Log.d(TAG, "getLastKnownLocation: provider=$provider, lat=${loc.latitude}, lon=${loc.longitude}")
                 return GpsFix(
                     coordinate = GpsCoordinate(loc.latitude, loc.longitude),
-                    accuracy = loc.accuracy,
-                    bearing = loc.bearing,
-                    speed = loc.speed,
+                    accuracy = loc.accuracy.toDouble(),
+                    bearing = loc.bearing.toDouble(),
+                    speed = loc.speed.toDouble(),
                     timestamp = System.currentTimeMillis(),
                     altitude = loc.altitude
                 )

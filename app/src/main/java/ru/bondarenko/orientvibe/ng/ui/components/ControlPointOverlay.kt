@@ -13,7 +13,7 @@ class ControlPointOverlay {
     var numbersBoundingBoxes: List<BoundingBox> = emptyList()
 
     // Source-to-view coordinate conversion — set externally
-    var sourceToViewCoord: ((Float, Float) -> android.graphics.PointF?)? = null
+    var sourceToViewCoord: ((Double, Double) -> android.graphics.PointF?)? = null
 
     private val controlCirclePaint = Paint().apply {
         color = ControlsRed
@@ -52,9 +52,9 @@ class ControlPointOverlay {
     // ── Отладка: рисует индексы всех боксов (CP#N / NUM#N) в координатах центра ──
     private fun drawDebugBoxes(
         canvas: Canvas,
-        sWidth: Float,
-        sHeight: Float,
-        toView: (Float, Float) -> android.graphics.PointF?
+        sWidth: Double,
+        sHeight: Double,
+        toView: (Double, Double) -> android.graphics.PointF?
     ) {
         // Боксы КП — над кружком чуть выше
         controlsboundingBoxes.forEachIndexed { idx, box ->

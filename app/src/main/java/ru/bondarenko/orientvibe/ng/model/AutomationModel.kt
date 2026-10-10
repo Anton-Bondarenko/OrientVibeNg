@@ -1,5 +1,7 @@
 package ru.bondarenko.orientvibe.ng.model
 
+import ru.bondarenko.orientvibe.ng.gps.MapCalibration
+
 
 /** Дистанция КП взят*/
 const val AUTO_MIN_DIST = 10
@@ -10,7 +12,8 @@ data class MovementState(
     var gpsFix: GpsFix? = null,
     var currentControl: CurrentControl = CurrentControl(1),
     var prevControl: CurrentControl = CurrentControl(0),
-    var distanceToTarget: Float = 0f,
+    var distanceToTarget: Double = 0.0,
+    var newMapCalibration: MapCalibration? = null,
 ) {
     /**
      * Сюда передаём следующий КП

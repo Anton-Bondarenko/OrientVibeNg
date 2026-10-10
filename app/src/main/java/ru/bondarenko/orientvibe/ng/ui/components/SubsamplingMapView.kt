@@ -39,8 +39,8 @@ class OverlayMapView(
             field = value
             invalidate()
         }
-    var gpsFixImagePos: Pair<Float, Float>? = null
-    var onAutoBindTapCallback: ((relX: Float, relY: Float) -> Boolean)? = null
+    var gpsFixImagePos: Pair<Double, Double>? = null
+    var onAutoBindTapCallback: ((relX: Double, relY: Double) -> Boolean)? = null
 
     /** Calibration point B GPS for purple marker rendering */
     var calibrationPointBGps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate? = null
@@ -50,7 +50,7 @@ class OverlayMapView(
         }
 
     /** Image dimensions for purple point rendering (absolute pixels) */
-    var calibrationImageDims: Pair<Float, Float>? = null
+    var calibrationImageDims: Pair<Double, Double>? = null
         set(value) {
             field = value
             invalidate()
@@ -70,8 +70,8 @@ class OverlayMapView(
 
         // Auto-bind: intercept tap to check proximity to KP circles
         if (autoBindActive && event.action == android.view.MotionEvent.ACTION_UP) {
-            val sourcePt = viewToSourceCoord(event.x, event.y) ?: return false
-            val bitmapW = bitmap?.width?.toFloat() ?: return false
+            val sourcePt = viewToSourceCoord(event.x.toDouble(), event.y.toDouble()) ?: return false
+            val bitmapW = bitmap?.width?.toDouble() ?: return false
             val handled = onAutoBindTapCallback?.invoke(sourcePt.x / bitmapW, sourcePt.y / bitmapW)
             if (handled == true) {
                 invalidate() // redraw to clear/close overlay
@@ -85,11 +85,11 @@ class OverlayMapView(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
-        val sWidth = bitmap?.width?.toFloat() ?: 0f
-        val sHeight = bitmap?.height?.toFloat() ?: 0f
+        val sWidth = bitmap?.width?.toDouble() ?: 0.0
+        val sHeight = bitmap?.height?.toDouble() ?: 0.0
         if (sWidth <= 0 || sHeight <= 0) return
 
-        if (mapRotation != 0f && !mapTransformApplied) {
+        if (mapRotation != 0.0 && !mapTransformApplied) {
             applyMapTransform()
         }
 
@@ -162,10 +162,10 @@ fun SubsamplingMapView(
     finishPoint: RoutePoint? = null,
     tapListener: MapTapListener? = null,
     dragListener: MapDragListener? = null,
-    northAngle: Float = 0f,
-    onNorthAngleChanged: ((Float) -> Unit)? = null,
+    northAngle: Double = 0.0,
+    onNorthAngleChanged: ((Double) -> Unit)? = null,
     onNorthAngleReset: (() -> Unit)? = null,
-    mapRotation: Float = 0f,
+    mapRotation: Double = 0.0,
     trackPoints: List<TrackPoint> = emptyList(),
     calibrationVersionTrigger: Int = 0, // триггер пересчёта трека при recalibration
     calibration: MapCalibration? = null,
@@ -173,10 +173,10 @@ fun SubsamplingMapView(
     modifier: Modifier = Modifier,
     // ── Auto-bind GPS mode ──
     autoBindActive: Boolean = false,
-    gpsFixImagePos: Pair<Float, Float>? = null,
+    gpsFixImagePos: Pair<Double, Double>? = null,
     calibrationPointBGps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate? = null,
-    calibrationImageDims: Pair<Float, Float>? = null,
-    onAutoBindTap: ((relX: Float, relY: Float) -> Boolean)? = null
+    calibrationImageDims: Pair<Double, Double>? = null,
+    onAutoBindTap: ((relX: Double, relY: Double) -> Boolean)? = null
 ) {
     val context = LocalContext.current
 
@@ -221,7 +221,7 @@ fun SubsamplingMapView(
 
     DisposableEffect(onNorthAngleChanged, onNorthAngleReset) {
         val listener = object : NorthAngleListener {
-            override fun onNorthAngleChanged(angleDegrees: Float) {
+            override fun onNorthAngleChanged(angleDegrees: Double) {
                 onNorthAngleChanged?.invoke(angleDegrees)
             }
 

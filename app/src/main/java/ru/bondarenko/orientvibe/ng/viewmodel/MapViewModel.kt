@@ -24,9 +24,9 @@ import ru.bondarenko.orientvibe.ng.yolo.MapDetectionProgressListener
 import ru.bondarenko.orientvibe.ng.yolo.MapDetector
 
 /** Поворачивает bitmap на заданный угол. */
-private fun Bitmap.rotateBitmap(degrees: Float): Bitmap {
+private fun Bitmap.rotateBitmap(degrees: Double): Bitmap {
     val matrix = Matrix()
-    matrix.postRotate(degrees)
+    matrix.postRotate(degrees.toFloat())
     return Bitmap.createBitmap(this, 0, 0, width, height, matrix, true)
 }
 
@@ -159,7 +159,7 @@ class MapViewModel(
                 }
 
                 _mapState.value = _mapState.value.copy(
-                    progress = current.toFloat() / total.toFloat(),
+                    progress = current.toDouble() / total.toDouble(),
                     progressMessage = message
                 )
             } catch (e: Exception) {
@@ -201,15 +201,15 @@ class MapViewModel(
                 when (orientation) {
                     ExifInterface.ORIENTATION_ROTATE_90,
                     ExifInterface.ORIENTATION_TRANSPOSE -> displayBitmap =
-                        displayBitmap.rotateBitmap(90f)
+                        displayBitmap.rotateBitmap(90.0)
 
                     ExifInterface.ORIENTATION_ROTATE_180,
                     ExifInterface.ORIENTATION_FLIP_VERTICAL -> displayBitmap =
-                        displayBitmap.rotateBitmap(180f)
+                        displayBitmap.rotateBitmap(180.0)
 
                     ExifInterface.ORIENTATION_ROTATE_270,
                     ExifInterface.ORIENTATION_TRANSVERSE -> displayBitmap =
-                        displayBitmap.rotateBitmap(270f)
+                        displayBitmap.rotateBitmap(270.0)
 
                     else -> { /* Ориентация корректная */
                     }
@@ -247,15 +247,15 @@ class MapViewModel(
         val displayBm = if (orientation != ExifInterface.ORIENTATION_NORMAL) {
             when (orientation) {
                 ExifInterface.ORIENTATION_ROTATE_90, ExifInterface.ORIENTATION_TRANSPOSE -> rawBm.rotateBitmap(
-                    90f
+                    90.0
                 )
 
                 ExifInterface.ORIENTATION_ROTATE_180, ExifInterface.ORIENTATION_FLIP_VERTICAL -> rawBm.rotateBitmap(
-                    180f
+                    180.0
                 )
 
                 ExifInterface.ORIENTATION_ROTATE_270, ExifInterface.ORIENTATION_TRANSVERSE -> rawBm.rotateBitmap(
-                    270f
+                    270.0
                 )
 
                 else -> rawBm.copy(rawBm.config ?: android.graphics.Bitmap.Config.ARGB_8888, false)
@@ -303,7 +303,7 @@ class MapViewModel(
         _mapState.value = _mapState.value.copy(placingMode = mode)
     }
 
-    private fun snapToControlPoint(relativeX: Float, relativeY: Float): RoutePoint {
+    private fun snapToControlPoint(relativeX: Double, relativeY: Double): RoutePoint {
         val boxes = _mapState.value.controlsBoundingBoxes
         val snapped = boxes.minByOrNull { box ->
             val dx = box.centerX - relativeX
@@ -321,7 +321,7 @@ class MapViewModel(
         return RoutePoint(relativeX, relativeY)
     }
 
-    fun placeRoutePoint(relativeX: Float, relativeY: Float) {
+    fun placeRoutePoint(relativeX: Double, relativeY: Double) {
         val state = _mapState.value
         Log.d(tag, "placeRoutePoint x=$relativeX y=$relativeY placingMode=${state.placingMode}")
         if (state.placingMode == PlacingMode.NONE) {
@@ -350,24 +350,24 @@ class MapViewModel(
         }
     }
 
-    fun moveStartPoint(relativeX: Float, relativeY: Float) {
+    fun moveStartPoint(relativeX: Double, relativeY: Double) {
         _mapState.value =
             _mapState.value.copy(startPoint = snapToControlPoint(relativeX, relativeY))
     }
 
-    fun moveFinishPoint(relativeX: Float, relativeY: Float) {
+    fun moveFinishPoint(relativeX: Double, relativeY: Double) {
         _mapState.value =
             _mapState.value.copy(finishPoint = snapToControlPoint(relativeX, relativeY))
     }
 
     // ── Map orientation ────────────────────────────────────────────────────
 
-    fun updateNorthAngle(angle: Float) {
-        _mapState.value = _mapState.value.copy(northAngle = angle.coerceIn(-45f, 45f))
+    fun updateNorthAngle(angle: Double) {
+        _mapState.value = _mapState.value.copy(northAngle = angle.coerceIn(-45.0, 45.0))
     }
 
     fun resetNorthAngle() {
-        _mapState.value = _mapState.value.copy(northAngle = 0f)
+        _mapState.value = _mapState.value.copy(northAngle = 0.0)
     }
 
     fun updateAzimuth() {
@@ -378,7 +378,7 @@ class MapViewModel(
             val dx = (fp.x - sp.x) * bmp.width
             val dy = (fp.y - sp.y) * bmp.height
             val routeDir = (Math.toDegrees(Math.atan2(dx.toDouble(), -dy.toDouble())) + 360) % 360
-            val angle = ((routeDir + _mapState.value.northAngle + 360) % 360).toFloat()
+            val angle = ((routeDir + _mapState.value.northAngle + 360) % 360).toDouble()
             _mapState.value = _mapState.value.copy(azimuth = angle)
         }
     }
