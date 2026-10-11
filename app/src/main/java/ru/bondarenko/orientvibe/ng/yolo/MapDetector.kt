@@ -2,11 +2,14 @@ package ru.bondarenko.orientvibe.ng.yolo
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.PointF
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import ru.bondarenko.orientvibe.ng.gps.MapGeometry
+import ru.bondarenko.orientvibe.ng.gps.MapGeometry.convertToNormalized
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.cancellation.CancellationException
@@ -244,21 +247,63 @@ class MapDetector(private val context: Context) {
         }
     }
 
-    /** Convert a YOLO [DetectionResult] to a relative-coordinate [BoundingBox]. */
+    /** Convert a YOLO [DetectionResult] to a relative-coordinate [BoundingBox].
+
+     * YOLO детектирует на изображении размера [inputSize × inputSize] (пэд до квадрата).
+     * bbox.left/top/right/bottom — абсолютные пиксели в padded-квадрате.
+     *
+     * Нормализованные координаты [0..1] привязаны к незаполненному контенту:
+     *   size = min(w, h) — масштабная сторона
+     *   offsetX = (w - size) / 2  — горизонтальный отступ padding
+     *   offsetY = (h - size) / 2  — вертикальный отступ padding
+     *
+     * convertToNormalized: pixel → [0..1] (учитывает offsets)
+     * convertToPixels:     [0..1] → pixel    (учитывает offsets)
+     * Они должны быть инверсами друг друга.
+     */
     private fun yoloDrToBoundingBox(
         dr: DetectionResult,
         bitmapWidth: Int,
         bitmapHeight: Int,
     ): BoundingBox {
-        val left = dr.boundingBox.left / bitmapWidth
-        val top = dr.boundingBox.top / bitmapHeight
-        val width = (dr.boundingBox.right - dr.boundingBox.left) / bitmapWidth.toFloat()
-        val height = (dr.boundingBox.bottom - dr.boundingBox.top) / bitmapHeight.toFloat()
+        val box = dr.boundingBox
+
+        // ── 1. Центр bbox в пикселях padded-квадрата → нормализованные [0..1] ──
+        // convertToNormalized учтёт padding offsets и вернёт координату относительно контента
+        val centerPx = PointF(
+            (box.left + box.right) / 2.0f,
+            (box.top + box.bottom) / 2.0f
+        )
+        val centerNorm = convertToNormalized(
+            centerPx.x.toDouble(),
+            centerPx.y.toDouble(),
+            bitmapWidth.toDouble(),
+            bitmapHeight.toDouble()
+        )
+
+        // ── 2. halfWidth/halfHeight в пикселях → нормализованные ──
+        // Размер масштабной стороны = min(w, h) — это размер unpadded контента
+        // convertToPixels использует тот же size для обратного преобразования [0..1] → pixel
+        val sizePx = minOf(bitmapWidth.toDouble(), bitmapHeight.toDouble())
+
+        val rawHalfW = (box.right - box.left) / 2.0f
+        val rawHalfH = (box.bottom - box.top) / 2.0f
+        val halfWNorm = rawHalfW / sizePx.toFloat()
+        val halfHNorm = rawHalfH / sizePx.toFloat()
+
+        Log.d(
+            tag,
+            "yoloDrToBoundingBox: px=[${box.left},${box.top},${box.right},${box.bottom}] " +
+                "centerNorm=(${"%.4f".format(centerNorm.x)}, ${"%.4f".format(centerNorm.y)}) " +
+                "halfW=${"%.4f".format(halfWNorm)} halfH=${"%.4f".format(halfHNorm)} " +
+                "sizePx=${"%.0f".format(sizePx)} maxPx=${"%.0f".format(max(bitmapWidth.toDouble(), bitmapHeight.toDouble()))}"
+        )
+
         return BoundingBox(
-            centerX = left + width / 2.0,
-            centerY = top + height / 2.0,
-            width = width.toDouble(),
-            height = height.toDouble(),
+            centerX = centerNorm.x.toDouble(),
+            centerY = centerNorm.y.toDouble(),
+            width = (2.0 * halfWNorm).toDouble(),
+            height = (2.0 * halfHNorm).toDouble(),
             confidence = dr.confidence.toDouble(),
             label = "",
             number = null,
@@ -313,26 +358,22 @@ class MapDetector(private val context: Context) {
                 val offsetX = col * (SLICE_SIZE - SLICE_SIZE / 5)
                 val offsetY = row * (SLICE_SIZE - SLICE_SIZE / 5)
 
-                // Конвертируем bbox из абсолютных пикселей → локальные координаты тайла
-                val leftNorm =
-                    numberBox.centerX - numberBox.width / 2f - offsetX / bitmap.width.toFloat()
-                val rightNorm =
-                    numberBox.centerX + numberBox.width / 2f - offsetX / bitmap.width.toFloat()
-                val topNorm =
-                    numberBox.centerY - numberBox.height / 2f - offsetY / bitmap.height.toFloat()
-                val bottomNorm =
-                    numberBox.centerY + numberBox.height / 2f - offsetY / bitmap.height.toFloat()
+                // Конвертируем границы тайла в нормализованные координаты — используем тот же size как convertToPixels
+                val sizePx = minOf(bitmap.width.toDouble(), bitmap.height.toDouble())
+                val padX = (bitmap.width - sizePx) / 2.0
+                val padY = (bitmap.height - sizePx) / 2.0
+                val tileLeftNorm = (offsetX - padX) / sizePx
+                val tileRightNorm = (offsetX + SLICE_SIZE - padX) / sizePx
+                val tileTopNorm = (offsetY - padY) / sizePx
+                val tileBottomNorm = (offsetY + SLICE_SIZE - padY) / sizePx
 
-                Log.d(
-                    tag,
-                    "  slice=$tileIdx [$col,$row] offsetX=$offsetX offsetY=$offsetY bounds=tl=${
-                        "%.4f".format(leftNorm)
-                    } tr=${"%.4f".format(rightNorm)} bl=${"%.4f".format(topNorm)} br=${
-                        "%.4f".format(
-                            bottomNorm
-                        )
-                    }"
-                )
+                // Конвертируем bbox из абсолютных пикселей → локальные координаты тайла
+//                val leftTop = convertToNormalized()
+                val leftNorm = numberBox.centerX - numberBox.width / 2f - tileLeftNorm
+                val rightNorm = numberBox.centerX + numberBox.width / 2f - tileLeftNorm
+                val topNorm = numberBox.centerY - numberBox.height / 2f - tileTopNorm
+                val bottomNorm = numberBox.centerY + numberBox.height / 2f - tileTopNorm
+
                 if (leftNorm < 0 || rightNorm >= 1 || topNorm < 0 || bottomNorm >= 1) {
                     Log.d(
                         tag,
@@ -341,25 +382,27 @@ class MapDetector(private val context: Context) {
                 }
             }
 
-            val cxPx = numberBox.centerX * bitmap.width
-            val cyPx = numberBox.centerY * bitmap.height
-            val halfW = (numberBox.width * bitmap.width) / 2f
-            val halfH = (numberBox.height * bitmap.height) / 2f
+            // Конвертируем bbox из нормализованных [0..1] → пиксели полного изображения
+            // convertToPixels использует minOf(w,h) как scale size + padding offsets
+            val cPx = MapGeometry.convertToPixels(
+                numberBox.centerX, numberBox.centerY,
+                bitmap.width.toDouble(), bitmap.height.toDouble()
+            )
+
+            // halfWidth/halfHeight в пикселях — используем тот же minOf как convertToPixels
+            val sizePx = minOf(bitmap.width.toDouble(), bitmap.height.toDouble())
+            val halfW = (numberBox.width * sizePx) / 2f
+            val halfH = (numberBox.height * sizePx) / 2f
 
             // Expand ROI: ±150% from number bbox — digits live there
-            val roiX1 = ((cxPx - halfW * DIGIT_ROI_EXPANSION_FACTOR).coerceAtLeast(0.0)).toInt()
-            val roiY1 = ((cyPx - halfH * DIGIT_ROI_EXPANSION_FACTOR).coerceAtLeast(0.0)).toInt()
+            val roiX1 = ((cPx.x - halfW * DIGIT_ROI_EXPANSION_FACTOR).coerceAtLeast(0.0)).toInt()
+            val roiY1 = ((cPx.y - halfH * DIGIT_ROI_EXPANSION_FACTOR).coerceAtLeast(0.0)).toInt()
             val roiX2 =
-                (cxPx + halfW * DIGIT_ROI_EXPANSION_FACTOR).coerceAtMost(bitmap.width.toDouble())
+                (cPx.x + halfW * DIGIT_ROI_EXPANSION_FACTOR).coerceAtMost(bitmap.width.toDouble())
                     .toInt()
             val roiY2 =
-                (cyPx + halfH * DIGIT_ROI_EXPANSION_FACTOR).coerceAtMost(bitmap.height.toDouble())
+                (cPx.y + halfH * DIGIT_ROI_EXPANSION_FACTOR).coerceAtMost(bitmap.height.toDouble())
                     .toInt()
-
-            Log.d(
-                tag,
-                "  cx=$cxPx cy=$cyPx halfW=$halfW halfH=$halfH rawROI=[$roiX1,$roiY1]-$roiX2,$roiY2 sz=${roiX2 - roiX1}x${roiY2 - roiY1}"
-            )
 
             if (roiX2 - roiX1 < 8 || roiY2 - roiY1 < 8) {
                 Log.w(tag, "  >>> SKIP ROI too small: ${roiX2 - roiX1}x${roiY2 - roiY1}")

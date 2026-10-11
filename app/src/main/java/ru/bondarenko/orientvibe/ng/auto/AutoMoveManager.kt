@@ -57,8 +57,7 @@ class AutoMoveManager {
         autoMapState: AutoMapState,
         movementState: MovementState,
         mapCalibration: MapCalibration,
-        gpsFix: GpsFix,
-        proportion: Double
+        gpsFix: GpsFix
     ): MovementState {
         val boundingBox = movementState.currentControl.boundingBox
         if (boundingBox != null) {
@@ -74,8 +73,7 @@ class AutoMoveManager {
                     autoMapState,
                     movementState,
                     mapCalibration,
-                    autoMapState,
-                    proportion
+                    autoMapState
                 )
             } else {
                 movementState.newMapCalibration = null
@@ -124,8 +122,7 @@ class AutoMoveManager {
         mapState: AutoMapState,
         ms: MovementState,
         mapCalibration: MapCalibration,
-        autoMapState: AutoMapState,
-        proportion: Double
+        autoMapState: AutoMapState
     ): MapCalibration? {
         val currentNum = ms.currentControl.num
         Log.d(TAG, "дошли до КП #$currentNum, переключение на следующую")
@@ -150,7 +147,7 @@ class AutoMoveManager {
             newCalibration = MapGeometry.computeCalibrationSoft(
                 mapCalibration.pointA,
                 CalibrationPoint(supposeControlHere, oldCurrentBox.centerX, oldCurrentBox.centerY),
-                autoMapState.northAngle, mapCalibration, proportion
+                autoMapState.northAngle, mapCalibration
             )
         }
         detectionReset()

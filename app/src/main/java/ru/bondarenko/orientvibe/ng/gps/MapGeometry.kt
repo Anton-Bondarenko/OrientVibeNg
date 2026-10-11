@@ -20,7 +20,7 @@ object MapGeometry {
 
     private const val EARTH_RADIUS_METERS = 6_371_000.0
     private const val MAX_DELTA_DECLINATION = 1.0
-    private const val MAX_DELTA_SCALE = 200.0
+    private const val MAX_DELTA_SCALE = 50.0
 
     fun calculateMagneticDeclination(
         latitude: Double,
@@ -178,8 +178,7 @@ object MapGeometry {
         pointA: CalibrationPoint,
         pointB: CalibrationPoint,
         northAngle: Double = 0.0,
-        oldCalibration: MapCalibration,
-        proportion: Double
+        oldCalibration: MapCalibration
     ): MapCalibration? {
         // Вычисляем true bearing между точками для коррекции угла севера
         val trueBearing = bearing(pointA.gps, pointB.gps)
@@ -218,20 +217,20 @@ object MapGeometry {
             scaleMetersPerUnitX = abs(dEast / dx)
             // если двухточечная калибровка уже была и масштаб уже примерно известен, то ограничиваем изменения масштаба
             if (oldCalibration.pointB != null) {
-                scaleMetersPerUnitX += (scaleMetersPerUnitX - oldCalibration.scaleMetersPerMapX).coerceIn(
+                scaleMetersPerUnitX = oldCalibration.scaleMetersPerMapX + (scaleMetersPerUnitX - oldCalibration.scaleMetersPerMapX).coerceIn(
                     -MAX_DELTA_SCALE, MAX_DELTA_SCALE
                 )
             }
-            scaleMetersPerUnitY = scaleMetersPerUnitX / proportion
+            scaleMetersPerUnitY = scaleMetersPerUnitX
         } else {
             scaleMetersPerUnitY = abs(dNorth / dy)
             // если двухточечная калибровка уже была и масштаб уже примерно известен, то ограничиваем изменения масштаба
             if (oldCalibration.pointB != null) {
-                scaleMetersPerUnitY += (scaleMetersPerUnitY - oldCalibration.scaleMetersPerMapY).coerceIn(
+                scaleMetersPerUnitY = oldCalibration.scaleMetersPerMapY + (scaleMetersPerUnitY - oldCalibration.scaleMetersPerMapY).coerceIn(
                     -MAX_DELTA_SCALE, MAX_DELTA_SCALE
                 )
             }
-            scaleMetersPerUnitX = scaleMetersPerUnitY * proportion
+            scaleMetersPerUnitX = scaleMetersPerUnitY
         }
 
         val imageDistance = sqrt(dx * dx + dy * dy)
@@ -343,32 +342,6 @@ object MapGeometry {
         )
     }
 
-    fun imageToGps(
-        point: PointF,
-        calibration: MapCalibration?,
-        northAngle: Double
-    ): GpsCoordinate? {
-        return imageToGps(point.x.toDouble(), point.y.toDouble(), calibration, northAngle)
-    }
-
-    /** JVM-safe version that accepts raw x/y Doubles — avoids PointF stub issues on JVM tests. */
-    fun imageToGps(
-        imageX: Double,
-        imageY: Double,
-        calibration: MapCalibration?,
-        northAngle: Double
-    ): GpsCoordinate? {
-        val cal =
-            calibration ?: return null
-
-        // Un-rotate the image coordinate by -fullAngle around the pivot.
-        // gpsToImage rotates by +θ; imageToGps must undo it with -θ for round-trip symmetry.
-        val fullAngle = northAngle + cal.magneticDeclination
-        val pair = rotateAroundCalibration(imageX, imageY, cal, fullAngle)
-
-        return imageToGpsTrueNorth(pair.first, pair.second, cal)
-    }
-
     fun rotateAroundCalibration(
         x: Double,
         y: Double,
@@ -427,6 +400,32 @@ object MapGeometry {
         return Pair(newX, newY)
     }
 
+    fun imageToGps(
+        point: PointF,
+        calibration: MapCalibration?,
+        northAngle: Double
+    ): GpsCoordinate? {
+        return imageToGps(point.x.toDouble(), point.y.toDouble(), calibration, northAngle)
+    }
+
+    /** JVM-safe version that accepts raw x/y Doubles — avoids PointF stub issues on JVM tests. */
+    fun imageToGps(
+        imageX: Double,
+        imageY: Double,
+        calibration: MapCalibration?,
+        northAngle: Double
+    ): GpsCoordinate? {
+        val cal =
+            calibration ?: return null
+
+        // Un-rotate the image coordinate by -fullAngle around the pivot.
+        // gpsToImage rotates by +θ; imageToGps must undo it with -θ for round-trip symmetry.
+        val fullAngle = northAngle + cal.magneticDeclination
+        val pair = rotateAroundCalibration(imageX, imageY, cal, fullAngle)
+
+        return imageToGpsTrueNorth(pair.first, pair.second, cal)
+    }
+
     /**
      * Convert a GPS coordinate to image coordinates (absolute pixels).
      * Uses full calibration (scale + bearing rotation) plus optional northAngle adjustment.
@@ -448,10 +447,53 @@ object MapGeometry {
         // Step 2: Apply northAngle rotation around a fixed pivot.
         // Use calibration pointA (the map anchor) as the rotation center, NOT trackPoints.first()
         // because trim removes old points which changes the first element, causing visual drift.
-        val fullAngle = northAngle + cal.magneticDeclination
+        val fullAngle = cal.magneticDeclination + northAngle
 
         val pair = rotateAroundCalibration(x, y, cal, -fullAngle)
 
         return pair
     }
+
+    fun convertToNormalized(
+        pixelX: Double, // координата X в пикселях
+        pixelY: Double, // координата Y в пикселях
+        width: Double,  // ширина экрана в пикселях
+        height: Double  // высота экрана в пикселях
+    ): PointF {
+        // 1. Находим размер узкой стороны (наш масштаб)
+        val size = minOf(width, height)
+
+        // 2. Вычисляем те же самые отступы
+        val offsetX = (width - size) / 2f
+        val offsetY = (height - size) / 2f
+
+        // 3. Обратное преобразование: вычитаем отступ и делим на масштаб
+        val x = (pixelX - offsetX) / size
+        val y =
+            (pixelY - offsetY) / size // Если 0 был вверху. Для 0 внизу: 1f - ((pixelY - offsetY) / size)
+
+        return PointF(x.toFloat(), y.toFloat())
+    }
+
+    fun convertToPixels(
+        x: Double, // координата от 0.0 до 1.0
+        y: Double, // координата от 0.0 до 1.0
+        width: Double,  // ширина экрана в пикселях
+        height: Double  // высота экрана в пикселях
+    ): PointF {
+        // 1. Находим размер узкой стороны, которая станет нашей единицей измерения
+        val size = minOf(width, height)
+
+        // 2. Вычисляем отступы (для узкой стороны отступ автоматически будет 0)
+        val offsetX = (width - size) / 2f
+        val offsetY = (height - size) / 2f
+
+        // 3. Переводим в пиксели
+        val pixelX = offsetX + (x * size)
+        val pixelY = offsetY + (y * size) // Если 0 вверху. Для 0 внизу: offsetY + ((1f - y) * size)
+
+        return PointF(pixelX.toFloat(), pixelY.toFloat())
+    }
+
+
 }

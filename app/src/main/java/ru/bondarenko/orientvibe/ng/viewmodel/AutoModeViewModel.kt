@@ -252,8 +252,7 @@ class AutoModeViewModel(
             pointA,
             pointB,
             _mapState.value.northAngle,
-            calibration,
-            getProportion()
+            calibration
         )
             ?: return Pair(false, "Точки слишком близко — нельзя рассчитать масштаб")
 
@@ -600,8 +599,7 @@ class AutoModeViewModel(
             _mapState.value,
             ms,
             _calibration ?: return,
-            gpsFix,
-            getProportion()
+            gpsFix
         )
         // Всегда переприсваиваем → StateFlow emit → Compose перерисуется
         _movementState.value = result

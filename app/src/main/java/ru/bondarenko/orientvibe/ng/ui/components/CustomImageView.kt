@@ -11,6 +11,7 @@ import android.view.ScaleGestureDetector
 import android.view.View
 import ru.bondarenko.orientvibe.ng.gps.GpsFix
 import ru.bondarenko.orientvibe.ng.gps.MapCalibration
+import ru.bondarenko.orientvibe.ng.gps.MapGeometry.convertToPixels
 import ru.bondarenko.orientvibe.ng.gps.TrackPoint
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.model.RoutePoint
@@ -29,7 +30,6 @@ open class CustomImageView(context: Context) : View(context) {
             currentRotation = 0.0
             mapPanX = 0.0
             mapPanY = 0.0
-            proportion = 1.44
             routeOverlay.startPoint = null
             routeOverlay.finishPoint = null
             routeOverlay.tapListener = null
@@ -47,7 +47,6 @@ open class CustomImageView(context: Context) : View(context) {
     protected var currentRotation: Double = 0.0
     protected var mapPanX: Double = 0.0
     protected var mapPanY: Double = 0.0
-    protected var proportion: Double = 1.44
 
     val northIndicator = NorthIndicator()
     val routeOverlay = RouteOverlay()
@@ -143,7 +142,8 @@ open class CustomImageView(context: Context) : View(context) {
             return null
         }
         computeImageMatrix()
-        val pts = floatArrayOf((x * sWidth).toFloat(), (y * sHeight).toFloat())
+        val pixels = convertToPixels(x, y, sWidth, sHeight)
+        val pts = floatArrayOf(pixels.x, pixels.y)
         imageMatrix.mapPoints(pts)
         return PointF(pts[0], pts[1])
     }
@@ -221,16 +221,15 @@ open class CustomImageView(context: Context) : View(context) {
         val sHeight = bitmap?.height?.toDouble() ?: 0.0
         if (sWidth <= 0 || sHeight <= 0) return
 
-        val dx = (fp.x - sp.x) * sWidth
-        val dy = (fp.y - sp.y) * sHeight
-        val routeAngle = Math.toDegrees(atan2(dx.toDouble(), -dy.toDouble())).toDouble()
+        val dPixels = convertToPixels((fp.x - sp.x), (fp.y - sp.y), sWidth, sHeight)
+        val routeAngle = Math.toDegrees(atan2(dPixels.x.toDouble(), -dPixels.y.toDouble()))
 
         val rawOrientation = -routeAngle
         applyRotation(rawOrientation)
 
         val routeLength = sqrt(
-            (dx * dx + dy * dy).toDouble()
-        ).toDouble()
+            (dPixels.x * dPixels.x + dPixels.y * dPixels.y)
+        )
 
         val targetHeight = height * 0.8
         val newScale = if (routeLength > 0) targetHeight / routeLength else 1.0
@@ -241,9 +240,8 @@ open class CustomImageView(context: Context) : View(context) {
         invalidate()
 
         computeImageMatrix()
-        val midSrcX = ((sp.x + fp.x) / 2.0) * sWidth
-        val midSrcY = ((sp.y + fp.y) / 2.0) * sHeight
-        val mid = floatArrayOf(midSrcX.toFloat(), midSrcY.toFloat())
+        val midSrcPx= convertToPixels(((sp.x + fp.x) / 2.0), ((sp.y + fp.y) / 2.0), sWidth, sHeight)
+        val mid = floatArrayOf(midSrcPx.x, midSrcPx.y)
         imageMatrix.mapPoints(mid)
         mapPanX += width / 2f - mid[0]
         mapPanY += height / 2f - mid[1]
