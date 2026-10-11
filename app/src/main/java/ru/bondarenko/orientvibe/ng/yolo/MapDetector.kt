@@ -564,7 +564,7 @@ class MapDetector(private val context: Context) {
 
         val areas = boxes.map { it.width.toFloat() * it.height.toFloat()}
         val med = median(areas) ?: return boxes
-        val minArea = med * 0.30f // absolute floor: anything below 30% of median is tiny noise
+        val minArea = med * 0.80f // absolute floor: anything below 30% of median is tiny noise
 
         return boxes.filter { box ->
             val area = box.width * box.height
