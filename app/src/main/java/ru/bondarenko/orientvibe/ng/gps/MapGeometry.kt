@@ -2,6 +2,7 @@ package ru.bondarenko.orientvibe.ng.gps
 
 import android.graphics.PointF
 import android.hardware.GeomagneticField
+import android.util.Log
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -21,6 +22,7 @@ object MapGeometry {
     private const val EARTH_RADIUS_METERS = 6_371_000.0
     private const val MAX_DELTA_DECLINATION = 1.0
     private const val MAX_DELTA_SCALE = 50.0
+    private const val TAG = "MapGeometry"
 
     fun calculateMagneticDeclination(
         latitude: Double,
@@ -187,10 +189,12 @@ object MapGeometry {
             screenBearing(pointA.imageX, pointA.imageY, pointB.imageX, pointB.imageY) - northAngle
         var calculatedDeclination = trueBearing - screenBearing
         // корректируем склонение не более одного градуса за раз
-        calculatedDeclination =
-            oldCalibration.magneticDeclination + (calculatedDeclination - oldCalibration.magneticDeclination).coerceIn(
-                -MAX_DELTA_DECLINATION, MAX_DELTA_DECLINATION
-            )
+        if (oldCalibration.pointB != null) {
+            calculatedDeclination =
+                oldCalibration.magneticDeclination + (calculatedDeclination - oldCalibration.magneticDeclination).coerceIn(
+                    -MAX_DELTA_DECLINATION, MAX_DELTA_DECLINATION
+                )
+        }
         // Compute Rhumb distance using cos(pointA.gps.lat) for easting — matches offsetCoordinate,
         // gpsToImageRelative, and imageToGpsRelative which all use pointA (start) as reference.
         // Using eastDistance (cos(avgLat)) would diverge when dNorth ≠ 0 because avgLat ≠ pointA.lat.
@@ -235,7 +239,9 @@ object MapGeometry {
 
         val imageDistance = sqrt(dx * dx + dy * dy)
         if (imageDistance < 0.01) return null
-
+        Log.d(TAG, "computeCalibrationSoft Sx=${scaleMetersPerUnitX} Sy=${scaleMetersPerUnitY} declination=${calculatedDeclination} north=${northAngle}")
+        Log.d(TAG, "pointB lat=${pointB.gps.latitude} lon=${pointB.gps.longitude}")
+        Log.d(TAG, "img x=${pointB.imageX} y=${pointB.imageY}")
         return MapCalibration(
             pointA = pointA,
             pointB = pointB,
@@ -252,11 +258,15 @@ object MapGeometry {
      */
     fun calibrationSingle(
         pointA: CalibrationPoint, magneticDeclination: Double,
-        northAngle: Double = 0.0, scaleX: Double, scaleY: Double
+        northAngle: Double = 0.0, scaleX: Double, scaleY: Double,
+        pointB: CalibrationPoint? = null
     ): MapCalibration {
+        Log.d(TAG, "calibrationSingle Sx=${scaleX} Sy=${scaleY} declination=${magneticDeclination}")
+        Log.d(TAG, "current pointA lat=${pointA.gps.latitude} lon=${pointA.gps.longitude}")
+        Log.d(TAG, "img x=${pointA.imageX} y=${pointA.imageY}")
         return MapCalibration(
             pointA = pointA,
-            pointB = null,
+            pointB = pointB,
             scaleMetersPerMapX = scaleX,
             scaleMetersPerMapY = scaleY,
             bearingDegrees = magneticDeclination,

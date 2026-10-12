@@ -160,7 +160,10 @@ class AutoModeViewModel(
         val imageY = cpBox.centerY
 
         // калибровка по одной точке
-
+        Log.d(tag, "===== bindGpsToCp START =====")
+        Log.d(tag, "current fix lat=${gps.latitude} lon=${gps.longitude}")
+        Log.d(tag, "current img x=${imageX} y=${imageY}")
+        Log.d(tag, "num ${cpNumber}")
         val cal = MapCalibrationUtils.calibrateSinglePoint(
             gps,
             imageX,
@@ -253,24 +256,14 @@ class AutoModeViewModel(
         val targetImageY = targetBox.centerY
 
         Log.d(tag, "===== recalibrateToTargetControl START =====")
-        Log.d(
-            tag,
-            "current fix lat=${currentFix.coordinate.latitude} lon=${currentFix.coordinate.longitude}"
-        )
 
-        // Создаём точки калибровки и вызываем двухточечную калибровку
-        val pointA = ru.bondarenko.orientvibe.ng.model.CalibrationPoint(
-            gps = calibration.pointA.gps,
-            imageX = calibration.pointA.imageX,
-            imageY = calibration.pointA.imageY
-        )
         val pointB = ru.bondarenko.orientvibe.ng.model.CalibrationPoint(
             gps = currentFix.coordinate, imageX = targetImageX, imageY = targetImageY
         )
 
         // Вычисляем новую калибровку с магнитным склонением
         val newCal = MapGeometry.computeCalibrationSoft(
-            pointA,
+            calibration.pointA,
             pointB,
             _mapState.value.northAngle,
             calibration
@@ -331,10 +324,6 @@ class AutoModeViewModel(
         viewModelScope.launch {
             Log.d(tag, "startGpsMonitoring: collecting gpsState")
             navVm.gpsState.collectLatest { gpsState ->
-                Log.d(
-                    tag,
-                    "handleGpsUpdate: accuracyLevel=${gpsState.accuracyLevel}, fix=${gpsState.currentFix != null}"
-                )
                 handleGpsUpdate(gpsState)
             }
         }
