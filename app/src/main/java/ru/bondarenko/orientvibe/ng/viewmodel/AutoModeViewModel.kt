@@ -618,7 +618,8 @@ class AutoModeViewModel(
                 ms.currentControl.num,
                 gpsFix,
                 _calibration!!,
-                _mapState.value
+                _mapState.value,
+                _autoMoveManager.trackHistory.toList()
             )
         } else {
             null

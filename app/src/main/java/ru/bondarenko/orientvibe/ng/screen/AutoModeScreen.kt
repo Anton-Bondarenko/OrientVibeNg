@@ -2,6 +2,7 @@ package ru.bondarenko.orientvibe.ng.screen
 
 import android.Manifest
 import android.content.Context
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -11,6 +12,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,15 +26,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.AutoFixNormal
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -49,13 +57,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material3.TextButton
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.res.ResourcesCompat
 import ru.bondarenko.orientvibe.ng.R
-
 
 import androidx.lifecycle.viewmodel.compose.viewModel
 import ru.bondarenko.orientvibe.ng.gps.NavViewModel
@@ -126,6 +133,9 @@ fun AutoModeScreen() {
 
     var pendingScale by remember { mutableStateOf(false) }
     var isScaling by remember { mutableStateOf(false) }
+
+    // Состояние окна настроек
+    var showSettingsDialog by remember { mutableStateOf(false) }
 
     // Кнопка "Здесь" активна только когда currentControl совпадает с номером найденного CP
     val hasMatchingCp = mapState.controlsBoundingBoxes.any { it.number == movementState.currentControl.num }
@@ -459,20 +469,34 @@ fun AutoModeScreen() {
                         modifier = Modifier.padding(12.dp)
                     ) {
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Info,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Text(
-                                text = infoMessage,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Info,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = infoMessage,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            IconButton(onClick = { showSettingsDialog = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.Settings,
+                                    contentDescription = "Настройки",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
                         }
                         if (mapState.isProcessing) {
                             Spacer(modifier = Modifier.height(8.dp))
@@ -496,151 +520,380 @@ fun AutoModeScreen() {
             }
         }
 
-        // ── Control Selector (bottom bar with editable number, +/-, "Здесь") ──
+        // ── Control Selector (orientation-aware) ──
         if (mapState.bitmap != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 8.dp)
-                    .align(Alignment.BottomCenter)
-            ) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color.White.copy(alpha = 0.95f)
-                    )
+            val isLandscape = LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+
+            if (isLandscape) {
+                // Landscape: панель справа, кнопки в столбик
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(64.dp)
+                        .padding(end = 4.dp)
+                        .align(Alignment.BottomEnd)
                 ) {
-                    Row(
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                    ) {
-                        // Кнопка минус
-                        androidx.compose.material3.FilledTonalIconButton(
-                            onClick = { autoVm.decrementCurrentControl() },
-                            modifier = Modifier.size(40.dp)
-                        ) {
-                            Text(
-                                text = "−",
-                                fontSize = 24.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.Black
-                            )
-                        }
-
-                        // Редактируемое число — отображаем currentControl.value, вводим вручную или кнопками +/−
-                        OutlinedTextField(
-                            value = movementState.currentControl.num.toString(),
-                            onValueChange = { raw ->
-                                val filtered = raw.filter { it.isDigit() }
-                                if (filtered.isEmpty() || filtered.toIntOrNull() != null) {
-                                    autoVm.setCurrentControl(filtered.toInt())
-                                }
-                            },
-                            singleLine = true,
-                            textStyle = androidx.compose.ui.text.TextStyle(
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Bold,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                            ),
-                            modifier = Modifier
-                                .width(80.dp)
-                                .border(1.dp, Color.Gray, RoundedCornerShape(8.dp))
-                                .padding(4.dp),
-                            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = Color.White,
-                                unfocusedContainerColor = Color.White,
-                                focusedBorderColor = GreenReadyDark,
-                                unfocusedBorderColor = Color.Gray
-                            )
+                    Card(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .padding(top = 8.dp, bottom = 8.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color.White.copy(alpha = 0.95f)
                         )
-
-                        // Кнопка плюс
-                        androidx.compose.material3.FilledTonalIconButton(
-                            onClick = { autoVm.incrementCurrentControl() },
-                            modifier = Modifier.size(40.dp)
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier
+                                .padding(horizontal = 6.dp, vertical = 8.dp)
+                                .fillMaxHeight()
                         ) {
-                            Text(
-                                text = "+",
-                                fontSize = 24.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.Black
-                            )
-                        }
-
-                        // ── Квадратные кнопки — две равные на всю ширину панели ──
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            // Кнопка "Здесь" — зелёная когда привязка ещё не сделана
-                            val bindGreen = !hasBoundCp
-                            androidx.compose.material3.Button(
-                                onClick = {
-                                    autoVm.setCurrentControl(movementState.currentControl.num)
-                                    isBindEnabled && run {
-                                        pendingBind = movementState.currentControl.num
-                                        true
+                            // Квадратные кнопки — две равные на всю высоту панели (сверху вниз)
+                            Box(modifier = Modifier.weight(1f)) {
+                                val bindGreen = !hasBoundCp
+                                androidx.compose.material3.Button(
+                                    onClick = {
+                                        autoVm.setCurrentControl(movementState.currentControl.num)
+                                        isBindEnabled && run {
+                                            pendingBind = movementState.currentControl.num
+                                            true
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    enabled = isBindEnabled,
+                                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                        containerColor = if (bindGreen) GreenReadyDark else MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                                    ),
+                                    elevation = androidx.compose.material3.ButtonDefaults.buttonElevation(
+                                        defaultElevation = 6.dp,
+                                        pressedElevation = 12.dp,
+                                        disabledElevation = 0.dp
+                                    ),
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    Box(modifier = Modifier.fillMaxSize()) {
+                                        Icon(
+                                            painter = androidx.compose.ui.res.painterResource(R.drawable.icon_here),
+                                            contentDescription = "Здесь (A)",
+                                            modifier = Modifier.fillMaxSize().padding(6.dp),
+                                            tint = Color.Unspecified
+                                        )
                                     }
-                                },
-                                shape = RoundedCornerShape(12.dp),
-                                enabled = isBindEnabled,
-                                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                                    containerColor = if (bindGreen) GreenReadyDark else MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
-                                ),
-                                elevation = androidx.compose.material3.ButtonDefaults.buttonElevation(
-                                    defaultElevation = 6.dp,
-                                    pressedElevation = 12.dp,
-                                    disabledElevation = 0.dp
-                                ),
-                                modifier = Modifier.weight(0.5f).aspectRatio(1f)
-                            ) {
-                                Box(modifier = Modifier.fillMaxSize()) {
-                                    Icon(
-                                        painter = androidx.compose.ui.res.painterResource(R.drawable.icon_here),
-                                        contentDescription = "Здесь (A)",
-                                        modifier = Modifier.fillMaxSize().padding(6.dp),
-                                        tint = Color.Unspecified
-                                    )
                                 }
                             }
 
-                            // Кнопка "Масштаб" — зелёная когда привязка уже сделана
-                            val scaleGreen = hasBoundCp && isScaleEnabled
-                            androidx.compose.material3.Button(
-                                onClick = {
-                                    autoVm.setCurrentControl(movementState.currentControl.num)
-                                    isScaleEnabled && run {
-                                        pendingScale = true
-                                        true
+                            // CP число — фиксированная высота
+                            OutlinedTextField(
+                                value = movementState.currentControl.num.toString(),
+                                onValueChange = { raw ->
+                                    val filtered = raw.filter { it.isDigit() }
+                                    if (filtered.isEmpty() || filtered.toIntOrNull() != null) {
+                                        autoVm.setCurrentControl(filtered.toInt())
                                     }
                                 },
-                                shape = RoundedCornerShape(12.dp),
-                                enabled = isScaleEnabled,
-                                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                                    containerColor = if (scaleGreen) GreenReadyDark else MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                                singleLine = true,
+                                
+                                textStyle = androidx.compose.ui.text.TextStyle(
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                 ),
-                                elevation = androidx.compose.material3.ButtonDefaults.buttonElevation(
-                                    defaultElevation = 6.dp,
-                                    pressedElevation = 12.dp,
-                                    disabledElevation = 0.dp
-                                ),
-                                modifier = Modifier.weight(0.5f).aspectRatio(1f)
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(1f)
+                                    .border(1.dp, Color.Gray, RoundedCornerShape(8.dp)),
+                                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                                    focusedContainerColor = Color.White,
+                                    unfocusedContainerColor = Color.White,
+                                    focusedBorderColor = GreenReadyDark,
+                                    unfocusedBorderColor = Color.Gray
+                                )
+                            )
+
+                            // [-] кнопка
+                            androidx.compose.material3.FilledTonalIconButton(
+                                onClick = { autoVm.decrementCurrentControl() },
+                                modifier = Modifier.fillMaxWidth().weight(0.8f)
                             ) {
-                                Box(modifier = Modifier.fillMaxSize()) {
-                                    Icon(
-                                        painter = androidx.compose.ui.res.painterResource(R.drawable.icon_scale),
-                                        contentDescription = "Масштаб (B)",
-                                        modifier = Modifier.fillMaxSize().padding(6.dp),
-                                        tint = Color.Unspecified
-                                    )
+                                Text(
+                                    text = "−",
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.Black
+                                )
+                            }
+
+                            // [+] кнопка
+                            androidx.compose.material3.FilledTonalIconButton(
+                                onClick = { autoVm.incrementCurrentControl() },
+                                modifier = Modifier.fillMaxWidth().weight(0.8f)
+                            ) {
+                                Text(
+                                    text = "+",
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.Black
+                                )
+                            }
+
+                            // Квадратная кнопка "Масштаб" (снизу)
+                            Box(modifier = Modifier.weight(1f)) {
+                                val scaleGreen = hasBoundCp && isScaleEnabled
+                                androidx.compose.material3.Button(
+                                    onClick = {
+                                        autoVm.setCurrentControl(movementState.currentControl.num)
+                                        isScaleEnabled && run {
+                                            pendingScale = true
+                                            true
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    enabled = isScaleEnabled,
+                                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                        containerColor = if (scaleGreen) GreenReadyDark else MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                                    ),
+                                    elevation = androidx.compose.material3.ButtonDefaults.buttonElevation(
+                                        defaultElevation = 6.dp,
+                                        pressedElevation = 12.dp,
+                                        disabledElevation = 0.dp
+                                    ),
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    Box(modifier = Modifier.fillMaxSize()) {
+                                        Icon(
+                                            painter = androidx.compose.ui.res.painterResource(R.drawable.icon_scale),
+                                            contentDescription = "Масштаб (B)",
+                                            modifier = Modifier.fillMaxSize().padding(6.dp),
+                                            tint = Color.Unspecified
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Portrait: стандартная горизонтальная панель снизу
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp)
+                        .align(Alignment.BottomCenter)
+                ) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color.White.copy(alpha = 0.95f)
+                        )
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            // Кнопка минус
+                            androidx.compose.material3.FilledTonalIconButton(
+                                onClick = { autoVm.decrementCurrentControl() },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Text(
+                                    text = "−",
+                                    fontSize = 24.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.Black
+                                )
+                            }
+
+                            // Редактируемое число — отображаем currentControl.value, вводим вручную или кнопками +/−
+                            OutlinedTextField(
+                                value = movementState.currentControl.num.toString(),
+                                onValueChange = { raw ->
+                                    val filtered = raw.filter { it.isDigit() }
+                                    if (filtered.isEmpty() || filtered.toIntOrNull() != null) {
+                                        autoVm.setCurrentControl(filtered.toInt())
+                                    }
+                                },
+                                singleLine = true,
+                                
+                                textStyle = androidx.compose.ui.text.TextStyle(
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                ),
+                                modifier = Modifier
+                                    .width(80.dp)
+                                    .border(1.dp, Color.Gray, RoundedCornerShape(8.dp))
+                                    .padding(4.dp),
+                                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                                    focusedContainerColor = Color.White,
+                                    unfocusedContainerColor = Color.White,
+                                    focusedBorderColor = GreenReadyDark,
+                                    unfocusedBorderColor = Color.Gray
+                                )
+                            )
+
+                            // Кнопка плюс
+                            androidx.compose.material3.FilledTonalIconButton(
+                                onClick = { autoVm.incrementCurrentControl() },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Text(
+                                    text = "+",
+                                    fontSize = 24.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.Black
+                                )
+                            }
+
+                            // ── Квадратные кнопки — две равные на всю ширину панели ──
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                // Кнопка "Здесь" — зелёная когда привязка ещё не сделана
+                                val bindGreen = !hasBoundCp
+                                androidx.compose.material3.Button(
+                                    onClick = {
+                                        autoVm.setCurrentControl(movementState.currentControl.num)
+                                        isBindEnabled && run {
+                                            pendingBind = movementState.currentControl.num
+                                            true
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    enabled = isBindEnabled,
+                                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                        containerColor = if (bindGreen) GreenReadyDark else MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                                    ),
+                                    elevation = androidx.compose.material3.ButtonDefaults.buttonElevation(
+                                        defaultElevation = 6.dp,
+                                        pressedElevation = 12.dp,
+                                        disabledElevation = 0.dp
+                                    ),
+                                    modifier = Modifier.weight(0.5f).aspectRatio(1f)
+                                ) {
+                                    Box(modifier = Modifier.fillMaxSize()) {
+                                        Icon(
+                                            painter = androidx.compose.ui.res.painterResource(R.drawable.icon_here),
+                                            contentDescription = "Здесь (A)",
+                                            modifier = Modifier.fillMaxSize().padding(6.dp),
+                                            tint = Color.Unspecified
+                                        )
+                                    }
+                                }
+
+                                // Кнопка "Масштаб" — зелёная когда привязка уже сделана
+                                val scaleGreen = hasBoundCp && isScaleEnabled
+                                androidx.compose.material3.Button(
+                                    onClick = {
+                                        autoVm.setCurrentControl(movementState.currentControl.num)
+                                        isScaleEnabled && run {
+                                            pendingScale = true
+                                            true
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    enabled = isScaleEnabled,
+                                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                        containerColor = if (scaleGreen) GreenReadyDark else MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                                    ),
+                                    elevation = androidx.compose.material3.ButtonDefaults.buttonElevation(
+                                        defaultElevation = 6.dp,
+                                        pressedElevation = 12.dp,
+                                        disabledElevation = 0.dp
+                                    ),
+                                    modifier = Modifier.weight(0.5f).aspectRatio(1f)
+                                ) {
+                                    Box(modifier = Modifier.fillMaxSize()) {
+                                        Icon(
+                                            painter = androidx.compose.ui.res.painterResource(R.drawable.icon_scale),
+                                            contentDescription = "Масштаб (B)",
+                                            modifier = Modifier.fillMaxSize().padding(6.dp),
+                                            tint = Color.Unspecified
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
+        }
+
+        // ── Settings Dialog ──
+        if (showSettingsDialog) {
+            var mapScaleFactor by remember { mutableStateOf("1.0") }
+            var gpsAccuracyThreshold by remember { mutableStateOf("10.0") }
+            var audioEnabled by remember { mutableStateOf(true) }
+
+            AlertDialog(
+                onDismissRequest = { showSettingsDialog = false },
+                title = {
+                    Text(
+                        text = "Настройки",
+                        style = MaterialTheme.typography.headlineSmall
+                    )
+                },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = mapScaleFactor,
+                            onValueChange = { mapScaleFactor = it },
+                            label = { Text("Масштаб карты (коэффициент)") },
+                            singleLine = true,
+
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        OutlinedTextField(
+                            value = gpsAccuracyThreshold,
+                            onValueChange = { gpsAccuracyThreshold = it },
+                            label = { Text("Порог точности GPS (м)") },
+                            singleLine = true,
+
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        androidx.compose.material3.Switch(
+                            checked = audioEnabled,
+                            onCheckedChange = { audioEnabled = it },
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                        Text(
+                            text = "Включить звуковую навигацию",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        // Сохраняем настройки в SharedPreferences
+                        val prefs = context.getSharedPreferences(
+                            "orientvibe_settings", Context.MODE_PRIVATE
+                        )
+                        prefs.edit()
+                            .putFloat("map_scale_factor", mapScaleFactor.toFloatOrNull() ?: 1.0f)
+                            .putFloat("gps_accuracy_threshold", gpsAccuracyThreshold.toFloatOrNull() ?: 10.0f)
+                            .putBoolean("audio_enabled", audioEnabled)
+                            .apply()
+                        showSettingsDialog = false
+                    }) {
+                        Text("Сохранить")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showSettingsDialog = false }) {
+                        Text("Отмена")
+                    }
+                }
+            )
         }
     }
 }

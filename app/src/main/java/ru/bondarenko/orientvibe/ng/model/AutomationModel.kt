@@ -48,7 +48,7 @@ data class NavigationData(
 const val AUDIO_ARRIVED_DIST = 20f
 
 /** Сектор "на цель" отклонения (градусы) */
-const val ON_TARGET_DEG = 5.0
+const val ON_TARGET_DEG = 10.0
 
 /** Интервал периодического сигнала при дистанции > 100м (мс) */
 const val FAR_INTERVAL_MS = 30_000L

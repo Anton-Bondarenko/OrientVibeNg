@@ -2,8 +2,10 @@ package ru.bondarenko.orientvibe.ng.gps
 
 import android.graphics.PointF
 import android.hardware.GeomagneticField
+import android.location.Location
 import android.util.Log
 import kotlin.math.abs
+import kotlin.math.asin
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -22,6 +24,7 @@ object MapGeometry {
     private const val EARTH_RADIUS_METERS = 6_371_000.0
     private const val MAX_DELTA_DECLINATION = 1.0
     private const val MAX_DELTA_SCALE = 50.0
+    private const val MAX_DELTA_DISTANCE = 20.0
     private const val TAG = "MapGeometry"
 
     fun calculateMagneticDeclination(
@@ -221,25 +224,30 @@ object MapGeometry {
             scaleMetersPerUnitX = abs(dEast / dx)
             // если двухточечная калибровка уже была и масштаб уже примерно известен, то ограничиваем изменения масштаба
             if (oldCalibration.pointB != null) {
-                scaleMetersPerUnitX = oldCalibration.scaleMetersPerMapX + (scaleMetersPerUnitX - oldCalibration.scaleMetersPerMapX).coerceIn(
-                    -MAX_DELTA_SCALE, MAX_DELTA_SCALE
-                )
+                scaleMetersPerUnitX =
+                    oldCalibration.scaleMetersPerMapX + (scaleMetersPerUnitX - oldCalibration.scaleMetersPerMapX).coerceIn(
+                        -MAX_DELTA_SCALE, MAX_DELTA_SCALE
+                    )
             }
             scaleMetersPerUnitY = scaleMetersPerUnitX
         } else {
             scaleMetersPerUnitY = abs(dNorth / dy)
             // если двухточечная калибровка уже была и масштаб уже примерно известен, то ограничиваем изменения масштаба
             if (oldCalibration.pointB != null) {
-                scaleMetersPerUnitY = oldCalibration.scaleMetersPerMapY + (scaleMetersPerUnitY - oldCalibration.scaleMetersPerMapY).coerceIn(
-                    -MAX_DELTA_SCALE, MAX_DELTA_SCALE
-                )
+                scaleMetersPerUnitY =
+                    oldCalibration.scaleMetersPerMapY + (scaleMetersPerUnitY - oldCalibration.scaleMetersPerMapY).coerceIn(
+                        -MAX_DELTA_SCALE, MAX_DELTA_SCALE
+                    )
             }
             scaleMetersPerUnitX = scaleMetersPerUnitY
         }
 
         val imageDistance = sqrt(dx * dx + dy * dy)
         if (imageDistance < 0.01) return null
-        Log.d(TAG, "computeCalibrationSoft Sx=${scaleMetersPerUnitX} Sy=${scaleMetersPerUnitY} declination=${calculatedDeclination} north=${northAngle}")
+        Log.d(
+            TAG,
+            "computeCalibrationSoft Sx=${scaleMetersPerUnitX} Sy=${scaleMetersPerUnitY} declination=${calculatedDeclination} north=${northAngle}"
+        )
         Log.d(TAG, "pointB lat=${pointB.gps.latitude} lon=${pointB.gps.longitude}")
         Log.d(TAG, "img x=${pointB.imageX} y=${pointB.imageY}")
         return MapCalibration(
@@ -273,6 +281,90 @@ object MapGeometry {
             magneticDeclination = magneticDeclination + northAngle,
             physicalDeclination = magneticDeclination
         )
+    }
+
+    fun calibrationSingleSoft(
+        pointA: CalibrationPoint, magneticDeclination: Double,
+        northAngle: Double = 0.0, scaleX: Double, scaleY: Double,
+        oldCalibration: MapCalibration
+    ): MapCalibration {
+        Log.d(TAG, "calibrationSingleSoft Sx=${scaleX} Sy=${scaleY} declination=${magneticDeclination}")
+        Log.d(TAG, "current pointA lat=${pointA.gps.latitude} lon=${pointA.gps.longitude}")
+        Log.d(TAG, "img x=${pointA.imageX} y=${pointA.imageY}")
+        val newCoords = snapBoundary(oldCalibration.pointA.gps, pointA.gps)
+        return MapCalibration(
+            pointA = pointA.copy(gps = newCoords),
+            pointB = oldCalibration.pointB,
+            scaleMetersPerMapX = scaleX,
+            scaleMetersPerMapY = scaleY,
+            bearingDegrees = magneticDeclination,
+            magneticDeclination = magneticDeclination + northAngle,
+            physicalDeclination = magneticDeclination
+        )
+    }
+
+    /**
+     * Если вторая точка дальше 50 метров от первой, сдвигает (притягивает) ее к первой
+     * так, чтобы расстояние между ними стало ровно 50 метров, сохраняя направление.
+     */
+    fun snapBoundary(
+        basePoint: GpsCoordinate,
+        secondPoint: GpsCoordinate
+    ): GpsCoordinate {
+        // 1. Вычисляем расстояние между точками
+        val results = FloatArray(2) // Массив на 2 элемента для расстояния и начального азимута
+        Location.distanceBetween(
+            basePoint.latitude, basePoint.longitude,
+            secondPoint.latitude, secondPoint.longitude,
+            results
+        )
+        val distanceInMeters = results[0]
+
+        // Если вторая точка уже ближе 50 метров, ничего делать не нужно
+        if (distanceInMeters <= MAX_DELTA_DISTANCE) {
+            return secondPoint
+        }
+        Log.d(TAG, "Максимальная калибровка calibrationSingleSoft")
+        // 2. Получаем начальный азимут (угол направления) от базовой точки к дальней
+        val bearingDegrees = results[1]
+
+        // 3. Рассчитываем новую точку на расстоянии 50 метров от базовой
+        return calculateDestinationPoint(basePoint, 50.0, bearingDegrees.toDouble())
+    }
+
+    /**
+     * Вычисляет GPS-координату на заданном расстоянии и азимуте от начальной точки.
+     * Использует формулы для сферической Земли.
+     */
+    private fun calculateDestinationPoint(
+        startPoint: GpsCoordinate,
+        distanceInMeters: Double,
+        bearingDegrees: Double
+    ): GpsCoordinate {
+        val earthRadiusMeters = 6371000.0 // Средний радиус Земли в метрах
+
+        // Переводим исходные данные в радианы
+        val lat1 = Math.toRadians(startPoint.latitude)
+        val lon1 = Math.toRadians(startPoint.longitude)
+        val bearing = Math.toRadians(bearingDegrees)
+
+        // Угловое расстояние
+        val angularDistance = distanceInMeters / earthRadiusMeters
+
+        // Формула расчета новой широты
+        val lat2 = asin(
+            sin(lat1) * cos(angularDistance) +
+                    cos(lat1) * sin(angularDistance) * cos(bearing)
+        )
+
+        // Формула расчета новой долготы
+        val lon2 = lon1 + atan2(
+            sin(bearing) * sin(angularDistance) * cos(lat1),
+            cos(angularDistance) - sin(lat1) * sin(lat2)
+        )
+
+        // Возвращаем результат, переводя радианы обратно в градусы
+        return GpsCoordinate(Math.toDegrees(lat2), Math.toDegrees(lon2))
     }
 
     /**
