@@ -18,6 +18,9 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ru.bondarenko.orientvibe.ng.auto.AutoMoveManager
+import ru.bondarenko.orientvibe.ng.audio.StereoAudioPlayer
+import ru.bondarenko.orientvibe.ng.auto.analyzeAudioSignal
+import ru.bondarenko.orientvibe.ng.auto.analyzeNavigation
 import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
 import ru.bondarenko.orientvibe.ng.gps.MapGeometry
 import ru.bondarenko.orientvibe.ng.gps.NavViewModel
@@ -26,9 +29,13 @@ import ru.bondarenko.orientvibe.ng.model.AutoModeTelemetryPoint
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.model.GpsFix
 import ru.bondarenko.orientvibe.ng.model.GpsState
+import ru.bondarenko.orientvibe.ng.model.AudioSignalState
+import ru.bondarenko.orientvibe.ng.model.AudioSignalType
 import ru.bondarenko.orientvibe.ng.model.MapCalibration
 import ru.bondarenko.orientvibe.ng.model.MoveReadyAlert
 import ru.bondarenko.orientvibe.ng.model.MovementState
+import ru.bondarenko.orientvibe.ng.model.nextControl
+import ru.bondarenko.orientvibe.ng.model.setControl
 import ru.bondarenko.orientvibe.ng.yolo.MapDetectionProgressListener
 import ru.bondarenko.orientvibe.ng.yolo.MapDetectionResult
 import ru.bondarenko.orientvibe.ng.yolo.MapDetector
@@ -86,18 +93,32 @@ class AutoModeViewModel(
     private var _firstGps: ru.bondarenko.orientvibe.ng.model.GpsCoordinate? = null
     private val _autoMoveManager: AutoMoveManager = AutoMoveManager()
 
+    /** Стерео аудиоплеер для навигационных сигналов */
+    private val _audioPlayer: StereoAudioPlayer? = try {
+        StereoAudioPlayer.create()
+    } catch (e: Exception) {
+        Log.w(tag, "Failed to create StereoAudioPlayer", e)
+        null
+    }
+
     fun incrementCurrentControl() {
-        _movementState.value.nextControl(_mapState.value)
+        val ms = _movementState.value
+        ms.nextControl(_mapState.value)
+        _movementState.value = ms
     }
 
     fun decrementCurrentControl() {
-        val num = (_movementState.value.currentControl.num - 1).coerceAtLeast(0)
-        _movementState.value.setControl(num, _mapState.value)
+        val ms = _movementState.value
+        val num = (ms.currentControl.num - 1).coerceAtLeast(0)
+        ms.setControl(num, _mapState.value)
+        _movementState.value = ms
     }
 
     fun setCurrentControl(value: Int) {
+        val ms = _movementState.value
         val num = value.coerceIn(0, 999)
-        _movementState.value.setControl(num, _mapState.value)
+        ms.setControl(num, _mapState.value)
+        _movementState.value = ms
     }
 
     /** Результат привязки GPS-координаты к контрольной точке. */
@@ -601,7 +622,77 @@ class AutoModeViewModel(
             _calibration ?: return,
             gpsFix
         )
-        // Всегда переприсваиваем → StateFlow emit → Compose перерисуется
+
+        // ── Анализ навигации и аудиосигнала ──
+        val navData = if (_calibration != null) {
+            analyzeNavigation(
+                ms.currentControl.num,
+                gpsFix,
+                _calibration!!,
+                _mapState.value
+            )
+        } else {
+            null
+        }
+
+        val prevSignal = ms.audioSignalState.type
+        val audioState = if (navData != null) {
+            analyzeAudioSignal(navData)
+        } else {
+            ru.bondarenko.orientvibe.ng.model.AudioSignalState(
+                type = AudioSignalType.NONE
+            )
+        }
+
+        // Проигрываем сигнал если:
+        // 1. Тип изменился (новый сигнал) — всегда играть
+        // 2. Тип тот же периодический и прошло достаточно времени — играть
+        val shouldPlay = audioState.type != AudioSignalType.NONE && (
+            audioState.type != prevSignal || ms.canPlayAudioSignal()
+        )
+
+        if (shouldPlay && _audioPlayer != null) {
+            when (audioState.type) {
+                AudioSignalType.ARRIVED -> {
+                    // Трель — однократная, останавливаем все остальные сигналы
+                    _audioPlayer.playTrill(
+                        baseFreqHz = 600,
+                        modulationFreqHz = 8f,
+                        durationMs = 500,
+                        volume = 1.0f,
+                        leftChannelBalance = audioState.leftBalance,
+                    )
+                    // Сбрасываем тип после трели
+                    ms.audioSignalState = AudioSignalType.NONE.let { AudioSignalState(type = it) }
+                }
+                AudioSignalType.ON_TARGET, AudioSignalType.DEVIATION -> {
+                    // Вычисляем длительность для deviation (200ms + 5ms/градус), на цели — 200ms
+                    val durationMs = when (audioState.type) {
+                        AudioSignalType.ON_TARGET -> 200L
+                        AudioSignalType.DEVIATION -> {
+                            val absDeg = kotlin.math.abs(audioState.deviationDeg)
+                            (200 + absDeg * 5).toLong().coerceAtMost(600)
+                        }
+                        else -> 200L
+                    }
+                    _audioPlayer.playTone(
+                        frequencyHz = audioState.frequencyHz,
+                        durationMs = durationMs,
+                        volume = 1.0f,
+                        leftChannelBalance = audioState.leftBalance,
+                    )
+                    // Обновляем состояние и время последнего воспроизведения
+                    ms.audioSignalState = audioState
+                    ms._lastAudioPlayMs = System.currentTimeMillis()
+                }
+                AudioSignalType.NONE -> {}
+            }
+        } else if (audioState.type != AudioSignalType.NONE && audioState.type != prevSignal) {
+            // Тип изменился но это не периодический — обновить состояние
+            ms.audioSignalState = audioState
+        }
+
+        // ── Переприсваиваем → StateFlow emit → Compose перерисуется ──
         _movementState.value = result
         val newCalib = result.newMapCalibration
         if (newCalib != null) {
@@ -660,5 +751,6 @@ class AutoModeViewModel(
 
     override fun onCleared() {
         mapDetector.close()
+        _audioPlayer?.release()  // освободить AudioTrack ресурсы
     }
 }
