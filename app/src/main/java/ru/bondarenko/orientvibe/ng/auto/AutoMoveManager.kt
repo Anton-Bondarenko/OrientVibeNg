@@ -25,7 +25,7 @@ const val AUTO_APPROACHED_DIST = 100f
 const val DIST_GAP = 40f
 
 /** Максимальное отклонение направления движения для «идём к следующему КП» (°) */
-private const val HEADING_TOLERANCE_DEG = 10.0
+private const val HEADING_TOLERANCE_DEG = 15.0
 
 /** Минимальный скачок направления, считаем что повернули (>°) */
 private const val HEADING_JUMP_DEG = 15.0
