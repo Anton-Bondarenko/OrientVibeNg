@@ -1,28 +1,23 @@
 package ru.bondarenko.orientvibe.ng.auto
 
 import android.util.Log
-import kotlin.math.abs
-import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.sqrt
-import ru.bondarenko.orientvibe.ng.audio.StereoAudioPlayer
-import ru.bondarenko.orientvibe.ng.gps.CalibrationPoint
 import ru.bondarenko.orientvibe.ng.gps.MapCalibration
 import ru.bondarenko.orientvibe.ng.gps.MapGeometry
+import ru.bondarenko.orientvibe.ng.model.AUDIO_ARRIVED_DIST
 import ru.bondarenko.orientvibe.ng.model.AudioSignalState
 import ru.bondarenko.orientvibe.ng.model.AudioSignalType
 import ru.bondarenko.orientvibe.ng.model.AutoMapState
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
-import ru.bondarenko.orientvibe.ng.model.CalibrationPoint as ModelCalibrationPoint
+import ru.bondarenko.orientvibe.ng.model.CLOSE_INTERVAL_MS
 import ru.bondarenko.orientvibe.ng.model.CurrentControl
 import ru.bondarenko.orientvibe.ng.model.DeviationDirection
+import ru.bondarenko.orientvibe.ng.model.FAR_INTERVAL_MS
 import ru.bondarenko.orientvibe.ng.model.GpsCoordinate
 import ru.bondarenko.orientvibe.ng.model.GpsFix
 import ru.bondarenko.orientvibe.ng.model.MovementState
 import ru.bondarenko.orientvibe.ng.model.ON_TARGET_DEG
-import ru.bondarenko.orientvibe.ng.model.FAR_INTERVAL_MS
-import ru.bondarenko.orientvibe.ng.model.CLOSE_INTERVAL_MS
-import ru.bondarenko.orientvibe.ng.model.AUDIO_ARRIVED_DIST
+import kotlin.math.abs
+import ru.bondarenko.orientvibe.ng.model.CalibrationPoint as ModelCalibrationPoint
 
 /** Дистанция до КП, при которой считается что пришли (м) */
 const val AUTO_APPROACHED_DIST = 100f
@@ -158,7 +153,10 @@ fun analyzeAudioSignal(
             // Баланс: левый канал для поворота влево, правый для поворота вправо
             val balance = if (navigation.deviationDeg < 0) 0f else 1f
 
-            Log.d(TAG, "DEVIATION ${absDeg.toInt()}° → freq=${freq}Hz dur=${durationMs}ms bal=$balance")
+            Log.d(
+                TAG,
+                "DEVIATION ${absDeg.toInt()}° → freq=${freq}Hz dur=${durationMs}ms bal=$balance"
+            )
             AudioSignalState(
                 type = AudioSignalType.DEVIATION,
                 frequencyHz = freq,
@@ -284,7 +282,11 @@ class AutoMoveManager {
         if (oldCurrentBox != null && supposeControlHere != null && mapCalibration.pointB != null) {
             newCalibration = MapGeometry.computeCalibrationSoft(
                 mapCalibration.pointA,
-                ModelCalibrationPoint(supposeControlHere, oldCurrentBox.centerX, oldCurrentBox.centerY),
+                ModelCalibrationPoint(
+                    supposeControlHere,
+                    oldCurrentBox.centerX,
+                    oldCurrentBox.centerY
+                ),
                 autoMapState.northAngle, mapCalibration
             )
         }

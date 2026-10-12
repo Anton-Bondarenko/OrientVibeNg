@@ -73,8 +73,6 @@ data class GpsState(
     val isCalibrated: Boolean = false,
     val startCalibrated: Boolean = false,
     val finishCalibrated: Boolean = false,
-    val autoMode: Boolean = false,
-    val autoCycleActive: Boolean = false,
     val autoBindActive: Boolean = false,
     val trackPoints: List<TrackPoint> = emptyList(),
     val totalDistance: Double = 0.0,  // meters

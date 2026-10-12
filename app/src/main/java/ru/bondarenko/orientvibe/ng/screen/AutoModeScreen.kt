@@ -1,8 +1,12 @@
 package ru.bondarenko.orientvibe.ng.screen
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -73,10 +77,35 @@ fun AutoModeScreen() {
     val navVm = viewModel<NavViewModel>(factory = NavViewModel.Factory(context))
     val autoVm = viewModel<AutoModeViewModel>(factory = AutoModeViewModel.Factory(context))
 
-    // Передаём NavViewModel в AutoModeViewModel и запускаем мониторинг GPS
+    // ── Разрешения на GPS ──────────────────────────────────────────────
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val isGranted = permissions.values.any { it }
+        if (isGranted) {
+            navVm.startGps()
+        }
+    }
+
     LaunchedEffect(Unit) {
         autoVm.navVm = navVm  // устанавливаем поле экземпляра, а не static
         autoVm.startMonitoringIfNeeded()
+
+        // Проверяем runtime-разрешение на геолокацию
+        val fineLocationGranted = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val coarseLocationGranted = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (fineLocationGranted || coarseLocationGranted) {
+            navVm.startGps()  // разрешение есть — запускаем GPS
+        } else {
+            permissionLauncher.launch(
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            )
+        }
     }
 
     val mapState by autoVm.mapState.collectAsState()

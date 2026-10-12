@@ -67,13 +67,8 @@ class NavViewModel(
         viewModelScope.launch {
             trackRecorder.trackState.collect { trackState ->
                 val state = _gpsState.value
-                val hasBothCalibrations = state.startCalibrated && state.finishCalibrated
-                // Вычисляем производные поля из калибровки
-                val derivedRouteDistance = if (hasBothCalibrations) {
-                    routeDistanceFromTrack(state.originalStartGps)
-                } else {
-                    0.0
-                }
+                // derivedRouteDistance always 0 now — manual mode removed; routeDistanceFromTrack deleted
+                val derivedRouteDistance = 0.0
                 val derivedMapScaleX =
                     if (calibration != null) calibration!!.scaleMetersPerMapX else 0.0
                 val derivedMapScaleY =
@@ -92,16 +87,6 @@ class NavViewModel(
         }
     }
 
-    /** Вычисляет расстояние между originalStartGps и текущей точкой трека */
-    private fun routeDistanceFromTrack(originalStart: GpsCoordinate?): Double {
-        val track = trackRecorder.getTrackData().trackPoints
-        return if (originalStart != null && track.isNotEmpty()) {
-            MapCalibrationUtils.haversineDistance(originalStart, track.last().gpsFix.coordinate)
-        } else {
-            0.0
-        }
-    }
-
     // ── GPS Control ──
 
     fun startGps() {
@@ -113,28 +98,6 @@ class NavViewModel(
     }
 
     fun isGpsEnabled(): Boolean = gpsManager.isGpsEnabled()
-
-    // ── Calibration ──
-
-    /** Возвращает originalStartGps для сохранения в MainScreen */
-    fun getOriginalStartGps(): GpsCoordinate? = _gpsState.value.originalStartGps
-
-    /** Сохраняет originalStartGps (вызывается при привязке старта) */
-    fun setOriginalStartGps(coord: GpsCoordinate) {
-        _gpsState.value = _gpsState.value.copy(originalStartGps = coord)
-    }
-
-    /** Применяет одно-точечную калибровку (только старт). Флаг finishCalibrated остаётся false до «Здесь финиш». */
-    fun applyStartCalibration(cal: MapCalibration) {
-        calibration = cal
-        _gpsState.value = _gpsState.value.copy(
-            calibration = cal,
-            isCalibrated = true,
-            startCalibrated = true,
-            finishCalibrated = false
-        )
-    }
-
 
     // ── Auto-Bind GPS Mode (привязка "Здесь") ──
 
@@ -241,14 +204,12 @@ class NavViewModel(
 
     fun getTrackData() = trackRecorder.getTrackData()
 
-    /** Применяет новую калибровку из MapCalibrationUtils (вся логика в Utils). */
+    /** Применяет новую калибровку из AutoModeMapDetector. */
     fun applyNewCalibration(cal: MapCalibration) {
         calibration = cal
         _gpsState.value = _gpsState.value.copy(
             calibration = cal,
-            isCalibrated = true,
-            startCalibrated = true,
-            finishCalibrated = true
+            isCalibrated = true
         )
     }
 
