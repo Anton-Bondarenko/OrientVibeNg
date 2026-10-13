@@ -45,7 +45,7 @@ data class NavigationData(
 )
 
 /** Дистанция до КП для сигнала "прибыл" (м) */
-const val AUDIO_ARRIVED_DIST = 20f
+const val AUDIO_ARRIVED_DIST = 40f
 
 /** Сектор "на цель" отклонения (градусы) */
 const val ON_TARGET_DEG = 10.0

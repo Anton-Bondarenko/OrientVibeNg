@@ -288,12 +288,21 @@ object MapGeometry {
         northAngle: Double = 0.0, scaleX: Double, scaleY: Double,
         oldCalibration: MapCalibration
     ): MapCalibration {
-        Log.d(TAG, "calibrationSingleSoft Sx=${scaleX} Sy=${scaleY} declination=${magneticDeclination}")
+        Log.d(
+            TAG,
+            "calibrationSingleSoft Sx=${scaleX} Sy=${scaleY} declination=${magneticDeclination}"
+        )
         Log.d(TAG, "current pointA lat=${pointA.gps.latitude} lon=${pointA.gps.longitude}")
         Log.d(TAG, "img x=${pointA.imageX} y=${pointA.imageY}")
-        val newCoords = snapBoundary(oldCalibration.pointA.gps, pointA.gps)
+        val oldImg = gpsToImage(pointA.gps, oldCalibration, northAngle)
+        var newImgX = pointA.imageX
+        var newImgY = pointA.imageY
+        if (oldImg != null) {
+            newImgX = oldImg.first + (pointA.imageX - oldImg.first).coerceIn(-0.1, 0.1)
+            newImgY = oldImg.second + (pointA.imageY - oldImg.second).coerceIn(-0.1, 0.1)
+        }
         return MapCalibration(
-            pointA = pointA.copy(gps = newCoords),
+            pointA = pointA.copy(imageX = newImgX, imageY = newImgY),
             pointB = oldCalibration.pointB,
             scaleMetersPerMapX = scaleX,
             scaleMetersPerMapY = scaleY,

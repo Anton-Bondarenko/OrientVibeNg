@@ -824,9 +824,11 @@ fun AutoModeScreen() {
 
         // ── Settings Dialog ──
         if (showSettingsDialog) {
-            var mapScaleFactor by remember { mutableStateOf("1.0") }
-            var gpsAccuracyThreshold by remember { mutableStateOf("10.0") }
-            var audioEnabled by remember { mutableStateOf(true) }
+            val prefs = context.getSharedPreferences("orientvibe_settings", Context.MODE_PRIVATE)
+            var mapScaleFactor by remember { mutableStateOf(prefs.getFloat("map_scale_factor", 1.0f).toString()) }
+            var gpsAccuracyThreshold by remember { mutableStateOf(prefs.getFloat("gps_accuracy_threshold", 10.0f).toString()) }
+            var audioEnabled by remember { mutableStateOf(prefs.getBoolean("audio_enabled", true)) }
+            var autoCalibration by remember { mutableStateOf(prefs.getBoolean("auto_calibration", true)) }
 
             AlertDialog(
                 onDismissRequest = { showSettingsDialog = false },
@@ -870,6 +872,16 @@ fun AutoModeScreen() {
                             text = "Включить звуковую навигацию",
                             style = MaterialTheme.typography.bodyMedium
                         )
+
+                        androidx.compose.material3.Switch(
+                            checked = autoCalibration,
+                            onCheckedChange = { autoCalibration = it },
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                        Text(
+                            text = "Автокалибровка",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
                     }
                 },
                 confirmButton = {
@@ -882,6 +894,7 @@ fun AutoModeScreen() {
                             .putFloat("map_scale_factor", mapScaleFactor.toFloatOrNull() ?: 1.0f)
                             .putFloat("gps_accuracy_threshold", gpsAccuracyThreshold.toFloatOrNull() ?: 10.0f)
                             .putBoolean("audio_enabled", audioEnabled)
+                            .putBoolean("auto_calibration", autoCalibration)
                             .apply()
                         showSettingsDialog = false
                     }) {

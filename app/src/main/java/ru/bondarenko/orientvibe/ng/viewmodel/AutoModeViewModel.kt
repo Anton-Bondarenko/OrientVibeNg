@@ -629,7 +629,7 @@ class AutoModeViewModel(
         val audioState = if (navData != null) {
             analyzeAudioSignal(navData)
         } else {
-            ru.bondarenko.orientvibe.ng.model.AudioSignalState(
+            AudioSignalState(
                 type = AudioSignalType.NONE
             )
         }
@@ -686,8 +686,15 @@ class AutoModeViewModel(
         _movementState.value = result
         val newCalib = result.newMapCalibration
         if (newCalib != null) {
-            // Применяем новую калибровку через NavViewModel
-            applyNewCalibration(newCalib)
+            // Проверяем автокалибровку из настроек
+            val prefs = context.getSharedPreferences("orientvibe_settings", Context.MODE_PRIVATE)
+            val autoCalibrationEnabled = prefs.getBoolean("auto_calibration", true)
+            if (autoCalibrationEnabled) {
+                // Применяем новую калибровку через NavViewModel
+                applyNewCalibration(newCalib)
+            } else {
+                Log.d("AutoModeVM", "Автокалибровка отключена — newMapCalibration пропущен")
+            }
         }
     }
 
