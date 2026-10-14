@@ -24,20 +24,21 @@ import kotlin.math.min
 import ru.bondarenko.orientvibe.ng.model.CalibrationPoint as ModelCalibrationPoint
 
 /** Дистанция до КП, при которой считается что пришли (м) */
-const val AUTO_APPROACHED_DIST = 100f
-const val DIST_GAP = 40f
+const val AUTO_APPROACHED_DIST = 90.0
+const val DIST_GAP = 40.0
 
 /** Максимальное отклонение направления движения для «идём к следующему КП» (°) */
-private const val HEADING_TOLERANCE_DEG = 20.0
+private const val HEADING_TOLERANCE_DEG = 25.0
 
 /** Минимальный скачок направления, считаем что повернули (>°) */
-private const val HEADING_JUMP_DEG = 15.0
+private const val HEADING_JUMP_DEG = 25.0
+private const val HEADING_BIG_JUMP_DEG = 25.0
 
 /** Сколько секунд трек-поинтов хранятся для анализа */
 private const val TRACK_HISTORY_SECONDS = 30
 
 /** За сколько секунд до уверенного ухода — берём усреднённое направление */
-private const val HEADING_WINDOW_SECONDS = 3
+private const val HEADING_WINDOW_SECONDS = 2
 private const val HEADING_WINDOW_LONG_SECONDS = 10
 
 /** Время стабильного увеличения дистанции (мс) */
@@ -49,6 +50,7 @@ private const val TAG = "AutoMoveManager"
 data class TimedGpsPrivate(
     val coordinate: GpsCoordinate,
     val timestamp: Long,
+    val realBearing: Double,
     val average3Bearing: Double,
     val average10Bearing: Double
 )
@@ -207,7 +209,7 @@ fun analyzeAudioSignal(
             val intervalMs = when {
                 absDeg > 30.0 -> 10_000L   // > 30° → каждые 10с
                 absDeg > 20.0 -> 20_000L   // > 20° → каждые 20с
-                else            -> FAR_INTERVAL_MS  // ≤ 20° → каждые 30с
+                else -> FAR_INTERVAL_MS  // ≤ 20° → каждые 30с
             }
 
             Log.d(
@@ -237,9 +239,6 @@ class AutoMoveManager {
 
     /** Следующее КП по номеру — хранится для анализа направления ухода */
     private var _nextBoundingBox: BoundingBox? = null
-
-    /** Для чередования двухточечной калибровки при дистанции >= DISTANCE_FAR_CALIB (м) */
-    private var _farCalibToggle: Boolean = false
 
     /** История GPS-фиксов за последние 30 сек — для анализа направления ухода */
     private val _trackHistory = mutableListOf<TimedGpsPrivate>()
@@ -316,12 +315,13 @@ class AutoMoveManager {
             if (_approachMinDistance < distance) {
                 if (_approachTimeMs == null) {
                     _approachTimeMs = System.currentTimeMillis()
-                    _supposeControlHere = gpsFix.coordinate
                 }
                 val elapsed = System.currentTimeMillis() - _approachTimeMs!!
                 if (elapsed >= AUTO_CONFIRM_TIMEOUT_MS && (distance - _approachMinDistance) > DIST_GAP) { // переключаемся на следующий
                     return true
                 }
+            } else {
+                _supposeControlHere = gpsFix.coordinate
             }
         } else {
             _approachTimeMs = null
@@ -330,18 +330,19 @@ class AutoMoveManager {
         return false
     }
 
-    private fun getLastVector(time: Long): Double? {
-        if (_trackHistory.isEmpty())
+    private fun getLastVector(gps: GpsCoordinate, time: Long): Double? {
+        if (_trackHistory.size < 2)
             return null
         // Фильтруем точки в окне поиска (последние 3 сек)
         var startIdx = 0
+        if (time == 0L) return MapGeometry.bearing(_trackHistory[_trackHistory.size - 1].coordinate, gps)
         // Определяем начало окна усреднения (последние 3 сек)
         val windowEnd = _trackHistory.last().timestamp - time
         while (startIdx < _trackHistory.size && _trackHistory[startIdx].timestamp < windowEnd) startIdx++
-        if (startIdx >= _trackHistory.size - 1) startIdx = 0
+        if (startIdx >= _trackHistory.size - 1) _trackHistory.size - 2
         // Это последние 3 секунды
         val lastPoints = _trackHistory.subList(startIdx, _trackHistory.size)
-        return MapGeometry.bearing(lastPoints.first().coordinate, lastPoints.last().coordinate)
+        return MapGeometry.bearing(lastPoints.first().coordinate, gps)
     }
 
     /** Добавляем GPS-фикс в историю трек-поинтов (последние ? сек) */
@@ -360,8 +361,9 @@ class AutoMoveManager {
             TimedGpsPrivate(
                 gpsFix.coordinate,
                 gpsFix.timestamp,
-                getLastVector(HEADING_WINDOW_SECONDS * 1000L) ?: 0.0,
-                getLastVector(HEADING_WINDOW_LONG_SECONDS * 1000L) ?: 0.0
+                getLastVector(gpsFix.coordinate, 0L) ?: 0.0,
+                getLastVector(gpsFix.coordinate, HEADING_WINDOW_SECONDS * 1000L) ?: 0.0,
+                getLastVector(gpsFix.coordinate, HEADING_WINDOW_LONG_SECONDS * 1000L) ?: 0.0
             )
         )
 
@@ -400,31 +402,39 @@ class AutoMoveManager {
         // направление до следующего КП
         val bearingToNext = MapGeometry.bearing(currentControl, nextControl)
 
-        val currentBearing = _trackHistory.last().average3Bearing
+        val currentBearing = _trackHistory.last().average10Bearing
 
         Log.d(TAG, "направлениe на цель: $bearingToNext движение: ${currentBearing}")
         // Проверяем совпадение с направлением к следующему КП
         val bearingDiff = abs(currentBearing - bearingToNext)
-        if (bearingDiff > HEADING_TOLERANCE_DEG) return null
-
-        // Направление совпадает — ищем самую раннюю точку, где курс резко изменился (>10°) к следующему КП
         val fullSearchStart = System.currentTimeMillis() - TRACK_HISTORY_SECONDS * 1000L
         var globalStartIdx = 0
         while (globalStartIdx < _trackHistory.size && _trackHistory[globalStartIdx].timestamp < fullSearchStart) globalStartIdx++
 
-        for (i in globalStartIdx until _trackHistory.size - 2) {
-            // Проверяем: направление отличается от первоначального (>10°) И направлено к следующему КП
-            val diff = abs(_trackHistory[i].average3Bearing - _trackHistory[i + 1].average3Bearing)
-            val diffCourseToNext = abs(_trackHistory[i + 1].average3Bearing - bearingToNext)
-            if (diff < HEADING_JUMP_DEG || diffCourseToNext > HEADING_TOLERANCE_DEG) continue
-            Log.d(
-                TAG,
-                "Нашлась точка изменения направления на треке цель: $bearingToNext трек: ${_trackHistory[i + 1].average3Bearing}"
-            )
-            return _trackHistory[i].coordinate // Самая ранняя точка с изменённым направлением
+        Log.d(TAG, "Отклонение $bearingDiff")
+        if (bearingDiff > HEADING_TOLERANCE_DEG) {
+            // Направление совпадает — ищем самую раннюю точку, где курс резко изменился (>10°) к следующему КП
+            for (i in _trackHistory.size - 2 downTo globalStartIdx) {
+                // Проверяем: направление отличается от первоначального (>10°) И направлено к следующему КП
+                val diff =
+                    abs(_trackHistory[i].average3Bearing - _trackHistory[i + 1].realBearing)
+                val diffCourseToNext = abs(_trackHistory[i + 1].average3Bearing - bearingToNext)
+                if (diff < HEADING_JUMP_DEG || diffCourseToNext > HEADING_TOLERANCE_DEG) continue
+                Log.d(TAG, "Нашлась точка изменения направления на треке на цель: $bearingToNext трек: ${_trackHistory[i + 1].average3Bearing}")
+                return _trackHistory[i].coordinate // Самая ранняя точка с изменённым направлением
+            }
+        } else { // попробуем просто найти изменение направления движения
+            for (i in _trackHistory.size - 2 downTo globalStartIdx) {
+                // Проверяем: направление отличается от первоначального (>10°) И направлено к следующему КП
+                val diff =
+                    abs(_trackHistory[i].average3Bearing - _trackHistory[i + 1].realBearing)
+                if (diff < HEADING_BIG_JUMP_DEG) continue
+                Log.d(TAG, "Нашлась точка сильного изменения направления на треке $diff")
+                return _trackHistory[i].coordinate // Самая ранняя точка с изменённым направлением
+            }
         }
-
-        // Не нашли — возвращаем default (начало ухода)
+        Log.d(TAG, "Не нашли точку на треке.")
+        // Не нашли — возвращаем default
         return null
     }
 
@@ -482,7 +492,12 @@ class AutoMoveManager {
 
         // Если направление ухода совпадает с направлением к следующему КП, ищем точку поворота
         val effectivePoint = _nextBoundingBox?.let { nextBox ->
-            findHeadingAlignedCalibrationPoint(oldCurrentBox, nextBox, mapCalibration, autoMapState)
+            findHeadingAlignedCalibrationPoint(
+                oldCurrentBox,
+                nextBox,
+                mapCalibration,
+                autoMapState
+            )
         } ?: supposeControlHere
         if (oldCurrentBox != null && effectivePoint != null) {
             // Вычисляем новую точку B (предполагаемое положение старой КП в GPS)
@@ -507,7 +522,7 @@ class AutoMoveManager {
                     newPoint.gps
                 )
 
-                if (dist < 150.0) {
+                if (dist < DISTANCE_FAR_CALIB) {
                     // Маленькое смещение — одноточечная калибровка: меняем только pointA GPS,
                     // масштаб и угол без изменений
                     Log.d(TAG, "Калибровка calibrationSingleSoft(малая дистанция)")
@@ -520,16 +535,26 @@ class AutoMoveManager {
                         mapCalibration
                     )
                 } else {
-                    // Большое смещение — чередуем два типа двухточечной калибровки
-                    newCalibration = if (_farCalibToggle) {
-                        Log.d(TAG, "Калибровка computeCalibrationSoft")
+                    // Большое смещение — сравниваем квадранты
+                    val oldQuad = MapGeometry.pointInQuadrant(
+                        mapCalibration.pointA.imageX,
+                        mapCalibration.pointA.imageY
+                    )
+                    val newQuad = MapGeometry.pointInQuadrant(
+                        oldCurrentBox.centerX,
+                        oldCurrentBox.centerY
+                    )
+                    newCalibration = if (oldQuad == newQuad) {
+                        // Та же область карты — обновляем масштаб и угол
+                        Log.d(TAG, "Калибровка computeCalibrationSoft (same quadrant)")
                         MapGeometry.computeCalibrationSoft(
                             mapCalibration.pointA,
                             newPoint,
                             autoMapState.northAngle, mapCalibration
                         )
                     } else {
-                        Log.d(TAG, "Калибровка calibrationSingle")
+                        // Другая область — сохраняем масштаб/угол, обновляем только pointA
+                        Log.d(TAG, "Калибровка calibrationSingleSoft (different quadrant)")
                         MapGeometry.calibrationSingleSoft(
                             newPoint,
                             mapCalibration.magneticDeclination,
@@ -539,7 +564,6 @@ class AutoMoveManager {
                             mapCalibration
                         )
                     }
-                    _farCalibToggle = !_farCalibToggle
                 }
             }
         }

@@ -22,10 +22,22 @@ import kotlin.math.sqrt
 object MapGeometry {
 
     private const val EARTH_RADIUS_METERS = 6_371_000.0
-    private const val MAX_DELTA_DECLINATION = 1.0
-    private const val MAX_DELTA_SCALE = 50.0
-    private const val MAX_DELTA_DISTANCE = 20.0
+    private const val MAX_DELTA_DECLINATION = 1.5
+    private const val MAX_DELTA_SCALE = 100.0
+    private const val MAX_DELTA_DISTANCE = 40.0
     private const val TAG = "MapGeometry"
+
+    /**
+     * Определяет квадрант точки в абсолютных пиксельных координатах.
+     * Split по центру — подходит для любых абсолютных координат (пиксели YOLO,
+     * gpsToImageAbs pivot и т.д.), поскольку монотонность сохраняет границы 0.5.
+     */
+    fun pointInQuadrant(x: Double, y: Double): Int {
+        // Возвращаем 1=TL, 2=TR, 3=BL, 4=BR
+        val col = if (x < 0.5) 0 else 1
+        val row = if (y < 0.5) 0 else 1
+        return row * 2 + col + 1
+    }
 
     fun calculateMagneticDeclination(
         latitude: Double,
@@ -246,7 +258,9 @@ object MapGeometry {
         if (imageDistance < 0.01) return null
         Log.d(
             TAG,
-            "computeCalibrationSoft Sx=${scaleMetersPerUnitX} Sy=${scaleMetersPerUnitY} declination=${calculatedDeclination} north=${northAngle}"
+            "computeCalibrationSoft Sx=${"%.1f".format(scaleMetersPerUnitX)} Sy=${"%.1f".format(scaleMetersPerUnitY)} " +
+                    "declination=${"%.1f".format(calculatedDeclination)} dDec=${"%.1f".format(calculatedDeclination - oldCalibration.magneticDeclination)} north=${northAngle} " +
+                    "dSx=${"%.1f".format(scaleMetersPerUnitX - oldCalibration.scaleMetersPerMapX)} dSY=${"%.1f".format(scaleMetersPerUnitY - oldCalibration.scaleMetersPerMapY)}"
         )
         Log.d(TAG, "pointB lat=${pointB.gps.latitude} lon=${pointB.gps.longitude}")
         Log.d(TAG, "img x=${pointB.imageX} y=${pointB.imageY}")
@@ -288,18 +302,19 @@ object MapGeometry {
         northAngle: Double = 0.0, scaleX: Double, scaleY: Double,
         oldCalibration: MapCalibration
     ): MapCalibration {
-        Log.d(
-            TAG,
-            "calibrationSingleSoft Sx=${scaleX} Sy=${scaleY} declination=${magneticDeclination}"
-        )
         Log.d(TAG, "current pointA lat=${pointA.gps.latitude} lon=${pointA.gps.longitude}")
         Log.d(TAG, "img x=${pointA.imageX} y=${pointA.imageY}")
         val oldImg = gpsToImage(pointA.gps, oldCalibration, northAngle)
         var newImgX = pointA.imageX
         var newImgY = pointA.imageY
+        Log.d(
+            TAG,
+            "calibrationSingleSoft Sx=${scaleX} Sy=${scaleY} declination=${magneticDeclination}")
         if (oldImg != null) {
             newImgX = oldImg.first + (pointA.imageX - oldImg.first).coerceIn(-0.1, 0.1)
             newImgY = oldImg.second + (pointA.imageY - oldImg.second).coerceIn(-0.1, 0.1)
+            Log.d(
+                TAG,"dX=${"%.1f".format(pointA.imageX - oldImg.first)} dY=${"%.1f".format(pointA.imageY - oldImg.second)}")
         }
         return MapCalibration(
             pointA = pointA.copy(imageX = newImgX, imageY = newImgY),
