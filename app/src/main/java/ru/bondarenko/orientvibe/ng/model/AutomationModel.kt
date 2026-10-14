@@ -6,12 +6,14 @@ import ru.bondarenko.orientvibe.ng.gps.MapCalibration
 enum class AudioSignalType {
     /** Нет сигнала */
     NONE,
-    /** В секторе ±5° — короткий beep в оба канала каждые 10/30с */
-    ON_TARGET,
-    /** Дистанция < 20м — звуковая трель */
+    /** Дистанция < 40м — звуковая трель (один раз) */
     ARRIVED,
-    /** Отклонение > 5° — сигнал в канал поворота, частота падает с углом */
+    /** Отклонение > 10° — сигнал в канал поворота, частота падает с углом */
     DEVIATION,
+    /** Подход: один двойной сигнал (100м) или два двойных (50м) */
+    APPROACH_SINGLE,
+    /** Подход: два двойных сигнала (50м) */
+    APPROACH_DOUBLE,
 }
 
 /** Состояние аудиосигнала навигации */
@@ -27,10 +29,14 @@ data class AudioSignalState(
     val deviationDeg: Double = 0.0,
     /** Дистанция до КП в метрах */
     val distanceToTargetMeters: Double = 0.0,
+    /** Номер КП для отслеживания подхода (чтобы двойной сигнал играл только один раз на дистанции) */
+    val controlNum: Int = 0,
+    /** Сколько раз уже сыграли подходной сигнал на этой дистанции */
+    val approachCount: Int = 0,
 ) {
     /** Является ли сигнал периодическим (нужен таймер повтора) */
     fun isPeriodic(): Boolean =
-        type == AudioSignalType.ON_TARGET || type == AudioSignalType.DEVIATION
+        type == AudioSignalType.DEVIATION
 }
 
 /** Направление отклонения от курса на КП */
@@ -47,7 +53,13 @@ data class NavigationData(
 /** Дистанция до КП для сигнала "прибыл" (м) */
 const val AUDIO_ARRIVED_DIST = 40f
 
-/** Сектор "на цель" отклонения (градусы) */
+/** Дистанция для первого двойного сигнала (м) */
+const val APPROACH_SINGLE_DIST = 100f
+
+/** Дистанция для двух двойных сигналов (м) */
+const val APPROACH_DOUBLE_DIST = 50f
+
+/** Сектор "на цель" отклонения (градусы) — используется для DEVIATION boundary */
 const val ON_TARGET_DEG = 10.0
 
 /** Интервал периодического сигнала при дистанции > 100м (мс) */
@@ -67,11 +79,14 @@ data class MovementState(
     var audioSignalState: AudioSignalState = AudioSignalState(),
     /** Последнее время воспроизведения сигнала (мс) */
     var _lastAudioPlayMs: Long = 0,
+    /** Номер КП, для которого играли подходной сигнал (чтобы не играть повторно) */
+    var _approachControlNum: Int = 0,
+    /** Дистанция, на которую сыграли подходной сигнал (100 или 50) */
+    var _approachDistKey: Int = 0,
 ) {
     /** Является ли сигнал периодическим (нужен таймер повтора) */
     fun isPeriodicSignal(): Boolean =
-        audioSignalState.type == AudioSignalType.ON_TARGET ||
-            audioSignalState.type == AudioSignalType.DEVIATION
+        audioSignalState.type == AudioSignalType.DEVIATION
 
     /** Проверка: прошло ли достаточно времени для следующего периодического сигнала */
     fun canPlayAudioSignal(): Boolean {
@@ -79,6 +94,11 @@ data class MovementState(
         return interval <= 0L ||
             System.currentTimeMillis() - _lastAudioPlayMs >= interval
     }
+}
+
+/** Проверка: переключился ли КП (для авто-свитч сигналов) */
+fun MovementState.didSwitchControl(): Boolean {
+    return currentControl.num != prevControl.num && prevControl.num > 0
 }
 
 /** Перейти к следующему КП в списке */

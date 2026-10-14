@@ -3,6 +3,8 @@ package ru.bondarenko.orientvibe.ng.auto
 import android.util.Log
 import ru.bondarenko.orientvibe.ng.gps.MapCalibration
 import ru.bondarenko.orientvibe.ng.gps.MapGeometry
+import ru.bondarenko.orientvibe.ng.model.APPROACH_DOUBLE_DIST
+import ru.bondarenko.orientvibe.ng.model.APPROACH_SINGLE_DIST
 import ru.bondarenko.orientvibe.ng.model.AUDIO_ARRIVED_DIST
 import ru.bondarenko.orientvibe.ng.model.AudioSignalState
 import ru.bondarenko.orientvibe.ng.model.AudioSignalType
@@ -147,13 +149,11 @@ fun analyzeNavigation(
  * Определяет тип и параметры аудиосигнала на основе навигационных данных.
  *
  * Правила:
- * 1. Дистанция < 20м → ARRIVED (трель), отключить все сигналы
- * 2. Отклонение ≤ ±5° → ON_TARGET (короткий beep в оба канала)
- *    − каждые 30с если дистанция > 100м
- *    − каждые 10с если дистанция ≤ 100м
- * 3. Отклонение > 5° → DEVIATION (сигнал в канал поворота)
- *    − частота падает с ростом угла: 800Hz при 5°, 300Hz при 45°+
- *    − длительность растёт: 200ms при 5°, +5мс/градус
+ * 1. Дистанция < 40м → ARRIVED (трель, один раз), потом тишина
+ * 2. Дистанция <= 50м → APPROACH_DOUBLE (два двойных сигнала)
+ * 3. Дистанция <= 100м → APPROACH_SINGLE (один двойной сигнал)
+ * 4. Отклонение > 10° → DEVIATION (сигнал в канал поворота)
+ * 5. Иначе → NONE (в секторе — тишина, без ON_TARGET)
  */
 fun analyzeAudioSignal(
     navigation: NavigationData,
@@ -162,7 +162,7 @@ fun analyzeAudioSignal(
     val dist = navigation.distanceToTargetMeters
 
     return when {
-        // ── Пришли (дистанция < 20м) — трель, отключить все сигналы ──
+        // ── Пришли (дистанция < 40м) — трель, потом тишина ──
         dist < AUDIO_ARRIVED_DIST -> AudioSignalState(
             type = AudioSignalType.ARRIVED,
             frequencyHz = 600,
@@ -172,40 +172,53 @@ fun analyzeAudioSignal(
             distanceToTargetMeters = dist,
         )
 
-        // ── В секторе — periodic beep в оба канала ──
-        deg <= ON_TARGET_DEG -> {
-            val interval = if (dist > 100) FAR_INTERVAL_MS else CLOSE_INTERVAL_MS
-            val freq = if (dist > 100) 1000 else 1200
-            AudioSignalState(
-                type = AudioSignalType.ON_TARGET,
-                frequencyHz = freq,
-                leftBalance = 0.5f, // оба канала одинаково
-                intervalMs = interval,
-                deviationDeg = navigation.deviationDeg,
-                distanceToTargetMeters = dist,
-            )
-        }
+        // ── Подход: два двойных (< 50м) ──
+        dist <= APPROACH_DOUBLE_DIST -> AudioSignalState(
+            type = AudioSignalType.APPROACH_DOUBLE,
+            frequencyHz = 600,
+            leftBalance = 0.5f,
+            intervalMs = CLOSE_INTERVAL_MS,
+            deviationDeg = navigation.deviationDeg,
+            distanceToTargetMeters = dist,
+        )
 
-        // ── Отклонение > 5° — сигнал в канал поворота, частота падает ──
+        // ── Подход: один двойной (< 100м) ──
+        dist <= APPROACH_SINGLE_DIST -> AudioSignalState(
+            type = AudioSignalType.APPROACH_SINGLE,
+            frequencyHz = 600,
+            leftBalance = 0.5f,
+            intervalMs = CLOSE_INTERVAL_MS,
+            deviationDeg = navigation.deviationDeg,
+            distanceToTargetMeters = dist,
+        )
+
+        // ── Отклонение > 10° — сигнал в канал поворота, частота падает ──
         else -> {
             val absDeg = abs(navigation.deviationDeg)
-            // Частота: 800Hz при 5°, линейно до 300Hz при 45°+
+            // Частота: 800Hz при 10°, линейно до 300Hz при 50°+
             val freq = (800.0 - ((absDeg - ON_TARGET_DEG) / 40.0 * 500.0))
                 .coerceIn(300.0, 800.0).toInt()
-            // Длительность: 200ms при 5°, +5мс за каждый градус
+            // Длительность: 200ms при 10°, +5мс за каждый градус
             val durationMs = (200 + absDeg * 5).toLong().coerceAtMost(600)
             // Баланс: левый канал для поворота влево, правый для поворота вправо
             val balance = if (navigation.deviationDeg < 0) 0f else 1f
 
+            // Интервал: чем больше отклонение — тем чаще сигнал
+            val intervalMs = when {
+                absDeg > 30.0 -> 10_000L   // > 30° → каждые 10с
+                absDeg > 20.0 -> 20_000L   // > 20° → каждые 20с
+                else            -> FAR_INTERVAL_MS  // ≤ 20° → каждые 30с
+            }
+
             Log.d(
                 TAG,
-                "DEVIATION ${absDeg.toInt()}° → freq=${freq}Hz dur=${durationMs}ms bal=$balance"
+                "DEVIATION ${absDeg.toInt()}° → freq=${freq}Hz dur=${durationMs}ms bal=$balance interval=${intervalMs / 1000}с"
             )
             AudioSignalState(
                 type = AudioSignalType.DEVIATION,
                 frequencyHz = freq,
                 leftBalance = balance,
-                intervalMs = if (dist > 100) FAR_INTERVAL_MS else CLOSE_INTERVAL_MS,
+                intervalMs = intervalMs,
                 deviationDeg = navigation.deviationDeg,
                 distanceToTargetMeters = dist,
             )

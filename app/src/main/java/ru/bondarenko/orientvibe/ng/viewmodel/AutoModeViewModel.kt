@@ -24,6 +24,9 @@ import ru.bondarenko.orientvibe.ng.auto.analyzeNavigation
 import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
 import ru.bondarenko.orientvibe.ng.gps.MapGeometry
 import ru.bondarenko.orientvibe.ng.gps.NavViewModel
+import ru.bondarenko.orientvibe.ng.model.APPROACH_DOUBLE_DIST
+import ru.bondarenko.orientvibe.ng.model.APPROACH_SINGLE_DIST
+import ru.bondarenko.orientvibe.ng.model.AUDIO_ARRIVED_DIST
 import ru.bondarenko.orientvibe.ng.model.AutoMapState
 import ru.bondarenko.orientvibe.ng.model.AutoModeTelemetryPoint
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
@@ -626,12 +629,23 @@ class AutoModeViewModel(
         }
 
         val prevSignal = ms.audioSignalState.type
+
         val audioState = if (navData != null) {
             analyzeAudioSignal(navData)
         } else {
             AudioSignalState(
                 type = AudioSignalType.NONE
             )
+        }
+
+        // ── Переприсваиваем → StateFlow emit → Compose перерисуется ──
+        _movementState.value = result
+
+        // Если внутри зоны ARRIVED — отключаем все звуки и пропускаем воспроизведение
+        val insideArrivedZone = audioState.distanceToTargetMeters < AUDIO_ARRIVED_DIST
+        if (insideArrivedZone) {
+            ms.audioSignalState = AudioSignalState(type = AudioSignalType.NONE)
+            return
         }
 
         // Проигрываем сигнал если:
@@ -652,19 +666,15 @@ class AutoModeViewModel(
                         volume = 1.0f,
                         leftChannelBalance = audioState.leftBalance,
                     )
-                    // Сбрасываем тип после трели
+                    // Сбрасываем тип после трели и сбрасываем подходной трекинг
                     ms.audioSignalState = AudioSignalType.NONE.let { AudioSignalState(type = it) }
+                    ms._approachControlNum = 0
+                    ms._approachDistKey = 0
                 }
-                AudioSignalType.ON_TARGET, AudioSignalType.DEVIATION -> {
-                    // Вычисляем длительность для deviation (200ms + 5ms/градус), на цели — 200ms
-                    val durationMs = when (audioState.type) {
-                        AudioSignalType.ON_TARGET -> 200L
-                        AudioSignalType.DEVIATION -> {
-                            val absDeg = kotlin.math.abs(audioState.deviationDeg)
-                            (200 + absDeg * 5).toLong().coerceAtMost(600)
-                        }
-                        else -> 200L
-                    }
+                AudioSignalType.DEVIATION -> {
+                    // Вычисляем длительность (200ms + 5ms/градус)
+                    val absDeg = kotlin.math.abs(audioState.deviationDeg)
+                    val durationMs = (200 + absDeg * 5).toLong().coerceAtMost(600)
                     _audioPlayer.playTone(
                         frequencyHz = audioState.frequencyHz,
                         durationMs = durationMs,
@@ -675,15 +685,27 @@ class AutoModeViewModel(
                     ms.audioSignalState = audioState
                     ms._lastAudioPlayMs = System.currentTimeMillis()
                 }
+                AudioSignalType.APPROACH_SINGLE, AudioSignalType.APPROACH_DOUBLE -> {
+                    // Играть только если КП или дистанция изменились (чтобы не играть повторно)
+                    val distKey = when (audioState.type) {
+                        AudioSignalType.APPROACH_SINGLE -> 100
+                        AudioSignalType.APPROACH_DOUBLE -> 50
+                        else -> 0
+                    }
+                    if (ms._approachControlNum != ms.currentControl.num ||
+                        ms._approachDistKey != distKey
+                    ) {
+                        playDoubleBeep(audioState)
+                        ms._approachControlNum = ms.currentControl.num
+                        ms._approachDistKey = distKey
+                    }
+                }
                 AudioSignalType.NONE -> {}
             }
         } else if (audioState.type != AudioSignalType.NONE && audioState.type != prevSignal) {
             // Тип изменился но это не периодический — обновить состояние
             ms.audioSignalState = audioState
         }
-
-        // ── Переприсваиваем → StateFlow emit → Compose перерисуется ──
-        _movementState.value = result
         val newCalib = result.newMapCalibration
         if (newCalib != null) {
             // Проверяем автокалибровку из настроек
@@ -744,6 +766,58 @@ class AutoModeViewModel(
 
     fun clearError() {
         _mapState.value = _mapState.value.copy(errorMessage = null)
+    }
+
+    /**
+     * Воспроизводит двойной сигнал (двойной beep).
+     * Используется для подходных сигналов:
+     * - APPROACH_SINGLE: один двойной (две вспышки)
+     * - APPROACH_DOUBLE: два двойных (четыре вспышки с паузой между парами)
+     */
+    private fun playDoubleBeep(audioState: AudioSignalState) {
+        if (_audioPlayer == null) return
+
+        val type = audioState.type
+        // Двойной сигнал: тон + пауза + тон
+        val isDoublePair = (type == AudioSignalType.APPROACH_DOUBLE)
+
+        // Первый двойной/пара
+        _audioPlayer.playTone(
+            frequencyHz = 600,
+            durationMs = 150,
+            volume = 1.0f,
+            leftChannelBalance = 0.5f,
+        )
+        // Пауза перед вторым сигналом
+        kotlin.concurrent.thread(start = true) {
+            Thread.sleep(200)
+            _audioPlayer?.playTone(
+                frequencyHz = 600,
+                durationMs = 150,
+                volume = 1.0f,
+                leftChannelBalance = 0.5f,
+            )
+        }
+
+        // Для APPROACH_DOUBLE: вторая пара двойных (пауза + два сигнала)
+        if (isDoublePair) {
+            kotlin.concurrent.thread(start = true) {
+                Thread.sleep(1000) // пауза между парами
+                _audioPlayer?.playTone(
+                    frequencyHz = 600,
+                    durationMs = 150,
+                    volume = 1.0f,
+                    leftChannelBalance = 0.5f,
+                )
+                Thread.sleep(200)
+                _audioPlayer?.playTone(
+                    frequencyHz = 600,
+                    durationMs = 150,
+                    volume = 1.0f,
+                    leftChannelBalance = 0.5f,
+                )
+            }
+        }
     }
 
     override fun onCleared() {

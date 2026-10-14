@@ -825,9 +825,6 @@ fun AutoModeScreen() {
         // ── Settings Dialog ──
         if (showSettingsDialog) {
             val prefs = context.getSharedPreferences("orientvibe_settings", Context.MODE_PRIVATE)
-            var mapScaleFactor by remember { mutableStateOf(prefs.getFloat("map_scale_factor", 1.0f).toString()) }
-            var gpsAccuracyThreshold by remember { mutableStateOf(prefs.getFloat("gps_accuracy_threshold", 10.0f).toString()) }
-            var audioEnabled by remember { mutableStateOf(prefs.getBoolean("audio_enabled", true)) }
             var autoCalibration by remember { mutableStateOf(prefs.getBoolean("auto_calibration", true)) }
 
             AlertDialog(
@@ -839,63 +836,24 @@ fun AutoModeScreen() {
                     )
                 },
                 text = {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        OutlinedTextField(
-                            value = mapScaleFactor,
-                            onValueChange = { mapScaleFactor = it },
-                            label = { Text("Масштаб карты (коэффициент)") },
-                            singleLine = true,
-
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        OutlinedTextField(
-                            value = gpsAccuracyThreshold,
-                            onValueChange = { gpsAccuracyThreshold = it },
-                            label = { Text("Порог точности GPS (м)") },
-                            singleLine = true,
-
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        androidx.compose.material3.Switch(
-                            checked = audioEnabled,
-                            onCheckedChange = { audioEnabled = it },
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        )
-                        Text(
-                            text = "Включить звуковую навигацию",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-
-                        androidx.compose.material3.Switch(
-                            checked = autoCalibration,
-                            onCheckedChange = { autoCalibration = it },
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        )
                         Text(
                             text = "Автокалибровка",
                             style = MaterialTheme.typography.bodyMedium
+                        )
+                        androidx.compose.material3.Switch(
+                            checked = autoCalibration,
+                            onCheckedChange = { autoCalibration = it }
                         )
                     }
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        // Сохраняем настройки в SharedPreferences
-                        val prefs = context.getSharedPreferences(
-                            "orientvibe_settings", Context.MODE_PRIVATE
-                        )
-                        prefs.edit()
-                            .putFloat("map_scale_factor", mapScaleFactor.toFloatOrNull() ?: 1.0f)
-                            .putFloat("gps_accuracy_threshold", gpsAccuracyThreshold.toFloatOrNull() ?: 10.0f)
-                            .putBoolean("audio_enabled", audioEnabled)
-                            .putBoolean("auto_calibration", autoCalibration)
-                            .apply()
+                        prefs.edit().putBoolean("auto_calibration", autoCalibration).apply()
                         showSettingsDialog = false
                     }) {
                         Text("Сохранить")
