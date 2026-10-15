@@ -26,7 +26,8 @@ data class GpsFix(
 data class CalibrationPoint(
     val gps: GpsCoordinate,
     val imageX: Double,  // relative 0..1
-    val imageY: Double   // relative 0..1
+    val imageY: Double,   // relative 0..1
+    val confidence: Double
 )
 
 /**

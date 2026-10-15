@@ -261,7 +261,7 @@ class AutoModeViewModel(
         Log.d(tag, "===== recalibrateToTargetControl START =====")
 
         val pointB = ru.bondarenko.orientvibe.ng.model.CalibrationPoint(
-            gps = currentFix.coordinate, imageX = targetImageX, imageY = targetImageY
+            gps = currentFix.coordinate, imageX = targetImageX, imageY = targetImageY, 1.0
         )
 
         // Вычисляем новую калибровку с магнитным склонением

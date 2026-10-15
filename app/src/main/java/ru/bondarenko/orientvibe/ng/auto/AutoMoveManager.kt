@@ -1,6 +1,7 @@
 package ru.bondarenko.orientvibe.ng.auto
 
 import android.util.Log
+import ru.bondarenko.orientvibe.ng.gps.CalibrationPoint
 import ru.bondarenko.orientvibe.ng.gps.MapCalibration
 import ru.bondarenko.orientvibe.ng.gps.MapGeometry
 import ru.bondarenko.orientvibe.ng.model.APPROACH_DOUBLE_DIST
@@ -28,11 +29,11 @@ const val AUTO_APPROACHED_DIST = 90.0
 const val DIST_GAP = 40.0
 
 /** Максимальное отклонение направления движения для «идём к следующему КП» (°) */
-private const val HEADING_TOLERANCE_DEG = 25.0
+private const val HEADING_TOLERANCE_DEG = 30.0
 
 /** Минимальный скачок направления, считаем что повернули (>°) */
-private const val HEADING_JUMP_DEG = 25.0
-private const val HEADING_BIG_JUMP_DEG = 25.0
+private const val HEADING_JUMP_DEG = 35.0
+private const val HEADING_BIG_JUMP_DEG = 35.0
 
 /** Сколько секунд трек-поинтов хранятся для анализа */
 private const val TRACK_HISTORY_SECONDS = 30
@@ -235,7 +236,7 @@ class AutoMoveManager {
     /** Дистанция в момент первого приближения (baseline) */
     private var _approachMinDistance: Double = 0.0
     private var _approachDetected: Boolean = false
-    private var _supposeControlHere: GpsCoordinate? = null
+//    private var _supposeControlHere: GpsCoordinate? = null
 
     /** Следующее КП по номеру — хранится для анализа направления ухода */
     private var _nextBoundingBox: BoundingBox? = null
@@ -320,22 +321,21 @@ class AutoMoveManager {
                 if (elapsed >= AUTO_CONFIRM_TIMEOUT_MS && (distance - _approachMinDistance) > DIST_GAP) { // переключаемся на следующий
                     return true
                 }
-            } else {
-                _supposeControlHere = gpsFix.coordinate
             }
-        } else {
-            _approachTimeMs = null
-            _supposeControlHere = null
         }
         return false
     }
+
 
     private fun getLastVector(gps: GpsCoordinate, time: Long): Double? {
         if (_trackHistory.size < 2)
             return null
         // Фильтруем точки в окне поиска (последние 3 сек)
         var startIdx = 0
-        if (time == 0L) return MapGeometry.bearing(_trackHistory[_trackHistory.size - 1].coordinate, gps)
+        if (time == 0L) return MapGeometry.bearing(
+            _trackHistory[_trackHistory.size - 1].coordinate,
+            gps
+        )
         // Определяем начало окна усреднения (последние 3 сек)
         val windowEnd = _trackHistory.last().timestamp - time
         while (startIdx < _trackHistory.size && _trackHistory[startIdx].timestamp < windowEnd) startIdx++
@@ -387,7 +387,7 @@ class AutoMoveManager {
         nextBox: BoundingBox,
         mapCalibration: MapCalibration,
         autoMapState: AutoMapState
-    ): GpsCoordinate? {
+    ): ModelCalibrationPoint? {
         currentBox ?: return null
         // Определяем ориентир
         val nextControl = MapGeometry.imageToGps(
@@ -405,37 +405,65 @@ class AutoMoveManager {
         val currentBearing = _trackHistory.last().average10Bearing
 
         Log.d(TAG, "направлениe на цель: $bearingToNext движение: ${currentBearing}")
-        // Проверяем совпадение с направлением к следующему КП
+
         val bearingDiff = abs(currentBearing - bearingToNext)
         val fullSearchStart = System.currentTimeMillis() - TRACK_HISTORY_SECONDS * 1000L
         var globalStartIdx = 0
         while (globalStartIdx < _trackHistory.size && _trackHistory[globalStartIdx].timestamp < fullSearchStart) globalStartIdx++
 
         Log.d(TAG, "Отклонение $bearingDiff")
+
+        // Проверяем совпадение с направлением к следующему КП
         if (bearingDiff > HEADING_TOLERANCE_DEG) {
             // Направление совпадает — ищем самую раннюю точку, где курс резко изменился (>10°) к следующему КП
             for (i in _trackHistory.size - 2 downTo globalStartIdx) {
                 // Проверяем: направление отличается от первоначального (>10°) И направлено к следующему КП
                 val diff =
                     abs(_trackHistory[i].average3Bearing - _trackHistory[i + 1].realBearing)
-                val diffCourseToNext = abs(_trackHistory[i + 1].average3Bearing - bearingToNext)
-                if (diff < HEADING_JUMP_DEG || diffCourseToNext > HEADING_TOLERANCE_DEG) continue
-                Log.d(TAG, "Нашлась точка изменения направления на треке на цель: $bearingToNext трек: ${_trackHistory[i + 1].average3Bearing}")
-                return _trackHistory[i].coordinate // Самая ранняя точка с изменённым направлением
-            }
-        } else { // попробуем просто найти изменение направления движения
-            for (i in _trackHistory.size - 2 downTo globalStartIdx) {
-                // Проверяем: направление отличается от первоначального (>10°) И направлено к следующему КП
-                val diff =
-                    abs(_trackHistory[i].average3Bearing - _trackHistory[i + 1].realBearing)
-                if (diff < HEADING_BIG_JUMP_DEG) continue
-                Log.d(TAG, "Нашлась точка сильного изменения направления на треке $diff")
-                return _trackHistory[i].coordinate // Самая ранняя точка с изменённым направлением
+                if (diff < HEADING_JUMP_DEG) continue
+                Log.d(
+                    TAG,
+                    "Нашлась точка изменения направления на треке на цель: $bearingToNext трек: ${_trackHistory[i + 1].average3Bearing} "
+                )
+                return CalibrationPoint(
+                    _trackHistory[i].coordinate,
+                    currentBox.centerX,
+                    currentBox.centerY,
+                    0.8
+                ) // Самая ранняя точка с изменённым направлением
             }
         }
-        Log.d(TAG, "Не нашли точку на треке.")
+
+        // попробуем просто найти изменение направления движения
+        for (i in _trackHistory.size - 2 downTo globalStartIdx) {
+            // Проверяем: направление отличается от первоначального (>10°) И направлено к следующему КП
+            val diff =
+                abs(_trackHistory[i].average3Bearing - _trackHistory[i + 1].realBearing)
+            if (diff < HEADING_BIG_JUMP_DEG) continue
+            Log.d(TAG, "Нашлась точка сильного изменения направления на треке $diff")
+            return CalibrationPoint(
+                _trackHistory[i].coordinate,
+                currentBox.centerX,
+                currentBox.centerY,
+                0.6
+            ) // Самая ранняя точка с изменённым направлением
+        }
+
+        // Ищем ближайшую точку на треке
+        // init
+        var minDistance: Double = MapGeometry.haversineDistance(_trackHistory[_trackHistory.size - 1].coordinate, currentControl)
+        var nearestCalibrationPoint: CalibrationPoint = CalibrationPoint(_trackHistory[_trackHistory.size - 1].coordinate, currentBox.centerX, currentBox.centerY, 0.3)
+        for (i in _trackHistory.size - 2 downTo globalStartIdx) {
+            val distance = MapGeometry.haversineDistance(_trackHistory[i].coordinate, currentControl)
+            if (distance < minDistance){
+                nearestCalibrationPoint = CalibrationPoint(_trackHistory[i].coordinate, currentBox.centerX,
+                    currentBox.centerY, 0.4)
+            }
+        }
+
+        Log.d(TAG, "Не нашли точку на треке, используем ближайшую")
         // Не нашли — возвращаем default
-        return null
+        return nearestCalibrationPoint
     }
 
     /** Вычисляет усреднённый векторный курс из списка точек */
@@ -459,7 +487,7 @@ class AutoMoveManager {
         _approachTimeMs = null
         _approachDetected = false
         _approachMinDistance = Double.MAX_VALUE
-        _supposeControlHere = null
+//        _supposeControlHere = null
         _nextBoundingBox = null
     }
 
@@ -488,7 +516,6 @@ class AutoMoveManager {
         )
 
         var newCalibration: MapCalibration? = null
-        val supposeControlHere = _supposeControlHere
 
         // Если направление ухода совпадает с направлением к следующему КП, ищем точку поворота
         val effectivePoint = _nextBoundingBox?.let { nextBox ->
@@ -498,14 +525,10 @@ class AutoMoveManager {
                 mapCalibration,
                 autoMapState
             )
-        } ?: supposeControlHere
+        }
         if (oldCurrentBox != null && effectivePoint != null) {
             // Вычисляем новую точку B (предполагаемое положение старой КП в GPS)
-            val newPoint = ModelCalibrationPoint(
-                effectivePoint,
-                oldCurrentBox.centerX,
-                oldCurrentBox.centerY
-            )
+            val newPoint = effectivePoint
 
             // Если pointB был null (одноточечная калибровка) — используем computeCalibrationSoft
             if (mapCalibration.pointB == null) {
@@ -522,11 +545,27 @@ class AutoMoveManager {
                     newPoint.gps
                 )
 
-                if (dist < DISTANCE_FAR_CALIB) {
-                    // Маленькое смещение — одноточечная калибровка: меняем только pointA GPS,
-                    // масштаб и угол без изменений
-                    Log.d(TAG, "Калибровка calibrationSingleSoft(малая дистанция)")
-                    newCalibration = MapGeometry.calibrationSingleSoft(
+                // Большое смещение — сравниваем квадранты
+                val oldQuad = MapGeometry.pointInQuadrant(
+                    mapCalibration.pointA.imageX,
+                    mapCalibration.pointA.imageY
+                )
+                val newQuad = MapGeometry.pointInQuadrant(
+                    oldCurrentBox.centerX,
+                    oldCurrentBox.centerY
+                )
+                newCalibration = if (oldQuad == newQuad) {
+                    // Та же область карты — обновляем масштаб и угол
+                    Log.d(TAG, "Калибровка computeCalibrationSoft (same quadrant)")
+                    MapGeometry.computeCalibrationSoft(
+                        mapCalibration.pointA,
+                        newPoint,
+                        autoMapState.northAngle, mapCalibration
+                    )
+                } else {
+                    // Другая область — сохраняем масштаб/угол, обновляем только pointA
+                    Log.d(TAG, "Калибровка calibrationSingleSoft (different quadrant)")
+                    MapGeometry.calibrationSingleSoft(
                         newPoint,
                         mapCalibration.magneticDeclination,
                         autoMapState.northAngle,
@@ -534,36 +573,6 @@ class AutoMoveManager {
                         mapCalibration.scaleMetersPerMapY,
                         mapCalibration
                     )
-                } else {
-                    // Большое смещение — сравниваем квадранты
-                    val oldQuad = MapGeometry.pointInQuadrant(
-                        mapCalibration.pointA.imageX,
-                        mapCalibration.pointA.imageY
-                    )
-                    val newQuad = MapGeometry.pointInQuadrant(
-                        oldCurrentBox.centerX,
-                        oldCurrentBox.centerY
-                    )
-                    newCalibration = if (oldQuad == newQuad) {
-                        // Та же область карты — обновляем масштаб и угол
-                        Log.d(TAG, "Калибровка computeCalibrationSoft (same quadrant)")
-                        MapGeometry.computeCalibrationSoft(
-                            mapCalibration.pointA,
-                            newPoint,
-                            autoMapState.northAngle, mapCalibration
-                        )
-                    } else {
-                        // Другая область — сохраняем масштаб/угол, обновляем только pointA
-                        Log.d(TAG, "Калибровка calibrationSingleSoft (different quadrant)")
-                        MapGeometry.calibrationSingleSoft(
-                            newPoint,
-                            mapCalibration.magneticDeclination,
-                            autoMapState.northAngle,
-                            mapCalibration.scaleMetersPerMapX,
-                            mapCalibration.scaleMetersPerMapY,
-                            mapCalibration
-                        )
-                    }
                 }
             }
         }

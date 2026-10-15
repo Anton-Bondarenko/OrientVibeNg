@@ -95,14 +95,15 @@ object MapCalibrationUtils {
         imageProportion: Double = 1.44, // width/height
         scaleMetersPerMapX: Double? = null,
         scaleMetersPerMapY: Double? = null,
-
+        confidence: Double = 1.0
         ): MapCalibration {
 
         return MapGeometry.calibrationSingle(
             ru.bondarenko.orientvibe.ng.gps.CalibrationPoint(
                 gps = startGPS,
                 imageX = startPointImageX,
-                imageY = startPointImageY
+                imageY = startPointImageY,
+                confidence = confidence
             ),
             MapGeometry.calculateMagneticDeclination(startGPS.latitude, startGPS.longitude),
             northAngle,
@@ -132,16 +133,18 @@ object MapCalibrationUtils {
         finishPointImageX: Double,
         finishPointImageY: Double,
         currentFixGPS: GpsCoordinate,
-        magneticDeclination: Double = 0.0
+        magneticDeclination: Double = 0.0,
+        confidence: Double = 1.0
     ): BindResult {
         // Use actual GPS coordinates directly — two-point calibration guarantees
         // gpsToImage(pointB.gps) returns pointB.imageCoords exactly.
         val pointA =
-            CalibrationPoint(gps = startGPS, imageX = startPointImageX, imageY = startPointImageY)
+            CalibrationPoint(gps = startGPS, imageX = startPointImageX, imageY = startPointImageY, confidence = confidence)
         val pointB = CalibrationPoint(
             gps = currentFixGPS,
             imageX = finishPointImageX,
-            imageY = finishPointImageY
+            imageY = finishPointImageY,
+            confidence
         )
 
         val newCal = MapGeometry.computeCalibrationHard(pointA, pointB, magneticDeclination)
@@ -153,7 +156,7 @@ object MapCalibrationUtils {
         // northAngle = -rawMagneticBearing cancels that rotation so currentFixGPS
         // projects EXACTLY onto finishPoint after canvas rotation.
         val trueBearing = MapGeometry.bearing(pointA.gps, pointB.gps)
-        val northAngleDeg = -(trueBearing - magneticDeclination).toDouble()
+        val northAngleDeg = -(trueBearing - magneticDeclination)
 
         return BindResult(newCal, northAngleDeg)
     }

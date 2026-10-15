@@ -22,9 +22,9 @@ import kotlin.math.sqrt
 object MapGeometry {
 
     private const val EARTH_RADIUS_METERS = 6_371_000.0
-    private const val MAX_DELTA_DECLINATION = 1.5
-    private const val MAX_DELTA_SCALE = 100.0
-    private const val MAX_DELTA_DISTANCE = 40.0
+    private const val MAX_DELTA_DECLINATION = 3.0
+    private const val MAX_DELTA_SCALE = 200.0
+    private const val MAX_DELTA_DISTANCE = 0.015
     private const val TAG = "MapGeometry"
 
     /**
@@ -241,17 +241,21 @@ object MapGeometry {
                         -MAX_DELTA_SCALE, MAX_DELTA_SCALE
                     )
             }
-            scaleMetersPerUnitY = scaleMetersPerUnitX
+            scaleMetersPerUnitY = abs(dNorth / dy)
+            scaleMetersPerUnitY = oldCalibration.scaleMetersPerMapY + (scaleMetersPerUnitY - oldCalibration.scaleMetersPerMapY).coerceIn(
+                -MAX_DELTA_SCALE/2, MAX_DELTA_SCALE/2 // короткая сторона, погрешность может быть высокая
+            )
         } else {
             scaleMetersPerUnitY = abs(dNorth / dy)
             // если двухточечная калибровка уже была и масштаб уже примерно известен, то ограничиваем изменения масштаба
             if (oldCalibration.pointB != null) {
                 scaleMetersPerUnitY =
                     oldCalibration.scaleMetersPerMapY + (scaleMetersPerUnitY - oldCalibration.scaleMetersPerMapY).coerceIn(
-                        -MAX_DELTA_SCALE, MAX_DELTA_SCALE
-                    )
+                        -MAX_DELTA_SCALE, MAX_DELTA_SCALE)
             }
-            scaleMetersPerUnitX = scaleMetersPerUnitY
+            scaleMetersPerUnitX = abs(dEast / dx)
+            scaleMetersPerUnitX = oldCalibration.scaleMetersPerMapX + (scaleMetersPerUnitX - oldCalibration.scaleMetersPerMapX).coerceIn(
+                -MAX_DELTA_SCALE/2, MAX_DELTA_SCALE/2) // короткая сторона, погрешность может быть высокая
         }
 
         val imageDistance = sqrt(dx * dx + dy * dy)
@@ -311,10 +315,10 @@ object MapGeometry {
             TAG,
             "calibrationSingleSoft Sx=${scaleX} Sy=${scaleY} declination=${magneticDeclination}")
         if (oldImg != null) {
-            newImgX = oldImg.first + (pointA.imageX - oldImg.first).coerceIn(-0.1, 0.1)
-            newImgY = oldImg.second + (pointA.imageY - oldImg.second).coerceIn(-0.1, 0.1)
+            newImgX = oldImg.first + (pointA.imageX - oldImg.first).coerceIn(-MAX_DELTA_DISTANCE, MAX_DELTA_DISTANCE)
+            newImgY = oldImg.second + (pointA.imageY - oldImg.second).coerceIn(-MAX_DELTA_DISTANCE, MAX_DELTA_DISTANCE)
             Log.d(
-                TAG,"dX=${"%.1f".format(pointA.imageX - oldImg.first)} dY=${"%.1f".format(pointA.imageY - oldImg.second)}")
+                TAG,"dX=${"%.3f".format(pointA.imageX - oldImg.first)} dY=${"%.3f".format(pointA.imageY - oldImg.second)}")
         }
         return MapCalibration(
             pointA = pointA.copy(imageX = newImgX, imageY = newImgY),
