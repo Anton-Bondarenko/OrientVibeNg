@@ -22,9 +22,9 @@ import kotlin.math.sqrt
 object MapGeometry {
 
     private const val EARTH_RADIUS_METERS = 6_371_000.0
-    private const val MAX_DELTA_DECLINATION = 3.0
-    private const val MAX_DELTA_SCALE = 200.0
-    private const val MAX_DELTA_DISTANCE = 0.015
+    private const val MAX_DELTA_DECLINATION = 5.0
+    private const val MAX_DELTA_SCALE = 400.0
+    private const val MAX_DELTA_DISTANCE = 0.1
     private const val TAG = "MapGeometry"
 
     /**
@@ -203,11 +203,12 @@ object MapGeometry {
         val screenBearing =
             screenBearing(pointA.imageX, pointA.imageY, pointB.imageX, pointB.imageY) - northAngle
         var calculatedDeclination = trueBearing - screenBearing
-        // корректируем склонение не более одного градуса за раз
+        // корректируем склонение
         if (oldCalibration.pointB != null) {
             calculatedDeclination =
                 oldCalibration.magneticDeclination + (calculatedDeclination - oldCalibration.magneticDeclination).coerceIn(
-                    -MAX_DELTA_DECLINATION, MAX_DELTA_DECLINATION
+                    -MAX_DELTA_DECLINATION * pointA.confidence * pointB.confidence,
+                    MAX_DELTA_DECLINATION * pointA.confidence * pointB.confidence
                 )
         }
         // Compute Rhumb distance using cos(pointA.gps.lat) for easting — matches offsetCoordinate,
@@ -236,35 +237,52 @@ object MapGeometry {
             scaleMetersPerUnitX = abs(dEast / dx)
             // если двухточечная калибровка уже была и масштаб уже примерно известен, то ограничиваем изменения масштаба
             if (oldCalibration.pointB != null) {
+                val confidence = MAX_DELTA_SCALE * pointA.confidence * pointB.confidence
                 scaleMetersPerUnitX =
                     oldCalibration.scaleMetersPerMapX + (scaleMetersPerUnitX - oldCalibration.scaleMetersPerMapX).coerceIn(
-                        -MAX_DELTA_SCALE, MAX_DELTA_SCALE
+                        -confidence, confidence
                     )
             }
             scaleMetersPerUnitY = abs(dNorth / dy)
-            scaleMetersPerUnitY = oldCalibration.scaleMetersPerMapY + (scaleMetersPerUnitY - oldCalibration.scaleMetersPerMapY).coerceIn(
-                -MAX_DELTA_SCALE/2, MAX_DELTA_SCALE/2 // короткая сторона, погрешность может быть высокая
-            )
+            val confidence = abs(MAX_DELTA_SCALE * pointA.confidence * pointB.confidence * (dNorth / dEast)) // короткая сторона, погрешность может быть высокая
+            scaleMetersPerUnitY =
+                oldCalibration.scaleMetersPerMapY + (scaleMetersPerUnitY - oldCalibration.scaleMetersPerMapY).coerceIn(
+                    -confidence, confidence
+                )
         } else {
             scaleMetersPerUnitY = abs(dNorth / dy)
             // если двухточечная калибровка уже была и масштаб уже примерно известен, то ограничиваем изменения масштаба
             if (oldCalibration.pointB != null) {
+                val confidence = MAX_DELTA_SCALE * pointA.confidence * pointB.confidence
                 scaleMetersPerUnitY =
                     oldCalibration.scaleMetersPerMapY + (scaleMetersPerUnitY - oldCalibration.scaleMetersPerMapY).coerceIn(
-                        -MAX_DELTA_SCALE, MAX_DELTA_SCALE)
+                        -confidence, confidence
+                    )
             }
             scaleMetersPerUnitX = abs(dEast / dx)
-            scaleMetersPerUnitX = oldCalibration.scaleMetersPerMapX + (scaleMetersPerUnitX - oldCalibration.scaleMetersPerMapX).coerceIn(
-                -MAX_DELTA_SCALE/2, MAX_DELTA_SCALE/2) // короткая сторона, погрешность может быть высокая
+            val confidence = abs(MAX_DELTA_SCALE * pointA.confidence * pointB.confidence * (dEast / dNorth)) // короткая сторона, погрешность может быть высокая
+            scaleMetersPerUnitX =
+                oldCalibration.scaleMetersPerMapX + (scaleMetersPerUnitX - oldCalibration.scaleMetersPerMapX).coerceIn(
+                    -confidence, confidence
+                )
         }
-
-        val imageDistance = sqrt(dx * dx + dy * dy)
-        if (imageDistance < 0.01) return null
         Log.d(
             TAG,
-            "computeCalibrationSoft Sx=${"%.1f".format(scaleMetersPerUnitX)} Sy=${"%.1f".format(scaleMetersPerUnitY)} " +
-                    "declination=${"%.1f".format(calculatedDeclination)} dDec=${"%.1f".format(calculatedDeclination - oldCalibration.magneticDeclination)} north=${northAngle} " +
-                    "dSx=${"%.1f".format(scaleMetersPerUnitX - oldCalibration.scaleMetersPerMapX)} dSY=${"%.1f".format(scaleMetersPerUnitY - oldCalibration.scaleMetersPerMapY)}"
+            "computeCalibrationSoft Sx=${"%.1f".format(scaleMetersPerUnitX)} Sy=${
+                "%.1f".format(
+                    scaleMetersPerUnitY
+                )
+            } " +
+                    "declination=${"%.1f".format(calculatedDeclination)} dDec=${
+                        "%.1f".format(
+                            calculatedDeclination - oldCalibration.magneticDeclination
+                        )
+                    } north=${northAngle} " +
+                    "dSx=${"%.1f".format(scaleMetersPerUnitX - oldCalibration.scaleMetersPerMapX)} dSY=${
+                        "%.1f".format(
+                            scaleMetersPerUnitY - oldCalibration.scaleMetersPerMapY
+                        )
+                    } confidenceA=${pointA.confidence} confidenceB=${pointB.confidence}"
         )
         Log.d(TAG, "pointB lat=${pointB.gps.latitude} lon=${pointB.gps.longitude}")
         Log.d(TAG, "img x=${pointB.imageX} y=${pointB.imageY}")
@@ -313,12 +331,16 @@ object MapGeometry {
         var newImgY = pointA.imageY
         Log.d(
             TAG,
-            "calibrationSingleSoft Sx=${scaleX} Sy=${scaleY} declination=${magneticDeclination}")
+            "calibrationSingleSoft Sx=${scaleX} Sy=${scaleY} declination=${magneticDeclination}"
+        )
+        val confidence = MAX_DELTA_DISTANCE * pointA.confidence
         if (oldImg != null) {
-            newImgX = oldImg.first + (pointA.imageX - oldImg.first).coerceIn(-MAX_DELTA_DISTANCE, MAX_DELTA_DISTANCE)
-            newImgY = oldImg.second + (pointA.imageY - oldImg.second).coerceIn(-MAX_DELTA_DISTANCE, MAX_DELTA_DISTANCE)
+            newImgX = oldImg.first + ((pointA.imageX - oldImg.first).coerceIn(-confidence, confidence))
+            newImgY = oldImg.second + ((pointA.imageY - oldImg.second).coerceIn(-confidence, confidence))
             Log.d(
-                TAG,"dX=${"%.3f".format(pointA.imageX - oldImg.first)} dY=${"%.3f".format(pointA.imageY - oldImg.second)}")
+                TAG,
+                "dX=${"%.3f".format(pointA.imageX - oldImg.first)} dY=${"%.3f".format(pointA.imageY - oldImg.second)} confidenceA = ${pointA.confidence}"
+            )
         }
         return MapCalibration(
             pointA = pointA.copy(imageX = newImgX, imageY = newImgY),

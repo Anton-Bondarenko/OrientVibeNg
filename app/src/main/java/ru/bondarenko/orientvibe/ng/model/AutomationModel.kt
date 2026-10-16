@@ -74,7 +74,10 @@ data class MovementState(
     var currentControl: CurrentControl = CurrentControl(1),
     var prevControl: CurrentControl = CurrentControl(0),
     var distanceToTarget: Double = 0.0,
+    /** Новая калибровка от switchControl (однажды применяемая) */
     var newMapCalibration: MapCalibration? = null,
+    /** Все автоматические калибровки, созданные за сессию авто-режима */
+    var autoCalibrations: List<MapCalibration> = emptyList(),
     /** Аудиосигнал навигации */
     var audioSignalState: AudioSignalState = AudioSignalState(),
     /** Последнее время воспроизведения сигнала (мс) */

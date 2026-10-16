@@ -17,23 +17,21 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import ru.bondarenko.orientvibe.ng.auto.AutoMoveManager
 import ru.bondarenko.orientvibe.ng.audio.StereoAudioPlayer
+import ru.bondarenko.orientvibe.ng.auto.AutoMoveManager
 import ru.bondarenko.orientvibe.ng.auto.analyzeAudioSignal
 import ru.bondarenko.orientvibe.ng.auto.analyzeNavigation
 import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
 import ru.bondarenko.orientvibe.ng.gps.MapGeometry
 import ru.bondarenko.orientvibe.ng.gps.NavViewModel
-import ru.bondarenko.orientvibe.ng.model.APPROACH_DOUBLE_DIST
-import ru.bondarenko.orientvibe.ng.model.APPROACH_SINGLE_DIST
 import ru.bondarenko.orientvibe.ng.model.AUDIO_ARRIVED_DIST
+import ru.bondarenko.orientvibe.ng.model.AudioSignalState
+import ru.bondarenko.orientvibe.ng.model.AudioSignalType
 import ru.bondarenko.orientvibe.ng.model.AutoMapState
 import ru.bondarenko.orientvibe.ng.model.AutoModeTelemetryPoint
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.model.GpsFix
 import ru.bondarenko.orientvibe.ng.model.GpsState
-import ru.bondarenko.orientvibe.ng.model.AudioSignalState
-import ru.bondarenko.orientvibe.ng.model.AudioSignalType
 import ru.bondarenko.orientvibe.ng.model.MapCalibration
 import ru.bondarenko.orientvibe.ng.model.MoveReadyAlert
 import ru.bondarenko.orientvibe.ng.model.MovementState
@@ -90,6 +88,10 @@ class AutoModeViewModel(
     // Счётчик калибровки — каждый раз при recalibration инкрементируется, чтобы вызвать recomposition Compose
     private val _calibrationVersion = MutableStateFlow(0)
     val calibrationVersion: StateFlow<Int> = _calibrationVersion.asStateFlow()
+
+    /** Все автоматические MapCalibration, созданные в switchControl за сессию */
+    private val _autoCalibrationsList = MutableStateFlow<List<ru.bondarenko.orientvibe.ng.gps.MapCalibration>>(emptyList())
+    val autoCalibrations: StateFlow<List<ru.bondarenko.orientvibe.ng.gps.MapCalibration>> = _autoCalibrationsList.asStateFlow()
 
     /** Первая привязанная контрольная точка (GPS + image pixels). Используется для второй калибровки. */
     private var _calibration: ru.bondarenko.orientvibe.ng.gps.MapCalibration? = null
@@ -615,6 +617,11 @@ class AutoModeViewModel(
             gpsFix
         )
 
+        // Обновляем историю автоматических калибровок
+        val calHistory = _autoMoveManager.autoCalibrations.toList()
+        ms.autoCalibrations = calHistory
+        _autoCalibrationsList.value = calHistory
+
         // ── Анализ навигации и аудиосигнала ──
         val navData = if (_calibration != null) {
             analyzeNavigation(
@@ -652,8 +659,8 @@ class AutoModeViewModel(
         // 1. Тип изменился (новый сигнал) — всегда играть
         // 2. Тип тот же периодический и прошло достаточно времени — играть
         val shouldPlay = audioState.type != AudioSignalType.NONE && (
-            audioState.type != prevSignal || ms.canPlayAudioSignal()
-        )
+                audioState.type != prevSignal || ms.canPlayAudioSignal()
+                )
 
         if (shouldPlay && _audioPlayer != null) {
             when (audioState.type) {
@@ -671,6 +678,7 @@ class AutoModeViewModel(
                     ms._approachControlNum = 0
                     ms._approachDistKey = 0
                 }
+
                 AudioSignalType.DEVIATION -> {
                     // Вычисляем длительность (200ms + 5ms/градус)
                     val absDeg = kotlin.math.abs(audioState.deviationDeg)
@@ -685,6 +693,7 @@ class AutoModeViewModel(
                     ms.audioSignalState = audioState
                     ms._lastAudioPlayMs = System.currentTimeMillis()
                 }
+
                 AudioSignalType.APPROACH_SINGLE, AudioSignalType.APPROACH_DOUBLE -> {
                     // Играть только если КП или дистанция изменились (чтобы не играть повторно)
                     val distKey = when (audioState.type) {
@@ -700,6 +709,7 @@ class AutoModeViewModel(
                         ms._approachDistKey = distKey
                     }
                 }
+
                 AudioSignalType.NONE -> {}
             }
         } else if (audioState.type != AudioSignalType.NONE && audioState.type != prevSignal) {

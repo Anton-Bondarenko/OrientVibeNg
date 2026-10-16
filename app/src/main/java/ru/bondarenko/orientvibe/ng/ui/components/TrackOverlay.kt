@@ -156,32 +156,5 @@ class TrackOverlay {
         val dy = aheadView.y - currentView.y
 
         canvas.drawLine(currentView.x, currentView.y, aheadView.x, aheadView.y, directionPaint)
-
-        // Draw direction arrow at ahead point
-        val arrowSize = 15f
-        val arrowAngle = 0.5f
-        val len = sqrt((dx * dx + dy * dy).toDouble()).toDouble()
-        if (len > 0) {
-            val ux = dx / len
-            val uy = dy / len
-
-            val arrowPath = Path().apply {
-                moveTo(aheadView.x, aheadView.y)
-                lineTo(
-                    (aheadView.x - ux * arrowSize * cos(arrowAngle.toDouble()).toDouble() -
-                            uy * arrowSize * sin(arrowAngle.toDouble()).toDouble()).toFloat(),
-                    (aheadView.y - uy * arrowSize * cos(arrowAngle.toDouble()).toDouble() +
-                            ux * arrowSize * sin(arrowAngle.toDouble()).toDouble()).toFloat()
-                )
-                lineTo(
-                    (aheadView.x - ux * arrowSize * cos(arrowAngle.toDouble()).toDouble() +
-                            uy * arrowSize * sin(arrowAngle.toDouble()).toDouble()).toFloat(),
-                    (aheadView.y - uy * arrowSize * cos(arrowAngle.toDouble()).toDouble() -
-                            ux * arrowSize * sin(arrowAngle.toDouble()).toDouble()).toFloat()
-                )
-                close()
-            }
-            canvas.drawPath(arrowPath, directionArrowPaint)
-        }
     }
 }

@@ -1,5 +1,9 @@
 package ru.bondarenko.orientvibe.ng.gps
 
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.sin
 import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils.bindGpsToFinishWithTrack
 import ru.bondarenko.orientvibe.ng.model.CalibrationPoint
 import ru.bondarenko.orientvibe.ng.model.GpsCoordinate
@@ -76,6 +80,113 @@ object MapCalibrationUtils {
     /** Offset the starting GPS coordinate by a northward and eastward displacement (metres). */
     fun offsetCoordinate(from: GpsCoordinate, dNorth: Double, dEast: Double): GpsCoordinate {
         return MapGeometry.offsetCoordinate(from, dNorth, dEast)
+    }
+
+    // ─── Average calibration from history ─────────────────────────────────
+
+    /**
+     * Compute a weighted-average calibration from a list of historical calibrations,
+     * focused around [targetGps].
+     *
+     * For each calibration the "center" GPS position is the midpoint of its available
+     * calibration points (pointA alone if pointB is missing). Each calibration receives a
+     * weight proportional to `confidence / distance²` — closer and more trustworthy
+     * calibrations dominate the result.
+     *
+     * Returns null when the input list is empty or none of the calibrations have valid
+     * GPS data.
+     */
+    fun averageCalibrationsAt(
+        history: List<MapCalibration>,
+        targetGps: GpsCoordinate
+    ): MapCalibration? {
+        if (history.isEmpty()) return null
+
+        // Collect (center, weight, cal) tuples
+        val samples = mutableListOf<Triple<GpsCoordinate, Double, MapCalibration>>()
+
+        for (cal in history) {
+            val pts = listOfNotNull(cal.pointA, cal.pointB)
+            if (pts.size < 1) continue
+
+            // Centroid of calibration GPS points
+            var latSum = 0.0
+            var lonSum = 0.0
+            var confSum = 0.0
+            for (p in pts) {
+                latSum += p.gps.latitude
+                lonSum += p.gps.longitude
+                confSum += p.confidence
+            }
+            val centerLat = latSum / pts.size
+            val centerLon = lonSum / pts.size
+            val center = GpsCoordinate(centerLat, centerLon)
+
+            // Distance weight (inverse-square with 10 m floor to avoid division by zero)
+            val dist = haversineDistance(targetGps, center)
+            val distWeight = 1.0 / maxOf(dist * dist, 100.0) // 10m floor
+
+            // Combined weight: distance × confidence (mean of points in this calibration)
+            val weight = distWeight * (confSum / pts.size)
+
+            samples.add(Triple(center, weight, cal))
+        }
+
+        if (samples.isEmpty()) return null
+
+        // Weighted sum
+        var wTotal = 0.0
+        var scaleWXSum = 0.0
+        var scaleWYSum = 0.0
+        var bearingSin = 0.0
+        var bearingCos = 0.0
+        var magDeclSum = 0.0
+        var physDeclSum = 0.0
+
+        // Сохраняем pointB если хотя бы одна калибровка была двухточечной — нужен для clamp-логики в computeCalibrationSoft
+        // Берём pointB из калибровки с максимальным весом (ближайшая к targetGps)
+        var maxWeightPointB: CalibrationPoint? = null
+        var maxWeightForPointB = 0.0
+
+        for ((center, weight, cal) in samples) {
+            if (cal.pointB != null && weight > maxWeightForPointB) {
+                maxWeightForPointB = weight
+                // Создаём pointB с GPS центра ближайшей калибровки + image coords из оригинала
+                maxWeightPointB = CalibrationPoint(
+                    gps = center,
+                    imageX = cal.pointB!!.imageX,
+                    imageY = cal.pointB!!.imageY,
+                    confidence = 1.0
+                )
+            }
+        }
+
+        for ((_, weight, cal) in samples) {
+            wTotal += weight
+            scaleWXSum += weight * cal.scaleMetersPerMapX
+            scaleWYSum += weight * cal.scaleMetersPerMapY
+            // Circular mean for bearing (convert degrees to radians first)
+            val bRad = Math.toRadians(cal.bearingDegrees)
+            bearingSin += weight * sin(bRad)
+            bearingCos += weight * cos(bRad)
+            magDeclSum += weight * cal.magneticDeclination
+            physDeclSum += weight * cal.physicalDeclination
+        }
+
+        val avgBearing = Math.toDegrees(atan2(bearingSin / wTotal, bearingCos / wTotal))
+
+        return MapCalibration(
+            pointA = CalibrationPoint(
+                gps = targetGps, // use caller's position as reference
+                imageX = 0.5, imageY = 0.5, confidence = 1.0
+            ),
+            pointB = maxWeightPointB,
+            scaleMetersPerMapX = scaleWXSum / wTotal,
+            scaleMetersPerMapY = scaleWYSum / wTotal,
+            bearingDegrees = avgBearing,
+            magneticDeclination = magDeclSum / wTotal,
+            physicalDeclination = physDeclSum / wTotal
+        )
     }
 
     // ─── Single-point (start) calibration ─────────────────────────────────
