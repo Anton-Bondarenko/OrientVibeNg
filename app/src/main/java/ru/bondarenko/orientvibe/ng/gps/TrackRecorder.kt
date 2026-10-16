@@ -11,7 +11,7 @@ import java.util.LinkedList
  * Tracks total distance and provides per-point distance from start.
  */
 /** Maximum number of track points to retain. Oldest points are removed when exceeded. */
-const val MAX_TRACK_POINTS = 30000
+const val MAX_TRACK_POINTS = 60000
 
 class TrackRecorder {
 

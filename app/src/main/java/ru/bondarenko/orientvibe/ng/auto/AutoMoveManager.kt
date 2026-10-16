@@ -26,7 +26,7 @@ import kotlin.math.min
 import ru.bondarenko.orientvibe.ng.model.CalibrationPoint as ModelCalibrationPoint
 
 /** Дистанция до КП, при которой считается что пришли (м) */
-const val AUTO_APPROACHED_DIST = 90.0
+const val AUTO_APPROACHED_DIST = 80.0
 const val DIST_GAP = 40.0
 
 /** Максимальное отклонение направления движения для «идём к следующему КП» (°) */
@@ -410,7 +410,7 @@ class AutoMoveManager {
                 if (diff < HEADING_JUMP_DEG) continue
                 // общий вектор нашли, теперь поищем момент поворота
                 val diff1 = abs(vectorChangeByIndex(i, HEADING_WINDOW_LONG_SECONDS * 1000L))
-                val confidence = if (diff1 < 50) 0.6 else 0.9
+                val confidence = if (diff1 < 55) 0.6 else 0.9
                 Log.d(
                     TAG,
                     "Нашлась точка изменения направления на треке на цель: $bearingToNext трек: ${_trackHistory[i + 1].average3Bearing} Вектор:$diff1 Мгновенный:$diff Confidence = $confidence"
@@ -552,10 +552,15 @@ class AutoMoveManager {
             val newPoint = effectivePoint
 
             // Вычисляем усреднённую калибровку из текущей + истории для oldCalibration
+            // Используем scalars-only усреднение: geometry берётся из rawMapCal,
+            // скаляры (scale/declination/bearing) — из истории. Это сохраняет корректный
+            // image↔GPS mapping pointA (anchor GPS + image coords не меняются).
             fun computeAveragedOldCalibration(rawMapCal: MapCalibration): MapCalibration {
                 val merged = mutableListOf<MapCalibration>()
                 merged.add(rawMapCal)
                 merged.addAll(_autoCalibrations)
+
+                Log.d(TAG, "computeAveragedOldCalibration merged.size=${merged.size}")
 
                 // Если история пуста — не нужно "усреднять" одну калибровку
                 if (merged.size == 1) return rawMapCal
@@ -566,7 +571,73 @@ class AutoMoveManager {
                     oldCurrentBox!!.centerY,
                     rawMapCal
                 )
-                return MapCalibrationUtils.averageCalibrationsAt(merged, centerGps) ?: rawMapCal
+                Log.d(TAG, "computeAveragedOldCalibration targetGps=(${"%.6f".format(centerGps.latitude)}, ${"%.6f".format(centerGps.longitude)})")
+
+                // Scalar-only averaging (no geometry) — preserves image↔GPS mapping
+                val scalars = MapCalibrationUtils.averageScalarsAt(merged, centerGps)
+
+                // Если нет pointB ни в одной калибровке — возвращаем rawMapCal
+                if (scalars == null || !scalars.hasPointB) {
+                    Log.d(TAG, "computeAveragedOldCalibration no pointB in history, using raw")
+                    return rawMapCal
+                }
+
+                // Находим pointB с максимальным весом из истории (берём только _autoCalibrations)
+                var bestPointB: CalibrationPoint? = null
+                var maxWeightForPointB = 0.0
+
+                for (cal in _autoCalibrations) {
+                    if (cal.pointB == null) continue
+                    val pts = listOfNotNull(cal.pointA, cal.pointB)
+                    if (pts.size < 1) continue
+
+                    var latSum = 0.0
+                    var lonSum = 0.0
+                    var confSum = 0.0
+                    for (p in pts) {
+                        latSum += p.gps.latitude
+                        lonSum += p.gps.longitude
+                        confSum += p.confidence
+                    }
+                    val centerLat = latSum / pts.size
+                    val centerLon = lonSum / pts.size
+                    val center = GpsCoordinate(centerLat, centerLon)
+
+                    val dist = MapGeometry.haversineDistance(centerGps, center)
+                    val distWeight = 1.0 / maxOf(dist * dist, 100.0)
+                    val weight = distWeight * (confSum / pts.size)
+
+                    if (weight > maxWeightForPointB) {
+                        maxWeightForPointB = weight
+                        bestPointB = cal.pointB
+                    }
+                }
+
+                if (bestPointB == null) return rawMapCal
+
+                // Берём geometry из rawMapCal (pointA.imageX/Y + pointA.gps anchor),
+                // скаляры — усреднённые, pointB — с реального GPS из истории
+                val avg = MapCalibration(
+                    pointA = rawMapCal.pointA,
+                    pointB = bestPointB,
+                    scaleMetersPerMapX = scalars.scaleX,
+                    scaleMetersPerMapY = scalars.scaleY,
+                    bearingDegrees = scalars.bearingDegrees,
+                    magneticDeclination = scalars.magneticDeclination,
+                    physicalDeclination = scalars.physicalDeclination
+                )
+
+                Log.d(TAG, "  oldScaleX=${"%.1f".format(rawMapCal.scaleMetersPerMapX)} oldScaleY=${"%.1f".format(rawMapCal.scaleMetersPerMapY)}")
+                Log.d(TAG, "  avgScaleX=${"%.1f".format(avg.scaleMetersPerMapX)} avgScaleY=${"%.1f".format(avg.scaleMetersPerMapY)}")
+                Log.d(TAG, "  oldDecl=${"%.3f".format(rawMapCal.magneticDeclination)} avgDecl=${"%.3f".format(avg.magneticDeclination)}")
+                Log.d(TAG, "  oldBearing=${"%.1f".format(rawMapCal.bearingDegrees)} avgBearing=${"%.1f".format(avg.bearingDegrees)}")
+                // Ключевая метрика: pointA image→gps shift должен быть ~0 (geometry не изменилась)
+                val imgToGpsRaw = MapGeometry.imageToGpsTrueNorth(rawMapCal.pointA.imageX, rawMapCal.pointA.imageY, rawMapCal)
+                val imgToGpsAvg = MapGeometry.imageToGpsTrueNorth(rawMapCal.pointA.imageX, rawMapCal.pointA.imageY, avg)
+                val gpsShift = MapGeometry.haversineDistance(imgToGpsRaw, imgToGpsAvg)
+                Log.d(TAG, "  pointA image→gps shift raw→avg: ${"%.2f".format(gpsShift)}m")
+
+                return avg
             }
 
             // Если pointB был null (одноточечная калибровка) — используем computeCalibrationSoft

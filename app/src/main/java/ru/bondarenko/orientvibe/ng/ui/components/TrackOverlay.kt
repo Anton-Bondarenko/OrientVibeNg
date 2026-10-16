@@ -100,7 +100,8 @@ class TrackOverlay {
             val path = Path()
             var first = true
             var ptsInPath = 0
-            for ((i, point) in trackPoints.withIndex()) {
+            for (i in trackPoints.indices step 2) {
+                val point = trackPoints[i]
                 val gp = point.gpsFix.coordinate
                 val imagePt = gpsToImage(gp)
                 if (imagePt == null) {

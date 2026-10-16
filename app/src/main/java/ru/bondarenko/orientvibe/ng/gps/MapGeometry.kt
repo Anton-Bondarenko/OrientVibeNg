@@ -23,8 +23,8 @@ object MapGeometry {
 
     private const val EARTH_RADIUS_METERS = 6_371_000.0
     private const val MAX_DELTA_DECLINATION = 5.0
-    private const val MAX_DELTA_SCALE = 400.0
-    private const val MAX_DELTA_DISTANCE = 0.1
+    private const val MAX_DELTA_SCALE = 300.0
+    private const val MAX_DELTA_DISTANCE = 0.01
     private const val TAG = "MapGeometry"
 
     /**

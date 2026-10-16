@@ -189,6 +189,89 @@ object MapCalibrationUtils {
         )
     }
 
+    /**
+     * Compute weighted-average scalar calibration values from history, focused around [targetGps].
+     * Returns only the numeric values — no geometry — so the caller can merge them with the
+     * original MapCalibration's image→GPS mapping without breaking the coordinate frame.
+     */
+    data class AveragedScalars(
+        val scaleX: Double,
+        val scaleY: Double,
+        val magneticDeclination: Double,
+        val physicalDeclination: Double,
+        val bearingDegrees: Double,
+        /** True if at least one calibration in history has pointB */
+        val hasPointB: Boolean,
+    ) {
+        fun averageBearing(): Double = bearingDegrees
+    }
+
+    fun averageScalarsAt(
+        history: List<MapCalibration>,
+        targetGps: GpsCoordinate
+    ): AveragedScalars? {
+        if (history.isEmpty()) return null
+
+        // Collect weights
+        val weights = mutableListOf<Double>()
+        var wTotal = 0.0
+        var scaleWXSum = 0.0
+        var scaleWYSum = 0.0
+        var bearingSin = 0.0
+        var bearingCos = 0.0
+        var magDeclSum = 0.0
+        var physDeclSum = 0.0
+        var hasPointB = false
+
+        for (cal in history) {
+            val pts = listOfNotNull(cal.pointA, cal.pointB)
+            if (pts.size < 1) continue
+
+            var latSum = 0.0
+            var lonSum = 0.0
+            var confSum = 0.0
+            for (p in pts) {
+                latSum += p.gps.latitude
+                lonSum += p.gps.longitude
+                confSum += p.confidence
+            }
+            val centerLat = latSum / pts.size
+            val centerLon = lonSum / pts.size
+            val center = GpsCoordinate(centerLat, centerLon)
+
+            val dist = haversineDistance(targetGps, center)
+            val distWeight = 1.0 / maxOf(dist * dist, 100.0)
+            val weight = distWeight * (confSum / pts.size)
+
+            if (weight <= 0) continue
+
+            wTotal += weight
+            scaleWXSum += weight * cal.scaleMetersPerMapX
+            scaleWYSum += weight * cal.scaleMetersPerMapY
+            val bRad = Math.toRadians(cal.bearingDegrees)
+            bearingSin += weight * sin(bRad)
+            bearingCos += weight * cos(bRad)
+            magDeclSum += weight * cal.magneticDeclination
+            physDeclSum += weight * cal.physicalDeclination
+
+            if (cal.pointB != null) hasPointB = true
+            weights.add(weight)
+        }
+
+        if (wTotal <= 0 || weights.isEmpty()) return null
+
+        val avgBearing = Math.toDegrees(atan2(bearingSin / wTotal, bearingCos / wTotal))
+
+        return AveragedScalars(
+            scaleX = scaleWXSum / wTotal,
+            scaleY = scaleWYSum / wTotal,
+            magneticDeclination = magDeclSum / wTotal,
+            physicalDeclination = physDeclSum / wTotal,
+            bearingDegrees = avgBearing,
+            hasPointB = hasPointB,
+        )
+    }
+
     // ─── Single-point (start) calibration ─────────────────────────────────
 
     /**
