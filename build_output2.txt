@@ -1,0 +1,14 @@
+﻿> Task :app:clean
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugResources
+> Task :app:packageDebugResources
+> Task :app:processDebugNavigationResources
+> Task :app:parseDebugLocalResources
+> Task :app:generateDebugRFile
+
+> Task :app:compileDebugKotlin
+w: file:///E:/git/orientvibeNg/app/src/main/java/ru/bondarenko/orientvibe/ng/nav/AutoNavigationManager.kt:608:76 Condition is always 'true'.
+
+BUILD SUCCESSFUL in 7s
+7 actionable tasks: 7 executed

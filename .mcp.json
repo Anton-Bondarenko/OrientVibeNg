@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "android-adb": {
+      "type": "stdio",
+      "command": "android-debug-bridge-mcp.cmd",
+      "args": []
+    }
+  }
+}
