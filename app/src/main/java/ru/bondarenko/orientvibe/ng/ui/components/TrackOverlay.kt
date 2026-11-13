@@ -62,12 +62,10 @@ class TrackOverlay {
     }
 
     private fun gpsToImage(gps: GpsCoordinate?): PointF? {
+        val targetGps = gps ?: return null
         val cal = calibration ?: return null
-        val coord = gps ?: return null
-        val pairGpsToImage = MapGeometry.gpsToImage(coord, cal, northAngle)
-        val x = pairGpsToImage?.first ?: return null
-        val y = pairGpsToImage.second ?: return null
-        return PointF(x.toFloat(), y.toFloat())
+        val pair = MapGeometry.gpsToImage(targetGps, cal, northAngle) ?: return null
+        return PointF(pair.first.toFloat(), pair.second.toFloat())
     }
 
     /**
@@ -84,7 +82,7 @@ class TrackOverlay {
         if (calibration == null) return
         val toView = sourceToViewCoord ?: return
 
-        // 1. Отрисовка траектории трека
+        // 1. Отрисовка траектории трека (без битового фильтра shouldDraw)
         if (trackPoints.size >= 2) {
             val path = Path()
             var first = true
@@ -92,31 +90,29 @@ class TrackOverlay {
 
             trackPoints.forEachIndexed { idx, point ->
                 val gp = point.gpsFix.coordinate
-                if (shouldDraw(gp.latitude, gp.longitude)) {
-                    val imagePt = gpsToImage(gp)
-                    if (imagePt == null) {
-                        Log.w(tag, "  pt[$idx] gpsToImageAbs returned NULL")
+                val imagePt = gpsToImage(gp)
+                if (imagePt == null) {
+                    Log.w(tag, "  pt[$idx] gpsToImage returned NULL")
+                } else {
+                    val viewPoint = toView(imagePt.x.toDouble(), imagePt.y.toDouble())
+                    if (viewPoint == null) {
+                        Log.w(tag, "  pt[$idx] sourceToViewCoord returned NULL")
                     } else {
-                        val viewPoint = toView(imagePt.x.toDouble(), imagePt.y.toDouble())
-                        if (viewPoint == null) {
-                            Log.w(tag, "  pt[$idx] sourceToViewCoord returned NULL")
+                        ptsInPath++
+                        if (first) {
+                            path.moveTo(viewPoint.x, viewPoint.y)
+                            first = false
                         } else {
-                            ptsInPath++
-                            if (first) {
-                                path.moveTo(viewPoint.x, viewPoint.y)
-                                first = false
-                            } else {
-                                path.lineTo(viewPoint.x, viewPoint.y)
-                            }
+                            path.lineTo(viewPoint.x, viewPoint.y)
                         }
                     }
                 }
             }
 
-            if (!first) {
+            if (!first && ptsInPath >= 2) {
                 canvas.drawPath(path, trackPaint)
             } else {
-                Log.w(tag, "  ptsInPath=0 — no valid points for path")
+                Log.w(tag, "  ptsInPath=$ptsInPath — no valid points for path")
             }
         }
 

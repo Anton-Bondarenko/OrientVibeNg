@@ -2,7 +2,6 @@
 
 import android.Manifest
 import android.content.Context
-import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -11,12 +10,41 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -27,16 +55,25 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import ru.bondarenko.orientvibe.ng.image.rememberCameraSource
-import ru.bondarenko.orientvibe.ng.image.rememberGalleryPicker
-import ru.bondarenko.orientvibe.ng.model.*
-import ru.bondarenko.orientvibe.ng.ui.components.SubsamplingMapView
-import ru.bondarenko.orientvibe.ng.ui.components.MapDisplayArea
-import ru.bondarenko.orientvibe.ng.ui.components.MapTapListener
-import ru.bondarenko.orientvibe.ng.ui.components.MapDragListener
-import ru.bondarenko.orientvibe.ng.viewmodel.AutoModeViewModel
 import ru.bondarenko.orientvibe.ng.gps.NavViewModel
+import ru.bondarenko.orientvibe.ng.image.rememberCameraSource
+import ru.bondarenko.orientvibe.ng.model.AccuracyLevel
+import ru.bondarenko.orientvibe.ng.model.MovementState
+import ru.bondarenko.orientvibe.ng.ui.components.MapDisplayArea
+import ru.bondarenko.orientvibe.ng.ui.components.MapDragListener
+import ru.bondarenko.orientvibe.ng.ui.components.MapTapListener
+import ru.bondarenko.orientvibe.ng.ui.components.SubsamplingMapView
+import ru.bondarenko.orientvibe.ng.viewmodel.AutoModeViewModel
 import java.util.Locale
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Straighten
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.ui.res.painterResource
+import ru.bondarenko.orientvibe.ng.R
+
 
 private val GreenReady = Color(0xFF4CAF50)      // Восстановлено из 4283215696L
 private val GreenReadyDark = Color(0xFF388E3C)  // Восстановлено из 4281236786L
@@ -48,7 +85,8 @@ fun AutoModeScreen() {
 
     // Инициализация ViewModels через фабрики
     val navVm: NavViewModel = viewModel(factory = NavViewModel.Companion.Factory(context))
-    val autoVm: AutoModeViewModel = viewModel(factory = AutoModeViewModel.Companion.Factory(context))
+    val autoVm: AutoModeViewModel =
+        viewModel(factory = AutoModeViewModel.Companion.Factory(context))
 
     // Запрос пермишенов локации при старте экрана
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -97,8 +135,16 @@ fun AutoModeScreen() {
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showResetConfirm by remember { mutableStateOf(false) }
 
-    val sharedPreferences = remember { context.getSharedPreferences("orientvibe_settings", Context.MODE_PRIVATE) }
-    var showAllBoxes by remember { mutableStateOf(sharedPreferences.getBoolean("show_all_bounding_boxes", false)) }
+    val sharedPreferences =
+        remember { context.getSharedPreferences("orientvibe_settings", Context.MODE_PRIVATE) }
+    var showAllBoxes by remember {
+        mutableStateOf(
+            sharedPreferences.getBoolean(
+                "show_all_bounding_boxes",
+                false
+            )
+        )
+    }
 
     var pendingGalleryUri by remember { mutableStateOf<Uri?>(null) }
     var loadTestMapTrigger by remember { mutableStateOf(false) }
@@ -114,7 +160,8 @@ fun AutoModeScreen() {
     }
 
     // Реакция на изменение флагов калибровки
-    val hasMatchingCp = mapState.controlsBoundingBoxes.any { it.number == movementState.currentControl.num }
+    val hasMatchingCp =
+        mapState.controlsBoundingBoxes.any { it.number == movementState.currentControl.num }
     val isBindEnabled = !isBinding && hasMatchingCp
     val hasBoundCp = autoVm.hasBoundCp
     val needsScaleCalibration = hasBoundCp && mapState.mapCalibration?.pointB == null
@@ -173,10 +220,12 @@ fun AutoModeScreen() {
                 infoMessage = "Ошибка: ${mapState.errorMessage}"
                 isInfoVisible = true
             }
+
             mapState.isProcessing -> {
                 infoMessage = mapState.progressMessage ?: "Обработка карты..."
                 isInfoVisible = true
             }
+
             mapState.bitmap != null -> {
                 infoMessage = "Найдено КП: ${mapState.controlsBoundingBoxes.size}"
                 isInfoVisible = true
@@ -195,10 +244,12 @@ fun AutoModeScreen() {
                 infoMessage = "Ошибка: ${mapState.errorMessage}"
                 isInfoVisible = true
             }
+
             mapState.isProcessing -> {
                 infoMessage = mapState.progressMessage ?: "Обработка карты..."
                 isInfoVisible = true
             }
+
             mapState.bitmap != null && !mapState.isProcessing -> {
                 val cpCount = mapState.controlsBoundingBoxes.size
                 val numCount = mapState.controlsBoundingBoxes.count { it.number != null }
@@ -279,7 +330,9 @@ fun AutoModeScreen() {
                     colors = CardDefaults.cardColors(containerColor = alertColor.copy(alpha = 0.95f))
                 ) {
                     Column(
-                        modifier = Modifier.fillMaxSize().padding(12.dp),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(12.dp),
                         verticalArrangement = Arrangement.SpaceEvenly,
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
@@ -303,8 +356,16 @@ fun AutoModeScreen() {
         // 3. Плашка плавающего статуса точности GPS
         gpsState.currentFix?.let { fix ->
             val (statusColor, statusText) = when (gpsState.accuracyLevel) {
-                AccuracyLevel.HIGH_ACCURACY -> Pair(GreenReady, "GPS: ${String.format(Locale.ROOT, "%.0f", fix.accuracy)}м")
-                AccuracyLevel.LOW_ACCURACY -> Pair(Color(0xFFFFC107), "GPS: ${String.format(Locale.ROOT, "%.0f", fix.accuracy)}м")
+                AccuracyLevel.HIGH_ACCURACY -> Pair(
+                    GreenReady,
+                    "GPS: ${String.format(Locale.ROOT, "%.0f", fix.accuracy)}м"
+                )
+
+                AccuracyLevel.LOW_ACCURACY -> Pair(
+                    Color(0xFFFFC107),
+                    "GPS: ${String.format(Locale.ROOT, "%.0f", fix.accuracy)}м"
+                )
+
                 AccuracyLevel.NO_FIX -> Pair(Color.Red, "GPS: нет сигнала")
             }
 
@@ -337,14 +398,25 @@ fun AutoModeScreen() {
                     .align(Alignment.TopCenter)
                     .padding(start = 16.dp, end = 16.dp, top = 16.dp),
                 shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f))
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
+                        alpha = 0.95f
+                    )
+                )
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // ДОБАВЛЕНО: weight(1f) заставляет левую часть сжиматься и переносить текст,
+                    // оставляя место для кнопки настроек справа
                     Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -360,8 +432,13 @@ fun AutoModeScreen() {
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
-                    TextButton(onClick = { showSettingsDialog = true }) {
-                        Text("Настройки")
+
+                    IconButton(onClick = { showSettingsDialog = true }) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Настройки",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -432,8 +509,22 @@ fun AutoModeScreen() {
     }
 // Настройки
     if (showSettingsDialog) {
-        var autoCalibrationPref by remember { mutableStateOf(sharedPreferences.getBoolean("auto_calibration", true)) }
-        var showAllBoxesPref by remember { mutableStateOf(sharedPreferences.getBoolean("show_all_bounding_boxes", false)) }
+        var autoCalibrationPref by remember {
+            mutableStateOf(
+                sharedPreferences.getBoolean(
+                    "auto_calibration",
+                    true
+                )
+            )
+        }
+        var showAllBoxesPref by remember {
+            mutableStateOf(
+                sharedPreferences.getBoolean(
+                    "show_all_bounding_boxes",
+                    false
+                )
+            )
+        }
         AlertDialog(
             onDismissRequest = { showSettingsDialog = false },
             title = { Text("Настройки авто-режима") },
@@ -445,7 +536,9 @@ fun AutoModeScreen() {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text("Автокалибровка")
-                        Switch(checked = autoCalibrationPref, onCheckedChange = { autoCalibrationPref = it })
+                        Switch(
+                            checked = autoCalibrationPref,
+                            onCheckedChange = { autoCalibrationPref = it })
                     }
                     Spacer(modifier = Modifier.height(16.dp))
                     Row(
@@ -454,7 +547,9 @@ fun AutoModeScreen() {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text("Показать bounding boxes")
-                        Switch(checked = showAllBoxesPref, onCheckedChange = { showAllBoxesPref = it })
+                        Switch(
+                            checked = showAllBoxesPref,
+                            onCheckedChange = { showAllBoxesPref = it })
                     }
                     Spacer(modifier = Modifier.height(16.dp))
                     Button(
@@ -512,6 +607,7 @@ fun AutoModeScreen() {
         )
     }
 }
+
 @Composable
 private fun ControlButtonsRow(
     autoVm: AutoModeViewModel,
@@ -522,31 +618,94 @@ private fun ControlButtonsRow(
     onScaleClick: () -> Unit
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IconButton(onClick = { autoVm.decrementCurrentControl() }) {
-            Text("-", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        // Кнопка "-"
+        FilledTonalIconButton(
+            onClick = { autoVm.decrementCurrentControl() },
+            modifier = Modifier.size(48.dp),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Remove,
+                contentDescription = "Предыдущий КП"
+            )
         }
-        Text(
-            text = movementState.currentControl.num.toString(),
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.width(48.dp),
-            textAlign = TextAlign.Center
-        )
-        IconButton(onClick = { autoVm.incrementCurrentControl() }) {
-            Text("+", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+
+        // Номер текущего КП
+        Box(
+            modifier = Modifier
+                .width(56.dp)
+                .height(48.dp)
+                .background(Color.White, RoundedCornerShape(14.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = movementState.currentControl.num.toString(),
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.Black,
+                textAlign = TextAlign.Center
+            )
         }
-        Button(onClick = onBindClick, enabled = isBindEnabled) {
-            Text("Привязать А")
+
+        // Кнопка "+"
+        FilledTonalIconButton(
+            onClick = { autoVm.incrementCurrentControl() },
+            modifier = Modifier.size(48.dp),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "Следующий КП"
+            )
         }
-        Button(onClick = onScaleClick, enabled = isScaleEnabled) {
-            Text("Калибровать B")
+
+        // Кнопка "Привязать А" (иконка icon_here)
+        Button(
+            onClick = onBindClick,
+            enabled = isBindEnabled,
+            modifier = Modifier
+                .weight(1f)
+                .height(48.dp),
+            shape = RoundedCornerShape(12.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp)
+        ) {
+            Icon(
+                painter = painterResource(id = R.drawable.icon_here),
+                contentDescription = "Привязать А",
+                modifier = Modifier.size(24.dp),
+                tint = Color.Unspecified // Используйте Color.White, если иконка монохромная
+            )
+        }
+
+        // Кнопка "Калибровать B" (иконка icon_scale)
+        Button(
+            onClick = onScaleClick,
+            enabled = isScaleEnabled,
+            modifier = Modifier
+                .weight(1f)
+                .height(48.dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = GreenReadyDark
+            ),
+            contentPadding = PaddingValues(horizontal = 8.dp)
+        ) {
+            Icon(
+                painter = painterResource(id = R.drawable.icon_scale),
+                contentDescription = "Калибровать B",
+                modifier = Modifier.size(24.dp),
+                tint = Color.Unspecified // Используйте Color.White, если иконка монохромная
+            )
         }
     }
 }
+
 @Composable
 private fun ControlButtonsColumn(
     autoVm: AutoModeViewModel,
@@ -557,27 +716,76 @@ private fun ControlButtonsColumn(
     onScaleClick: () -> Unit
 ) {
     Column(
-        modifier = Modifier.fillMaxHeight().padding(vertical = 12.dp, horizontal = 8.dp),
+        modifier = Modifier
+            .fillMaxHeight()
+            .padding(vertical = 12.dp, horizontal = 8.dp),
         verticalArrangement = Arrangement.SpaceEvenly,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        IconButton(onClick = { autoVm.incrementCurrentControl() }) {
-            Text("+", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        // Кнопка "Привязать А" (сверху, как в оригинальном декомпиляте)
+        Button(
+            onClick = onBindClick,
+            enabled = isBindEnabled,
+            modifier = Modifier.size(48.dp),
+            shape = RoundedCornerShape(12.dp),
+            contentPadding = PaddingValues(0.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.MyLocation,
+                contentDescription = "Привязать А",
+                modifier = Modifier.size(22.dp)
+            )
         }
+
+        // Кнопка "+"
+        FilledTonalIconButton(
+            onClick = { autoVm.incrementCurrentControl() },
+            modifier = Modifier.size(48.dp),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "Следующий КП"
+            )
+        }
+
+        // Номер текущего КП
         Text(
             text = movementState.currentControl.num.toString(),
-            fontSize = 24.sp,
+            fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
+            color = Color.Black,
             textAlign = TextAlign.Center
         )
-        IconButton(onClick = { autoVm.decrementCurrentControl() }) {
-            Text("-", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+
+        // Кнопка "-"
+        FilledTonalIconButton(
+            onClick = { autoVm.decrementCurrentControl() },
+            modifier = Modifier.size(48.dp),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Remove,
+                contentDescription = "Предыдущий КП"
+            )
         }
-        Button(onClick = onBindClick, enabled = isBindEnabled) {
-            Text("А")
-        }
-        Button(onClick = onScaleClick, enabled = isScaleEnabled) {
-            Text("B")
+
+        // Кнопка "Калибровать B" (зеленая, снизу)
+        Button(
+            onClick = onScaleClick,
+            enabled = isScaleEnabled,
+            modifier = Modifier.size(48.dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = GreenReadyDark
+            ),
+            contentPadding = PaddingValues(0.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Straighten,
+                contentDescription = "Калибровать B",
+                modifier = Modifier.size(22.dp)
+            )
         }
     }
 }

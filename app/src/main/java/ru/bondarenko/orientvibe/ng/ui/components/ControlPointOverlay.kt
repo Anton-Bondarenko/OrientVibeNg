@@ -143,12 +143,24 @@ class ControlPointOverlay {
         canvas.drawCircle(viewCenter.x, viewCenter.y, radius, controlCirclePaint)
 
         box.number?.let { num ->
-            val textPaint = Paint(bboxNumberTextPaint).apply {
+            val fontSize = 1.2f * radius
+
+            // 1. Кисть для белой обводки (рисуется первой, снизу)
+            val outlinePaint = Paint(bboxNumberTextPaint).apply {
+                color = AndroidColor.WHITE
+                style = Paint.Style.STROKE
+                strokeWidth = (fontSize * 0.15f).coerceAtLeast(4.0f) // Толщина контура масштабируется от размера цифры
+                strokeJoin = Paint.Join.ROUND // Сглаживает острые углы у цифр (1, 4, 7)
+                textSize = fontSize
+            }
+
+            val fillPaint = Paint(bboxNumberTextPaint).apply {
                 color = ControlsRed
                 textSize = 1.2f * radius
             }
-            val textY = viewCenter.y + (textPaint.textSize / 3.0f)
-            canvas.drawText(num.toString(), viewCenter.x, textY, textPaint)
+            val textY = viewCenter.y + (fillPaint.textSize / 3.0f)
+            canvas.drawText(num.toString(), viewCenter.x, textY, outlinePaint)
+            canvas.drawText(num.toString(), viewCenter.x, textY, fillPaint)
         }
     }
 

@@ -1,7 +1,12 @@
 package ru.bondarenko.orientvibe.ng.gps
 
-import ru.bondarenko.orientvibe.ng.model.*
-import kotlin.math.*
+import ru.bondarenko.orientvibe.ng.model.CalibrationPoint
+import ru.bondarenko.orientvibe.ng.model.GpsCoordinate
+import ru.bondarenko.orientvibe.ng.model.MapCalibration
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.sin
 
 /**
  * Результат усреднения скалярных значений калибровок на треке.
@@ -34,7 +39,11 @@ object MapCalibrationUtils {
         return MapGeometry.gpsToImageTrueNorth(gps, calibration)
     }
 
-    fun gpsToImage(gps: GpsCoordinate, calibration: MapCalibration, northAngleDeg: Double): Pair<Double?, Double?>? {
+    fun gpsToImage(
+        gps: GpsCoordinate,
+        calibration: MapCalibration,
+        northAngleDeg: Double
+    ): Pair<Double?, Double?>? {
         return MapGeometry.gpsToImage(gps, calibration, northAngleDeg)
     }
 
@@ -42,7 +51,11 @@ object MapCalibrationUtils {
         return MapGeometry.imageToGpsTrueNorth(imageX, imageY, calibration)
     }
 
-    fun magneticBearing(from: GpsCoordinate, to: GpsCoordinate, magneticDeclination: Double): Double {
+    fun magneticBearing(
+        from: GpsCoordinate,
+        to: GpsCoordinate,
+        magneticDeclination: Double
+    ): Double {
         val trueBearing = bearing(from, to)
         return MapGeometry.magneticBearing(trueBearing, magneticDeclination)
     }
@@ -67,7 +80,10 @@ object MapCalibrationUtils {
         return MapGeometry.offsetCoordinate(from, dNorth, dEast)
     }
 
-    fun averageCalibrationsAt(history: List<MapCalibration>, targetGps: GpsCoordinate): MapCalibration? {
+    fun averageCalibrationsAt(
+        history: List<MapCalibration>,
+        targetGps: GpsCoordinate
+    ): MapCalibration? {
         if (history.isEmpty()) return null
 
         val samples = ArrayList<Triple<GpsCoordinate, Double, MapCalibration>>()
@@ -146,7 +162,10 @@ object MapCalibrationUtils {
         )
     }
 
-    fun averageScalarsAt(history: List<MapCalibration>, targetGps: GpsCoordinate): AveragedScalars? {
+    fun averageScalarsAt(
+        history: List<MapCalibration>,
+        targetGps: GpsCoordinate
+    ): AveragedScalars? {
         if (history.isEmpty()) return null
 
         var totalWeight = 0.0
@@ -207,25 +226,25 @@ object MapCalibrationUtils {
         startPointImageX: Double,
         startPointImageY: Double,
         northAngle: Double,
+        magneticDeclination: Double? = null,
         imageProportion: Double,
         scaleMetersPerMapX: Double? = null,
         scaleMetersPerMapY: Double? = null,
         confidence: Double = 1.0
     ): MapCalibration {
-        val calibrationPoint = CalibrationPoint(startGPS, startPointImageX, startPointImageY, confidence)
-
-        val calculatedMagneticDeclination = MapGeometry.calculateMagneticDeclination(
-            startGPS.latitude,
-            startGPS.longitude,
-            0L
-        )
+        val calibrationPoint =
+            CalibrationPoint(startGPS, startPointImageX, startPointImageY, confidence)
 
         val finalScaleX = scaleMetersPerMapX ?: (imageProportion * DEFAULT_SCALE)
         val finalScaleY = scaleMetersPerMapY ?: DEFAULT_SCALE
 
         return MapGeometry.calibrationSingle(
             calibrationPoint,
-            calculatedMagneticDeclination,
+            if (magneticDeclination == null || magneticDeclination == 0.0) MapGeometry.calculateMagneticDeclination(
+                startGPS.latitude,
+                startGPS.longitude,
+                System.currentTimeMillis()
+            ) else magneticDeclination,
             northAngle,
             finalScaleX,
             finalScaleY
@@ -243,7 +262,8 @@ object MapCalibrationUtils {
         confidence: Double = 1.0
     ): BindResult {
         val pointA = CalibrationPoint(startGPS, startPointImageX, startPointImageY, confidence)
-        val pointB = CalibrationPoint(currentFixGPS, finishPointImageX, finishPointImageY, confidence)
+        val pointB =
+            CalibrationPoint(currentFixGPS, finishPointImageX, finishPointImageY, confidence)
 
         val newCal = MapGeometry.computeCalibrationHard(
             pointA,

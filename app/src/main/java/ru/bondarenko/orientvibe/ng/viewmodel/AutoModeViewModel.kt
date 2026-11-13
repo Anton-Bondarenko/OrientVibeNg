@@ -169,6 +169,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             startPointImageX = imageX,
             startPointImageY = imageY,
             northAngle = _mapState.value.northAngle,
+            magneticDeclination = _calibration?.magneticDeclination,
             imageProportion = width,
             scaleMetersPerMapX = _calibration?.scaleMetersPerMapX,
             scaleMetersPerMapY = _calibration?.scaleMetersPerMapY,
@@ -195,7 +196,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         _calibration = result.calibration
         _mapState.value = _mapState.value.copy(mapCalibration = result.calibration)
         navViewModel.applyNewCalibration(result.calibration)
-        _calibrationVersion.value = _calibrationVersion.value + 1
+        _calibrationVersion.value += 1
         navViewModel.startTracking()
     }
 
@@ -256,13 +257,14 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
     private fun startGpsMonitoring(navViewModel: NavViewModel) {
         viewModelScope.launch {
             navViewModel.gpsState.collectLatest { gpsState ->
-                handleGpsUpdate(gpsState)
+                if (!isLoading) handleGpsUpdate(gpsState)
             }
         }
     }
     private fun handleGpsUpdate(gpsState: GpsState) {
         val currentLevel = gpsState.accuracyLevel
         val fix = gpsState.currentFix
+
         when (currentLevel) {
             AccuracyLevel.HIGH_ACCURACY -> {
                 accuracyLevelTransitionCount++
@@ -274,16 +276,20 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
                     if (_calibration == null) {
                         onNoBind(fix)
                     }
-                    val point = AutoModeTelemetryPoint(
-                        fix.coordinate.latitude,
-                        fix.coordinate.longitude,
-                        fix.accuracy,
-                        fix.speed,
-                        fix.bearing,
-                        fix.timestamp
-                    )
-                    addTelemetryPoint(point)
-                    onMove(fix)
+                    // Добавляем точку в телеметрию ТОЛЬКО если пришел новый GPS-фикс (по timestamp)
+                    val lastTimestamp = _telemetryPoints.value.lastOrNull()?.timestamp ?: 0L
+                    if (fix.timestamp != lastTimestamp) {
+                        val point = AutoModeTelemetryPoint(
+                            fix.coordinate.latitude,
+                            fix.coordinate.longitude,
+                            fix.accuracy,
+                            fix.speed,
+                            fix.bearing,
+                            fix.timestamp
+                        )
+                        addTelemetryPoint(point)
+                        onMove(fix)
+                    }
                 }
             }
             AccuracyLevel.LOW_ACCURACY -> return
@@ -293,6 +299,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             }
         }
     }
+
     private fun showMoveReadyAlert() {
         viewModelScope.launch {
             _moveReadyAlert.value = MoveReadyAlert(active = true, remainingMs = 5000L, elapsedMs = 0L)
@@ -416,6 +423,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         val ms = _movementState.value
         val mapCalibration = _calibration ?: return
         val fix = gpsFix ?: return
+        // Сохраняем старый номер КП до вызова doMove, чтобы отследить переключение
         val result2 = _autoMoveManager.doMove(_mapState.value, ms, mapCalibration, fix)
         val list = _autoMoveManager.autoCalibrations
         ms.autoCalibrations = list.toMutableList()
@@ -429,10 +437,16 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
                 _autoMoveManager.trackHistory
             )
         }
+        _movementState.value = result2.copy(
+            currentControl = result2.currentControl.copy(),
+            prevControl = result2.prevControl.copy(),
+            autoCalibrations = list.toMutableList()
+        )
+
         val prevSignal = ms.audioSignalState.type
         val audioState = navData?.let { AutoMoveManager.analyzeAudioSignal(it) }
             ?: AudioSignalState(type = AudioSignalType.NONE)
-        _movementState.value = result2
+
         if (audioState.distanceToTargetMeters < 40.0) {
             ms.audioSignalState = AudioSignalState(type = AudioSignalType.NONE)
             return

@@ -43,38 +43,39 @@ class NavViewModel(context: Context) : ViewModel() {
         get() = trackRecorder.trackData
 
     init {
-        // Реактивное слияние и обработка потоков состояния GPS менеджера и рекордера трека
+        // 1. Слушаем ТОЛЬКО обновления от GPS-приемника
         viewModelScope.launch {
-            combine(
-                gpsManager.gpsState,
-                trackRecorder.trackState
-            ) { managerState, recorderState ->
+            gpsManager.gpsState.collect { managerState ->
                 val state = _gpsState.value
                 val currentFix = managerState.currentFix
 
-                val trackPoints = if (recorderState.isTracking && currentFix != null) {
+                // Записываем точку в трек ТОЛЬКО когда пришел новый fix от GPS
+                if (trackRecorder.trackData.isTracking && currentFix != null && currentFix != state.currentFix) {
                     trackRecorder.recordPoint(currentFix, calibration)
-                    recorderState.trackPoints
-                } else {
-                    state.trackPoints
                 }
 
-                val derivedMapScaleX = calibration?.scaleMetersPerMapX ?: 0.0
-                val derivedMapScaleY = calibration?.scaleMetersPerMapY ?: 0.0
-
-                state.copy(
+                _gpsState.value = state.copy(
                     isGpsEnabled = managerState.isGpsEnabled,
                     currentFix = currentFix,
                     calibration = calibration,
-                    autoBindActive = _autoBindActive,
-                    trackPoints = trackPoints,
-                    totalDistance = if (recorderState.isTracking) recorderState.totalDistance else state.totalDistance,
+                    autoBindActive = _autoBindActive
+                )
+            }
+        }
+
+        // 2. Отдельно слушаем обновления списка точек из TrackRecorder
+        viewModelScope.launch {
+            trackRecorder.trackState.collect { recorderState ->
+                val derivedMapScaleX = calibration?.scaleMetersPerMapX ?: 0.0
+                val derivedMapScaleY = calibration?.scaleMetersPerMapY ?: 0.0
+
+                _gpsState.value = _gpsState.value.copy(
+                    trackPoints = recorderState.trackPoints,
+                    totalDistance = if (recorderState.isTracking) recorderState.totalDistance else _gpsState.value.totalDistance,
                     isTracking = recorderState.isTracking,
                     mapScaleX = if (derivedMapScaleX > 0.0) derivedMapScaleX else null,
                     mapScaleY = if (derivedMapScaleY > 0.0) derivedMapScaleY else null
                 )
-            }.collect { updatedState ->
-                _gpsState.value = updatedState
             }
         }
     }
