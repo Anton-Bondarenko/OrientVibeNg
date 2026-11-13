@@ -98,15 +98,6 @@ fun AutoModeScreen() {
     }
 
     LaunchedEffect(Unit) {
-        permissionLauncher.launch(
-            arrayOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            )
-        )
-    }
-
-    LaunchedEffect(Unit) {
         autoVm.navVm = navVm
         autoVm.startMonitoringIfNeeded()
         permissionLauncher.launch(
@@ -211,25 +202,6 @@ fun AutoModeScreen() {
             infoMessage = msg
             isInfoVisible = true
             isScaling = false
-        }
-    }
-
-    LaunchedEffect(mapState.isProcessing, mapState.errorMessage, mapState.northAngle) {
-        when {
-            mapState.errorMessage != null -> {
-                infoMessage = "Ошибка: ${mapState.errorMessage}"
-                isInfoVisible = true
-            }
-
-            mapState.isProcessing -> {
-                infoMessage = mapState.progressMessage ?: "Обработка карты..."
-                isInfoVisible = true
-            }
-
-            mapState.bitmap != null -> {
-                infoMessage = "Найдено КП: ${mapState.controlsBoundingBoxes.size}"
-                isInfoVisible = true
-            }
         }
     }
 
@@ -722,21 +694,6 @@ private fun ControlButtonsColumn(
         verticalArrangement = Arrangement.SpaceEvenly,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Кнопка "Привязать А" (сверху, как в оригинальном декомпиляте)
-        Button(
-            onClick = onBindClick,
-            enabled = isBindEnabled,
-            modifier = Modifier.size(48.dp),
-            shape = RoundedCornerShape(12.dp),
-            contentPadding = PaddingValues(0.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.MyLocation,
-                contentDescription = "Привязать А",
-                modifier = Modifier.size(22.dp)
-            )
-        }
-
         // Кнопка "+"
         FilledTonalIconButton(
             onClick = { autoVm.incrementCurrentControl() },
@@ -769,6 +726,16 @@ private fun ControlButtonsColumn(
                 contentDescription = "Предыдущий КП"
             )
         }
+        // Кнопка "Привязать А" (сверху, как в оригинальном декомпиляте)
+        Button(
+            onClick = onBindClick,
+            enabled = isBindEnabled,
+            modifier = Modifier.size(48.dp),
+            shape = RoundedCornerShape(12.dp),
+            contentPadding = PaddingValues(0.dp)
+        ) {
+            painterResource(id = R.drawable.icon_here)
+        }
 
         // Кнопка "Калибровать B" (зеленая, снизу)
         Button(
@@ -781,11 +748,7 @@ private fun ControlButtonsColumn(
             ),
             contentPadding = PaddingValues(0.dp)
         ) {
-            Icon(
-                imageVector = Icons.Default.Straighten,
-                contentDescription = "Калибровать B",
-                modifier = Modifier.size(22.dp)
-            )
+            painterResource(id = R.drawable.icon_scale)
         }
     }
 }

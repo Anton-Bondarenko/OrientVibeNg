@@ -135,7 +135,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
     }
 
     fun setCurrentControl(value: Int) {
-        val ms = _movementState.value
+        val ms = _movementState.value.copy()
         val num = value.coerceIn(0, 999)
         ms.setControl(num, _mapState.value)
         _movementState.value = ms
@@ -423,20 +423,29 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         val ms = _movementState.value
         val mapCalibration = _calibration ?: return
         val fix = gpsFix ?: return
-        // Сохраняем старый номер КП до вызова doMove, чтобы отследить переключение
-        val result2 = _autoMoveManager.doMove(_mapState.value, ms, mapCalibration, fix)
+
+        // Передаём КОПИЮ, чтобы не мутировать текущий _movementState.value до сравнения в StateFlow
+        val workingState = ms.copy(
+            currentControl = ms.currentControl.copy(),
+            prevControl = ms.prevControl.copy()
+        )
+
+        val result2 = _autoMoveManager.doMove(_mapState.value, workingState, mapCalibration, fix)
         val list = _autoMoveManager.autoCalibrations
-        ms.autoCalibrations = list.toMutableList()
         _autoCalibrationsList.value = list
+
         val navData = _calibration?.let {
             AutoMoveManager.analyzeNavigation(
-                ms.currentControl.num,
+                result2.currentControl.num,
                 fix,
                 it,
                 _mapState.value,
                 _autoMoveManager.trackHistory
             )
         }
+
+        // Теперь oldValue (ms.currentControl.num = 2) != newValue (result2.currentControl.num = 5),
+        // и StateFlow гарантированно обновит экран!
         _movementState.value = result2.copy(
             currentControl = result2.currentControl.copy(),
             prevControl = result2.prevControl.copy(),
@@ -453,7 +462,6 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         }
         val shouldPlay = audioState.type != AudioSignalType.NONE &&
                 (audioState.type != prevSignal || ms.canPlayAudioSignal())
-        Log.d("AudioPlayer", "AUDIO: signal=${audioState.type} dist=${String.format("%.0f", audioState.distanceToTargetMeters)}m dev=${String.format("%.0f", audioState.deviationDeg)}° shouldPlay=$shouldPlay prevSignal=$prevSignal canPlay=${ms.canPlayAudioSignal()}")
         if (!shouldPlay || _audioPlayer == null) {
             if (audioState.type != AudioSignalType.NONE && audioState.type != prevSignal) {
                 Log.d("AudioPlayer", "AUDIO: signal changed from $prevSignal → ${audioState.type} (not playing)")

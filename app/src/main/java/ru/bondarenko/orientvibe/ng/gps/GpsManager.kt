@@ -14,7 +14,12 @@ import ru.bondarenko.orientvibe.ng.model.*
 
 class GpsManager(context: Context) {
 
-    private val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+    private val attributionContext = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+        context.createAttributionContext("gps_navigation")
+    } else {
+        context
+    }
+    private val locationManager = attributionContext.getSystemService(Context.LOCATION_SERVICE) as LocationManager
 
     private val _gpsState = MutableStateFlow(
         GpsState(
