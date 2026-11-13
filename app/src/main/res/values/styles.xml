@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Base.Theme.SplashScreen" parent="@style/Base.v21.Theme.SplashScreen">
+    </style>
+    <style name="Base.Theme.SplashScreen.DayNight" parent="@style/Base.Theme.SplashScreen.Light">
+    </style>
+    <style name="Base.Theme.SplashScreen.Light" parent="@style/Base.v21.Theme.SplashScreen.Light">
+    </style>
+    <style name="Base.v21.Theme.SplashScreen" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+    </style>
+    <style name="Base.v21.Theme.SplashScreen.Light" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+    </style>
+    <style name="DialogWindowTheme" parent="">
+        <item name="android:windowClipToOutline">false</item>
+    </style>
+    <style name="EdgeToEdgeFloatingDialogTheme" parent="@android:style/Theme.DeviceDefault.Dialog">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowElevation">0dp</item>
+        <item name="android:windowClipToOutline">false</item>
+    </style>
+    <style name="EdgeToEdgeFloatingDialogWindowTheme" parent="">
+        <item name="android:dialogTheme">@style/EdgeToEdgeFloatingDialogTheme</item>
+    </style>
+    <style name="FloatingDialogWindowTheme" parent="">
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:windowClipToOutline">false</item>
+    </style>
+    <style name="TextAppearance.Compat.Notification" parent="@android:style/TextAppearance.Material.Notification">
+    </style>
+    <style name="TextAppearance.Compat.Notification.Info" parent="@android:style/TextAppearance.Material.Notification.Info">
+    </style>
+    <style name="TextAppearance.Compat.Notification.Line2" parent="@style/TextAppearance.Compat.Notification.Info">
+    </style>
+    <style name="TextAppearance.Compat.Notification.Time" parent="@android:style/TextAppearance.Material.Notification.Time">
+    </style>
+    <style name="TextAppearance.Compat.Notification.Title" parent="@android:style/TextAppearance.Material.Notification.Title">
+    </style>
+    <style name="Theme.OrientVibe" parent="@android:style/Theme.Material.Light.NoActionBar">
+    </style>
+    <style name="Theme.OrientVibe.SplashScreen" parent="@style/Theme.SplashScreen">
+        <item name="postSplashScreenTheme">@style/Theme.OrientVibe</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_circle</item>
+        <item name="windowSplashScreenAnimationDuration">800</item>
+        <item name="windowSplashScreenBackground">#ffffff</item>
+    </style>
+    <style name="Theme.SplashScreen" parent="@style/Theme.SplashScreen.Common">
+        <item name="postSplashScreenTheme">?android:attr/theme</item>
+        <item name="windowSplashScreenAnimatedIcon">@android:drawable/sym_def_app_icon</item>
+        <item name="windowSplashScreenAnimationDuration">@integer/default_icon_animation_duration</item>
+        <item name="windowSplashScreenBackground">?android:attr/colorBackground</item>
+    </style>
+    <style name="Theme.SplashScreen.Common" parent="@style/Base.Theme.SplashScreen.DayNight">
+        <item name="android:windowBackground">@drawable/compat_splash_screen_no_icon_background</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:fitsSystemWindows">false</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:opacity">transparent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="splashScreenIconSize">@dimen/splashscreen_icon_size_no_background</item>
+    </style>
+    <style name="Theme.SplashScreen.IconBackground" parent="@style/Theme.SplashScreen">
+        <item name="android:windowBackground">@drawable/compat_splash_screen</item>
+        <item name="splashScreenIconSize">@dimen/splashscreen_icon_size_with_background</item>
+    </style>
+    <style name="Widget.Compat.NotificationActionContainer" parent="">
+        <item name="android:background">@drawable/notification_action_background</item>
+    </style>
+    <style name="Widget.Compat.NotificationActionText" parent="">
+        <item name="android:textAppearance">?android:attr/textAppearanceButton</item>
+        <item name="android:textSize">@dimen/notification_action_text_size</item>
+        <item name="android:textColor">@color/androidx_core_secondary_text_default_material_light</item>
+    </style>
+</resources>
