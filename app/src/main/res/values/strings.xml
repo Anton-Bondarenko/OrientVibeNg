@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">OrientVibe</string>
+    <string name="nav_service_channel_name">Навигация в фоне</string>
+    <string name="nav_service_channel_desc">Уведомление для непрерывной GPS-навигации и звуковых сигналов</string>
+    <string name="nav_notification_title"> навигация активна</string>
+    <string name="nav_notification_text">GPS: определение положения • аудио включено</string>
 </resources>

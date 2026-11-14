@@ -14,19 +14,15 @@ import ru.bondarenko.orientvibe.ng.ui.theme.OrientVibeTheme
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Установка нативного экрана загрузки Android 12+ API
         installSplashScreen()
-
         super.onCreate(savedInstanceState)
 
-        // Корректная обработка аппаратной кнопки "Назад" (сворачивание таска)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 moveTaskToBack(false)
             }
         })
 
-        // Инициализация Jetpack Compose контента
         setContent {
             OrientVibeTheme {
                 AutoModeScreen()

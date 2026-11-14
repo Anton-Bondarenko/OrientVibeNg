@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.net.Uri
+import android.content.Intent
+import android.os.Build
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.ViewModel
@@ -26,6 +28,7 @@ import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
 import ru.bondarenko.orientvibe.ng.gps.MapGeometry
 import ru.bondarenko.orientvibe.ng.gps.NavViewModel
 import ru.bondarenko.orientvibe.ng.model.*
+import ru.bondarenko.orientvibe.ng.service.BackgroundNavigationService
 import ru.bondarenko.orientvibe.ng.yolo.MapDetectionProgressListener
 import ru.bondarenko.orientvibe.ng.yolo.MapDetectionResult
 import ru.bondarenko.orientvibe.ng.yolo.MapDetector
@@ -98,6 +101,9 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         }
 
         mapDetector.progressListener = this
+
+        // --- Запуск foreground-службы для GPS/аудио в фоне (screen off / app backgrounded) ---
+        startBackgroundService()
 
         viewModelScope.launch {
             val ok = mapDetector.init()
@@ -580,9 +586,29 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         val matrix = Matrix().apply { postRotate(degrees.toFloat()) }
         return Bitmap.createBitmap(src, 0, 0, src.width, src.height, matrix, true)
     }
+
+    // --- Lifecycle foreground-службы для фонового GPS/аудио ---
+    private fun startBackgroundService() {
+        val intent = BackgroundNavigationService.createStartIntent(context)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
+        Log.d(tag, "Background navigation service started")
+    }
+
+    private fun stopBackgroundService() {
+        val intent = BackgroundNavigationService.createStartIntent(context)
+        context.stopService(intent)
+        Log.d(tag, "Background navigation service stopped")
+    }
     override fun onCleared() {
         mapDetector.close()
         _audioPlayer?.release()
+        // --- Останавливаем foreground-службу, выходя из AutoModeScreen ---
+        stopBackgroundService()
+        Log.d(tag, "AutoModeViewModel cleared — background service stopped")
     }
     companion object {
         const val DISPLAY_TRACK_POINTS = 900
