@@ -41,15 +41,26 @@ class TrackRecorder {
         )
     }
 
+    /** Включает трекинг без очистки — для начальной калибровки, трек сохраняется */
+    fun enableTracking() {
+        _trackState.value = _trackState.value.copy(isTracking = true)
+    }
+
     fun stopTracking() {
         _trackState.value = _trackState.value.copy(isTracking = false)
     }
 
     fun recordPoint(fix: GpsFix, calibration: MapCalibration?): TrackPoint? {
-        if (!_trackState.value.isTracking || calibration == null) return null
+        if (!_trackState.value.isTracking) return null
 
-        val pairGpsToImage = MapCalibrationUtils.gpsToImage(fix.coordinate, calibration)
-        if (pairGpsToImage.first == null || pairGpsToImage.second == null) return null
+        val pairGpsToImage = if (calibration != null) {
+            MapCalibrationUtils.gpsToImage(fix.coordinate, calibration)
+        } else {
+            null
+        }
+
+        val imageX = pairGpsToImage?.first ?: 0.0
+        val imageY = pairGpsToImage?.second ?: 0.0
 
         val distanceFromLast = if (lastTrackPoint != null) {
             MapCalibrationUtils.haversineDistance(
@@ -68,8 +79,8 @@ class TrackRecorder {
 
         val trackPoint = TrackPoint(
             gpsFix = fix,
-            imageX = pairGpsToImage.first!!,
-            imageY = pairGpsToImage.second!!,
+            imageX = imageX,
+            imageY = imageY,
             distanceFromStart = actualDistanceFromStart,
             timestamp = fix.timestamp
         )
@@ -100,6 +111,16 @@ class TrackRecorder {
             totalDistance = 0.0,
             isTracking = false
         )
+    }
+
+    /**
+     * Возвращает последние n точек трека в виде телеметрических данных.
+     */
+    fun getTelemetryPoints(n: Int): List<TrackPoint> {
+        val pts = _trackPoints.toList()
+        if (pts.isEmpty()) return emptyList()
+        val fromIdx = if (pts.size > n) pts.size - n else 0
+        return pts.subList(fromIdx, pts.size)
     }
 
     companion object {

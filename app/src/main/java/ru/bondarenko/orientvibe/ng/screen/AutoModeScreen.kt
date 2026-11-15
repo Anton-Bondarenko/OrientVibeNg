@@ -111,7 +111,6 @@ fun AutoModeScreen() {
     // Сбор реактивных состояний (StateFlow -> Compose State)
     val mapState by autoVm.mapState.collectAsState()
     val moveReadyAlert by autoVm.moveReadyAlert.collectAsState()
-    val telemetryPoints by autoVm.telemetryPoints.collectAsState()
     val movementState by autoVm.movementState.collectAsState()
     val gpsState by navVm.gpsState.collectAsState()
     val calibrationVersion by autoVm.calibrationVersion.collectAsState()

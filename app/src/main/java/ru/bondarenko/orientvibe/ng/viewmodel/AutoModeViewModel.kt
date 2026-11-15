@@ -28,7 +28,6 @@ import ru.bondarenko.orientvibe.ng.model.AccuracyLevel
 import ru.bondarenko.orientvibe.ng.model.AudioSignalState
 import ru.bondarenko.orientvibe.ng.model.AudioSignalType
 import ru.bondarenko.orientvibe.ng.model.AutoMapState
-import ru.bondarenko.orientvibe.ng.model.AutoModeTelemetryPoint
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.model.CalibrationPoint
 import ru.bondarenko.orientvibe.ng.model.CurrentControl
@@ -67,9 +66,6 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
 
     private val _moveReadyAlert = MutableStateFlow(MoveReadyAlert())
     val moveReadyAlert: StateFlow<MoveReadyAlert> = _moveReadyAlert.asStateFlow()
-
-    private val _telemetryPoints = MutableStateFlow<List<AutoModeTelemetryPoint>>(emptyList())
-    val telemetryPoints: StateFlow<List<AutoModeTelemetryPoint>> = _telemetryPoints.asStateFlow()
 
     private val _calibrationVersion = MutableStateFlow(0)
     val calibrationVersion: StateFlow<Int> = _calibrationVersion.asStateFlow()
@@ -208,7 +204,8 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         _mapState.value = _mapState.value.copy(mapCalibration = result.calibration)
         navViewModel.applyNewCalibration(result.calibration)
         _calibrationVersion.value += 1
-        navViewModel.startTracking()
+        // Трекинг включаем без очистки — трек очищается только в reset()
+        navVm?.enableTrackingWithoutClearing()
     }
 
     fun bindGpsToCurrentControl(): Pair<Boolean, String> {
@@ -253,8 +250,10 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
 
     private fun applyNewCalibration(newCalibration: MapCalibration) {
         val navViewModel = navVm ?: return
+        // Обновляем только калибровку — НЕ startTracking(), чтобы не очистить трек при перекалибровке
         navViewModel.applyNewCalibration(newCalibration)
-        applyBind(BindResult(newCalibration), navViewModel)
+        _calibration = newCalibration
+        _mapState.value = _mapState.value.copy(mapCalibration = newCalibration)
         _calibrationVersion.value = _calibrationVersion.value + 1
     }
 
@@ -291,20 +290,8 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
                     if (_calibration == null) {
                         onNoBind(fix)
                     }
-                    // Добавляем точку в телеметрию ТОЛЬКО если пришел новый GPS-фикс (по timestamp)
-                    val lastTimestamp = _telemetryPoints.value.lastOrNull()?.timestamp ?: 0L
-                    if (fix.timestamp != lastTimestamp) {
-                        val point = AutoModeTelemetryPoint(
-                            fix.coordinate.latitude,
-                            fix.coordinate.longitude,
-                            fix.accuracy,
-                            fix.speed,
-                            fix.bearing,
-                            fix.timestamp
-                        )
-                        addTelemetryPoint(point)
-                        onMove(fix)
-                    }
+                    // TrackRecorder записывает точку через NavViewModel.init GPS-коллектор
+                    onMove(fix)
                 }
             }
 
@@ -339,37 +326,9 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         }
     }
 
-    private fun addTelemetryPoint(point: AutoModeTelemetryPoint) {
-        val current = _telemetryPoints.value.toMutableList()
-        current.add(point)
-        _telemetryPoints.value = current
-    }
-
     fun getTelemetryTrackPoints(): List<TrackPoint> {
-        val value = _telemetryPoints.value
-        if (value.isEmpty()) return emptyList()
-        val listSubList =
-            if (value.size > 900) value.subList(value.size - 900, value.size) else value
-        val baseIdx = if (value.size > 900) value.size - 900 else 0
-        val result = ArrayList<TrackPoint>()
-        var totalDist = 0.0
-        listSubList.forEachIndexed { i, tp ->
-            val actualIdx = baseIdx + i
-            val gpsFix = GpsFix(
-                coordinate = GpsCoordinate(tp.latitude, tp.longitude),
-                accuracy = tp.accuracyMeters,
-                bearing = tp.bearingDegrees,
-                speed = tp.speedMs,
-                timestamp = tp.timestamp
-            )
-            if (i > 0) {
-                val prevGps =
-                    GpsCoordinate(value[actualIdx - 1].latitude, value[actualIdx - 1].longitude)
-                totalDist += MapCalibrationUtils.haversineDistance(prevGps, gpsFix.coordinate)
-            }
-            result.add(TrackPoint(gpsFix, 0.0, 0.0, totalDist, tp.timestamp))
-        }
-        return result
+        val navViewModel = navVm ?: return emptyList()
+        return navViewModel.trackData.trackPoints
     }
 
     override fun onProgressUpdate(current: Int, total: Int, message: String) {
@@ -609,13 +568,12 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
     }
 
     fun reset() {
-        navVm?.stopTracking()
+        navVm?.clearTrack()
         navVm?.resetCalibration()
         _mapState.value = AutoMapState()
         _movementState.value = MovementState()
         _calibration = null
         _firstGps = null
-        _telemetryPoints.value = emptyList()
         _autoCalibrationsList.value = emptyList()
         _calibrationVersion.value = _calibrationVersion.value + 1
         arrivedPlayedForControlNum = -1

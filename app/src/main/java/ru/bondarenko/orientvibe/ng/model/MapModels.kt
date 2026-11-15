@@ -41,19 +41,6 @@ data class CurrentControl(
     val num: Int = 1,
     val boundingBox: BoundingBox? = null
 )
-
-/**
- * Точка телеметрии автоматического режима навигации.
- */
-data class AutoModeTelemetryPoint(
-    val latitude: Double,
-    val longitude: Double,
-    val accuracyMeters: Double,
-    val speedMs: Double,
-    val bearingDegrees: Double,
-    val timestamp: Long
-)
-
 /**
  * Модель оповещения о готовности к переходу/перемещению.
  */

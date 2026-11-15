@@ -30,7 +30,7 @@ class NavViewModel(context: Context) : ViewModel() {
     private var calibration: MapCalibration? = null
 
     private val gpsManager = GpsManager(context)
-    private val trackRecorder = TrackRecorder()
+    val trackRecorder = TrackRecorder()
     private val hitTestRadiusRel = 0.05f
 
     private val _gpsState = MutableStateFlow(GpsState())
@@ -163,6 +163,11 @@ class NavViewModel(context: Context) : ViewModel() {
 
     fun startTracking() {
         trackRecorder.startTracking()
+    }
+
+    /** Включает трекинг без очистки — для начальной калибровки */
+    fun enableTrackingWithoutClearing() {
+        trackRecorder.enableTracking()
     }
 
     fun stopTracking() {

@@ -10,9 +10,9 @@ object MapGeometry {
 
     private const val TAG = "MapGeometry"
     private const val EARTH_RADIUS_METERS = 6371000.0
-    private const val MAX_DELTA_DECLINATION = 5.0
+    private const val MAX_DELTA_DECLINATION = 1.5
     private const val MAX_DELTA_DISTANCE = 0.01
-    private const val MAX_DELTA_SCALE = 300.0
+    private const val MAX_DELTA_SCALE = 200.0
 
     fun pointInQuadrant(x: Double, y: Double): Int {
         val col = if (x < 0.5) 0 else 1
@@ -113,7 +113,7 @@ object MapGeometry {
             calculatedDeclinationRaw
         } else {
             oldCalibration.magneticDeclination + (calculatedDeclinationRaw - oldCalibration.magneticDeclination).coerceIn(
-                pointA.confidence * -5.0 * pointB.confidence,
+                pointA.confidence * -MAX_DELTA_DECLINATION * pointB.confidence,
                 pointA.confidence * MAX_DELTA_DECLINATION * pointB.confidence
             )
         }
@@ -132,11 +132,11 @@ object MapGeometry {
         if (abs(dNorth) < abs(dEast)) {
             var scaleX = abs(dEast / dx)
             if (oldCalibration.pointB != null) {
-                val confidence = pointA.confidence * 300.0 * pointB.confidence
+                val confidence = pointA.confidence * MAX_DELTA_SCALE * pointB.confidence
                 scaleX = oldCalibration.scaleMetersPerMapX + (scaleX - oldCalibration.scaleMetersPerMapX).coerceIn(-confidence, confidence)
             }
             val scaleYRaw = abs(dNorth / dy)
-            val confidenceY = abs(pointA.confidence * 300.0 * pointB.confidence * (dNorth / dEast))
+            val confidenceY = abs(pointA.confidence * MAX_DELTA_SCALE * pointB.confidence * (dNorth / dEast))
 
             scaleMetersPerUnitX = scaleX
             scaleMetersPerUnitY = oldCalibration.scaleMetersPerMapY + (scaleYRaw - oldCalibration.scaleMetersPerMapY).coerceIn(-confidenceY, confidenceY)
@@ -145,11 +145,11 @@ object MapGeometry {
             val scaleY = if (oldCalibration.pointB == null) {
                 scaleYRaw
             } else {
-                val confidence = pointA.confidence * 300.0 * pointB.confidence
+                val confidence = pointA.confidence * MAX_DELTA_SCALE * pointB.confidence
                 oldCalibration.scaleMetersPerMapY + (scaleYRaw - oldCalibration.scaleMetersPerMapY).coerceIn(-confidence, confidence)
             }
             val scaleXRaw = abs(dEast / dx)
-            val confidenceX = abs(pointA.confidence * 300.0 * pointB.confidence * (dEast / dNorth))
+            val confidenceX = abs(pointA.confidence * MAX_DELTA_SCALE * pointB.confidence * (dEast / dNorth))
 
             scaleMetersPerUnitX = oldCalibration.scaleMetersPerMapX + (scaleXRaw - oldCalibration.scaleMetersPerMapX).coerceIn(-confidenceX, confidenceX)
             scaleMetersPerUnitY = scaleY
