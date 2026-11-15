@@ -103,6 +103,6 @@ class TrackRecorder {
     }
 
     companion object {
-        const val MAX_TRACK_POINTS = 60000
+        const val MAX_TRACK_POINTS = 100000
     }
 }

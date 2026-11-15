@@ -322,7 +322,7 @@ class OnnxObjectDetector(private val context: Context) {
                 }
             }
             val results = postprocessResults(outputBuffer, bitmap.width, bitmap.height)
-            inputTensor.close()
+            if (!inputTensor.isClosed) inputTensor.close()
             output.close()
             outputs.close()
             return results

@@ -1,17 +1,16 @@
 package ru.bondarenko.orientvibe.ng.viewmodel
 
+import StereoAudioPlayer
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.net.Uri
-import android.content.Intent
 import android.os.Build
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewmodel.CreationExtras
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -22,12 +21,24 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ru.bondarenko.orientvibe.ng.auto.AutoMoveManager
-import ru.bondarenko.orientvibe.ng.auto.TimedGpsPrivate
-import ru.bondarenko.orientvibe.ng.audio.StereoAudioPlayer
 import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
 import ru.bondarenko.orientvibe.ng.gps.MapGeometry
 import ru.bondarenko.orientvibe.ng.gps.NavViewModel
-import ru.bondarenko.orientvibe.ng.model.*
+import ru.bondarenko.orientvibe.ng.model.AccuracyLevel
+import ru.bondarenko.orientvibe.ng.model.AudioSignalState
+import ru.bondarenko.orientvibe.ng.model.AudioSignalType
+import ru.bondarenko.orientvibe.ng.model.AutoMapState
+import ru.bondarenko.orientvibe.ng.model.AutoModeTelemetryPoint
+import ru.bondarenko.orientvibe.ng.model.BoundingBox
+import ru.bondarenko.orientvibe.ng.model.CalibrationPoint
+import ru.bondarenko.orientvibe.ng.model.CurrentControl
+import ru.bondarenko.orientvibe.ng.model.GpsCoordinate
+import ru.bondarenko.orientvibe.ng.model.GpsFix
+import ru.bondarenko.orientvibe.ng.model.GpsState
+import ru.bondarenko.orientvibe.ng.model.MapCalibration
+import ru.bondarenko.orientvibe.ng.model.MoveReadyAlert
+import ru.bondarenko.orientvibe.ng.model.MovementState
+import ru.bondarenko.orientvibe.ng.model.TrackPoint
 import ru.bondarenko.orientvibe.ng.service.BackgroundNavigationService
 import ru.bondarenko.orientvibe.ng.yolo.MapDetectionProgressListener
 import ru.bondarenko.orientvibe.ng.yolo.MapDetectionResult
@@ -35,7 +46,6 @@ import ru.bondarenko.orientvibe.ng.yolo.MapDetector
 import java.util.Locale
 import kotlin.concurrent.thread
 import kotlin.math.abs
-import kotlin.reflect.KClass
 
 /**
  * Внутренний результат жесткой привязки к координате.
@@ -68,10 +78,11 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
     val autoCalibrations: StateFlow<List<MapCalibration>> = _autoCalibrationsList.asStateFlow()
 
     private val _autoMoveManager = AutoMoveManager()
-    private val _audioPlayer: StereoAudioPlayer?
+    private val _audioPlayer: StereoAudioPlayer = StereoAudioPlayer.getInstance(context)
     private val mapDetector = MapDetector(context)
 
     private var _calibration: MapCalibration? = null
+    private var arrivedPlayedForControlNum: Int = -1
     private var _firstGps: GpsCoordinate? = null
     private var accuracyLevelTransitionCount = 0
 
@@ -93,16 +104,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         }
 
     init {
-        _audioPlayer = try {
-            StereoAudioPlayer.create()
-        } catch (e: Exception) {
-            Log.w(tag, "Failed to create StereoAudioPlayer", e)
-            null
-        }
-
         mapDetector.progressListener = this
-
-        // --- Запуск foreground-службы для GPS/аудио в фоне (screen off / app backgrounded) ---
         startBackgroundService()
 
         viewModelScope.launch {
@@ -182,7 +184,8 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             confidence = 1.0
         )
 
-        val pairGpsToImage = MapCalibrationUtils.gpsToImage(gps, cal, _mapState.value.northAngle) ?: return null
+        val pairGpsToImage =
+            MapCalibrationUtils.gpsToImage(gps, cal, _mapState.value.northAngle) ?: return null
         val imgX = pairGpsToImage.first
         val imgY = pairGpsToImage.second
         if (imgX == null || imgY == null) {
@@ -227,10 +230,12 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         val currentFix = gpsState.currentFix ?: return Pair(false, "Нет GPS fix")
 
         val targetNumber = _movementState.value.currentControl.num
-        val targetBox = _mapState.value.controlsBoundingBoxes.firstOrNull { it.number == targetNumber }
-            ?: return Pair(false, "CP #$targetNumber не найдена на карте")
+        val targetBox =
+            _mapState.value.controlsBoundingBoxes.firstOrNull { it.number == targetNumber }
+                ?: return Pair(false, "CP #$targetNumber не найдена на карте")
 
-        val pointB = CalibrationPoint(currentFix.coordinate, targetBox.centerX, targetBox.centerY, 1.0)
+        val pointB =
+            CalibrationPoint(currentFix.coordinate, targetBox.centerX, targetBox.centerY, 1.0)
         val newCal = MapGeometry.computeCalibrationSoft(
             calibration.pointA,
             pointB,
@@ -260,6 +265,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             Log.w(tag, "startMonitoring: sharedNavViewModel is still null")
         }
     }
+
     private fun startGpsMonitoring(navViewModel: NavViewModel) {
         viewModelScope.launch {
             navViewModel.gpsState.collectLatest { gpsState ->
@@ -267,6 +273,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             }
         }
     }
+
     private fun handleGpsUpdate(gpsState: GpsState) {
         val currentLevel = gpsState.accuracyLevel
         val fix = gpsState.currentFix
@@ -298,17 +305,20 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
                     }
                 }
             }
+
             AccuracyLevel.LOW_ACCURACY -> return
             AccuracyLevel.NO_FIX -> {
                 accuracyLevelTransitionCount = 0
-                _moveReadyAlert.value = MoveReadyAlert(active = false, remainingMs = 0L, elapsedMs = 0L)
+                _moveReadyAlert.value =
+                    MoveReadyAlert(active = false, remainingMs = 0L, elapsedMs = 0L)
             }
         }
     }
 
     private fun showMoveReadyAlert() {
         viewModelScope.launch {
-            _moveReadyAlert.value = MoveReadyAlert(active = true, remainingMs = 5000L, elapsedMs = 0L)
+            _moveReadyAlert.value =
+                MoveReadyAlert(active = true, remainingMs = 5000L, elapsedMs = 0L)
             var elapsed = 0L
             while (elapsed < 5000L && _moveReadyAlert.value.active) {
                 bindGpsToCurrentControl()
@@ -321,19 +331,23 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
                 )
             }
             if (_moveReadyAlert.value.active) {
-                _moveReadyAlert.value = MoveReadyAlert(active = false, remainingMs = 0L, elapsedMs = 5000L)
+                _moveReadyAlert.value =
+                    MoveReadyAlert(active = false, remainingMs = 0L, elapsedMs = 5000L)
             }
         }
     }
+
     private fun addTelemetryPoint(point: AutoModeTelemetryPoint) {
         val current = _telemetryPoints.value.toMutableList()
         current.add(point)
         _telemetryPoints.value = current
     }
+
     fun getTelemetryTrackPoints(): List<TrackPoint> {
         val value = _telemetryPoints.value
         if (value.isEmpty()) return emptyList()
-        val listSubList = if (value.size > 900) value.subList(value.size - 900, value.size) else value
+        val listSubList =
+            if (value.size > 900) value.subList(value.size - 900, value.size) else value
         val baseIdx = if (value.size > 900) value.size - 900 else 0
         val result = ArrayList<TrackPoint>()
         var totalDist = 0.0
@@ -347,13 +361,15 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
                 timestamp = tp.timestamp
             )
             if (i > 0) {
-                val prevGps = GpsCoordinate(value[actualIdx - 1].latitude, value[actualIdx - 1].longitude)
+                val prevGps =
+                    GpsCoordinate(value[actualIdx - 1].latitude, value[actualIdx - 1].longitude)
                 totalDist += MapCalibrationUtils.haversineDistance(prevGps, gpsFix.coordinate)
             }
             result.add(TrackPoint(gpsFix, 0.0, 0.0, totalDist, tp.timestamp))
         }
         return result
     }
+
     override fun onProgressUpdate(current: Int, total: Int, message: String) {
         viewModelScope.launch {
             val currentHandle = mapDetector.currentTaskRef.get()
@@ -362,6 +378,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             }
         }
     }
+
     private fun applyDetectionResult(result: MapDetectionResult?, taskVersion: Int) {
         val currentHandle = mapDetector.currentTaskRef.get()
         // Двойная защита: применяем только если версия совпадает с текущей активной задачей
@@ -374,6 +391,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             )
         }
     }
+
     fun loadImageFromUri(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -398,6 +416,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             }
         }
     }
+
     fun loadImageFromBitmap(bitmap: Bitmap, imageUri: Uri?) {
         var displayBitmap = bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)
         if (imageUri != null) {
@@ -416,6 +435,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         }
         launchDetectionWithBitmap(displayBitmap)
     }
+
     private fun onNoBind(fix: GpsFix) {
         val firstGps = _firstGps ?: fix.coordinate
         val navViewModel = navVm
@@ -425,12 +445,12 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             setCurrentControl(2)
         }
     }
+
     private fun onMove(gpsFix: GpsFix?) {
         val ms = _movementState.value
         val mapCalibration = _calibration ?: return
         val fix = gpsFix ?: return
 
-        // Передаём КОПИЮ, чтобы не мутировать текущий _movementState.value до сравнения в StateFlow
         val workingState = ms.copy(
             currentControl = ms.currentControl.copy(),
             prevControl = ms.prevControl.copy()
@@ -450,59 +470,93 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             )
         }
 
-        // Теперь oldValue (ms.currentControl.num = 2) != newValue (result2.currentControl.num = 5),
-        // и StateFlow гарантированно обновит экран!
-        _movementState.value = result2.copy(
+        val updatedState = result2.copy(
             currentControl = result2.currentControl.copy(),
             prevControl = result2.prevControl.copy(),
             autoCalibrations = list.toMutableList()
         )
 
-        val prevSignal = ms.audioSignalState.type
+        val prevSignal = updatedState.audioSignalState.type
         val audioState = navData?.let { AutoMoveManager.analyzeAudioSignal(it) }
             ?: AudioSignalState(type = AudioSignalType.NONE)
 
-        if (audioState.distanceToTargetMeters < 40.0) {
-            ms.audioSignalState = AudioSignalState(type = AudioSignalType.NONE)
+        // Полная тишина в радиусе 40 метров от КП
+        // В радиусе 50 м от КП: один раз проигрываем трель прибытия, затем молчим
+        if (audioState.distanceToTargetMeters < 50.0) {
+            val currentCpNum = updatedState.currentControl.num
+            if (arrivedPlayedForControlNum != currentCpNum) {
+                Log.d("AudioNav", "▶ ARRIVED trill for CP #$currentCpNum")
+                _audioPlayer.playTrill(1300, 15.0f, 600L, 1.0f, audioState.leftBalance)
+                arrivedPlayedForControlNum = currentCpNum
+                updatedState.lastAudioPlayMs = System.currentTimeMillis()
+            }
+            updatedState.audioSignalState = AudioSignalState(type = AudioSignalType.NONE)
+            updatedState.approachControlNum = 0
+            updatedState.approachDistKey = 0
+            _movementState.value = updatedState
             return
         }
+
+        // Сохраняем новый audioState, чтобы updatedState.canPlayAudioSignal() видел актуальный intervalMs
+        updatedState.audioSignalState = audioState
+
+        val now = System.currentTimeMillis()
+        val canPlayByTimer = (now - updatedState.lastAudioPlayMs) >= audioState.intervalMs
         val shouldPlay = audioState.type != AudioSignalType.NONE &&
-                (audioState.type != prevSignal || ms.canPlayAudioSignal())
-        if (!shouldPlay || _audioPlayer == null) {
-            if (audioState.type != AudioSignalType.NONE && audioState.type != prevSignal) {
-                Log.d("AudioPlayer", "AUDIO: signal changed from $prevSignal → ${audioState.type} (not playing)")
-                ms.audioSignalState = audioState
-            }
-        } else {
+                (audioState.type != prevSignal || canPlayByTimer)
+
+        if (shouldPlay) {
+            Log.d(
+                "AudioNav",
+                String.format(
+                    Locale.US,
+                    "type=%s | dist=%.1fm | dev=%.1f° | pause=%dms (elapsed=%dms)",
+                    audioState.type,
+                    audioState.distanceToTargetMeters,
+                    audioState.deviationDeg,
+                    audioState.intervalMs,
+                    System.currentTimeMillis() - updatedState.lastAudioPlayMs
+                )
+            )
             when (audioState.type) {
                 AudioSignalType.APPROACH_SINGLE, AudioSignalType.APPROACH_DOUBLE -> {
-                    val distKey = if (audioState.type == AudioSignalType.APPROACH_SINGLE) 100 else 50
-                    if (ms.approachControlNum != ms.currentControl.num || ms.approachDistKey != distKey) {
-                        Log.d("AudioPlayer", "AUDIO: ▶ APPROACH ${audioState.type} control=${ms.currentControl.num} dist=$distKey")
+                    val distKey =
+                        if (audioState.type == AudioSignalType.APPROACH_SINGLE) 100 else 50
+                    if (updatedState.approachControlNum != updatedState.currentControl.num || updatedState.approachDistKey != distKey) {
                         playDoubleBeep(audioState)
-                        ms.approachControlNum = ms.currentControl.num
-                        ms.approachDistKey = distKey
-                    } else {
-                        Log.d("AudioPlayer", "AUDIO: ✗ APPROACH SKIP (already played this combo)")
+                        updatedState.approachControlNum = updatedState.currentControl.num
+                        updatedState.approachDistKey = distKey
+                        updatedState.lastAudioPlayMs = now
                     }
                 }
+
                 AudioSignalType.ARRIVED -> {
-                    Log.d("AudioPlayer", "AUDIO: ▶ ARRIVED trill")
                     _audioPlayer.playTrill(600, 8.0f, 500L, 1.0f, audioState.leftBalance)
-                    ms.audioSignalState = AudioSignalState(type = AudioSignalType.NONE)
-                    ms.approachControlNum = 0
-                    ms.approachDistKey = 0
+                    updatedState.audioSignalState = AudioSignalState(type = AudioSignalType.NONE)
+                    updatedState.approachControlNum = 0
+                    updatedState.approachDistKey = 0
+                    updatedState.lastAudioPlayMs = now
                 }
+
                 AudioSignalType.DEVIATION -> {
-                    val durationMs = (200.0 + (5.0 * abs(audioState.deviationDeg))).toLong().coerceAtMost(600L)
-                    Log.d("AudioPlayer", "AUDIO: ▶ DEVIATION f=${audioState.frequencyHz}Hz dur=${durationMs}ms bal=${audioState.leftBalance}")
-                    _audioPlayer.playTone(audioState.frequencyHz, durationMs, 1.0f, audioState.leftBalance)
-                    ms.audioSignalState = audioState
-                    ms.lastAudioPlayMs = System.currentTimeMillis()
+                    val durationMs =
+                        (200.0 + (5.0 * abs(audioState.deviationDeg))).toLong().coerceAtMost(600L)
+                    _audioPlayer.playTone(
+                        audioState.frequencyHz,
+                        durationMs,
+                        1.0f,
+                        audioState.leftBalance
+                    )
+                    updatedState.lastAudioPlayMs = now
                 }
+
                 else -> {}
             }
         }
+
+        // Сохраняем в StateFlow уже ПОСЛЕ обновления lastAudioPlayMs и audioSignalState
+        _movementState.value = updatedState
+
         result2.newMapCalibration?.let { newCalib ->
             val prefs = context.getSharedPreferences("orientvibe_settings", 0)
             if (prefs.getBoolean("auto_calibration", true)) {
@@ -512,6 +566,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             }
         }
     }
+
     private fun launchDetectionWithBitmap(bitmap: Bitmap?) {
         if (bitmap == null) return
 
@@ -547,12 +602,15 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
     fun updateNorthAngle(angle: Double) {
         _mapState.value = _mapState.value.copy(northAngle = angle.coerceIn(-45.0, 45.0))
     }
+
     fun resetNorthAngle() {
         _mapState.value = _mapState.value.copy(northAngle = 0.0)
     }
+
     fun clearError() {
         _mapState.value = _mapState.value.copy(errorMessage = null)
     }
+
     fun reset() {
         navVm?.stopTracking()
         navVm?.resetCalibration()
@@ -564,10 +622,13 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         _autoCalibrationsList.value = emptyList()
         _calibrationVersion.value = _calibrationVersion.value + 1
     }
+
     private fun playDoubleBeep(audioState: AudioSignalState) {
-        if (_audioPlayer == null) return
         val isDoublePair = audioState.type == AudioSignalType.APPROACH_DOUBLE
-        Log.d("AudioPlayer", "playDoubleBeep: " + if (isDoublePair) "double-pair(4beeps)" else "single-pair(2beeps)")
+        Log.d(
+            "AudioPlayer",
+            "playDoubleBeep: " + if (isDoublePair) "double-pair(4beeps)" else "single-pair(2beeps)"
+        )
         _audioPlayer.playTone(1400, 120L, 1.0f, 0.5f)
         thread(start = true) {
             Thread.sleep(180L)
@@ -582,6 +643,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             }
         }
     }
+
     private fun rotateBitmap(src: Bitmap, degrees: Double): Bitmap {
         val matrix = Matrix().apply { postRotate(degrees.toFloat()) }
         return Bitmap.createBitmap(src, 0, 0, src.width, src.height, matrix, true)
@@ -603,6 +665,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         context.stopService(intent)
         Log.d(tag, "Background navigation service stopped")
     }
+
     override fun onCleared() {
         mapDetector.close()
         _audioPlayer?.release()
@@ -610,13 +673,15 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         stopBackgroundService()
         Log.d(tag, "AutoModeViewModel cleared — background service stopped")
     }
+
     companion object {
         const val DISPLAY_TRACK_POINTS = 900
-        fun Factory(context: Context): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
-            @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return AutoModeViewModel(context) as T
+        fun Factory(context: Context): ViewModelProvider.Factory =
+            object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                    return AutoModeViewModel(context) as T
+                }
             }
-        }
     }
 }

@@ -479,15 +479,18 @@ class AutoMoveManager {
                 autoMapState.northAngle
             ) ?: return null
             val bearingToTarget = MapGeometry.bearing(gpsFix.coordinate, targetGps)
-// ИСПРАВЛЕНО: JADX инвертировал условие (было if (trackHistory.isEmpty()) trackHistory.last()...)
-            val currentBearing = if (trackHistory.isNotEmpty()) {
-                trackHistory.last().average10Bearing
+
+            // Используем average3Bearing (2-3 сек) вместо 10-секундного, чтобы быстрее реагировать на поворот
+            val currentBearing = if (trackHistory.size >= 2) {
+                trackHistory.last().average3Bearing
             } else {
                 gpsFix.bearing
             }
+
             var deviation = currentBearing - bearingToTarget
             while (deviation > 180.0) deviation -= 360.0
             while (deviation < -180.0) deviation += 360.0
+
             val direction = when {
                 abs(deviation) <= 10.0 -> DeviationDirection.CENTER
                 deviation > 0.0 -> DeviationDirection.RIGHT
@@ -496,9 +499,12 @@ class AutoMoveManager {
             val distanceToTarget = MapGeometry.haversineDistance(gpsFix.coordinate, targetGps)
             return NavigationData(bearingToTarget, distanceToTarget, deviation, direction)
         }
+
         fun analyzeAudioSignal(navigation: NavigationData): AudioSignalState {
             val dist = navigation.distanceToTargetMeters
             val dev = navigation.deviationDeg
+            val absDeg = abs(dev)
+
             if (dist < 40.0) {
                 return AudioSignalState(
                     type = AudioSignalType.ARRIVED,
@@ -529,7 +535,19 @@ class AutoMoveManager {
                     distanceToTargetMeters = dist
                 )
             }
-            val absDeg = abs(dev)
+
+            // Мёртвая зона (коридор +/- 10°): движемся точно на цель — звук НЕ выводим
+            if (absDeg <= 10.0 || navigation.direction == DeviationDirection.CENTER) {
+                return AudioSignalState(
+                    type = AudioSignalType.NONE,
+                    frequencyHz = 0,
+                    leftBalance = 0.5f,
+                    intervalMs = 0L,
+                    deviationDeg = dev,
+                    distanceToTargetMeters = dist
+                )
+            }
+
             val freq = (800.0 - (((absDeg - 10.0) / 40.0) * 500.0)).coerceIn(300.0, 800.0).toInt()
             val clampedDeg = absDeg.coerceIn(0.0, 70.0)
             val balance = if (dev < 0.0) {
@@ -537,11 +555,15 @@ class AutoMoveManager {
             } else {
                 ((clampedDeg / 140.0) + 0.5).toFloat()
             }
+
+            // Чем больше отклонение от курса, тем меньше пауза (чаще сигнал)
             val intervalMs = when {
-                absDeg > HEADING_TOLERANCE_DEG -> 10000L
-                absDeg > 20.0 -> 20000L
-                else -> 30000L
+                absDeg > 60.0 -> 4000L                   // сильное отклонение (> 60°): каждые 4 сек
+                absDeg > HEADING_TOLERANCE_DEG -> 8000L  // > 30°: каждые 8 сек
+                absDeg > 20.0 -> 15000L                  // > 20°: каждые 15 сек
+                else -> 25000L                           // 10°..20°: каждые 25 сек
             }
+
             return AudioSignalState(
                 type = AudioSignalType.DEVIATION,
                 frequencyHz = freq,
