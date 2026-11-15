@@ -1,6 +1,5 @@
 package ru.bondarenko.orientvibe.ng.service
 
-import StereoAudioPlayer
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -28,6 +27,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import ru.bondarenko.orientvibe.ng.MainActivity
 import ru.bondarenko.orientvibe.ng.R
+import ru.bondarenko.orientvibe.ng.audio.StereoAudioPlayer
 import ru.bondarenko.orientvibe.ng.gps.TrackRecorder
 import ru.bondarenko.orientvibe.ng.model.GpsCoordinate
 import ru.bondarenko.orientvibe.ng.model.GpsFix

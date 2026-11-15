@@ -40,13 +40,20 @@ class AutoMoveManager {
     private var _approachTimeMs: Long? = null
     private var _nextBoundingBox: BoundingBox? = null
 
-    private val _trackHistory = ArrayList<TimedGpsPrivate>()
+    private val _trackHistory = ArrayDeque<TimedGpsPrivate>(128)
     val trackHistory: List<TimedGpsPrivate>
         get() = _trackHistory.toList()
 
     private val _autoCalibrations = ArrayList<MapCalibration>()
     val autoCalibrations: List<MapCalibration>
         get() = _autoCalibrations.toList()
+
+    /**
+     * Возвращает последний усредненный азимут (за 2-3 сек) без копирования списка истории.
+     */
+    fun getLastAverage3Bearing(): Double? {
+        return if (_trackHistory.size >= 2) _trackHistory.last().average3Bearing else null
+    }
 
     fun doMove(
         autoMapState: AutoMapState,
@@ -121,7 +128,7 @@ class AutoMoveManager {
         val lastVector3 = getLastVector(gpsFix.coordinate, HEADING_WINDOW_SECONDS * 1000L) ?: 0.0
         val lastVector10 = getLastVector(gpsFix.coordinate, HEADING_WINDOW_LONG_SECONDS * 1000L) ?: 0.0
 
-        _trackHistory.add(
+        _trackHistory.addLast(
             TimedGpsPrivate(
                 coordinate = gpsFix.coordinate,
                 timestamp = gpsFix.timestamp,
@@ -132,12 +139,8 @@ class AutoMoveManager {
         )
 
         val cutoff = gpsFix.timestamp - (TRACK_HISTORY_SECONDS * 1000L)
-        var i = 0
-        while (i < _trackHistory.size && _trackHistory[i].timestamp < cutoff) {
-            i++
-        }
-        if (i > 0) {
-            _trackHistory.subList(0, i).clear()
+        while (_trackHistory.isNotEmpty() && _trackHistory.first().timestamp < cutoff) {
+            _trackHistory.removeFirst()
         }
     }
 
@@ -265,7 +268,6 @@ class AutoMoveManager {
         )
         return vectorBefore - vectorAfter
     }
-
     private fun rewindTrackHistory(startIndex: Int, dTime: Long): Int {
         var index = startIndex.coerceIn(0, _trackHistory.size - 1)
         val targetTime = abs(_trackHistory[startIndex].timestamp + dTime)
@@ -369,7 +371,7 @@ class AutoMoveManager {
         oldCurrentBox: BoundingBox,
         rawMapCal: MapCalibration
     ): MapCalibration {
-        val merged = ArrayList<MapCalibration>().apply {
+        val merged = ArrayList<MapCalibration>(_autoCalibrations.size + 1).apply {
             add(rawMapCal)
             addAll(_autoCalibrations)
         }
@@ -439,35 +441,12 @@ class AutoMoveManager {
         private const val HEADING_WINDOW_LONG_SECONDS = 10
         private const val NAV_BEARING_AVG_SECONDS = 3
         private const val TAG = "AutoMoveManager"
-        private fun avgBearingToTrack(
-            currentPos: GpsCoordinate,
-            history: List<TimedGpsPrivate>,
-            target: GpsCoordinate
-        ): Double {
-            if (history.isEmpty()) return MapGeometry.bearing(currentPos, target)
-            val cutoff = history.last().timestamp - (NAV_BEARING_AVG_SECONDS * 1000L)
-            var sinSum = 0.0
-            var cosSum = 0.0
-            var n = 0
-            for (pt in history) {
-                if (pt.timestamp >= cutoff) {
-                    val b = MapGeometry.bearing(pt.coordinate, target)
-                    val rad = Math.toRadians(b)
-                    sinSum += sin(rad)
-                    cosSum += cos(rad)
-                    n++
-                }
-            }
-            if (n <= 0) return MapGeometry.bearing(currentPos, target)
-            val avgRad = atan2(sinSum / n, cosSum / n)
-            return (Math.toDegrees(avgRad) + 360.0) % 360.0
-        }
         fun analyzeNavigation(
             currentControlNum: Int,
             gpsFix: GpsFix,
             mapCalibration: MapCalibration,
             autoMapState: AutoMapState,
-            trackHistory: List<TimedGpsPrivate> = emptyList()
+            lastAvgBearing: Double? = null
         ): NavigationData? {
             if (mapCalibration.pointB == null) return null
             val currentControlBoundingBox = autoMapState.controlsBoundingBoxes
@@ -479,18 +458,10 @@ class AutoMoveManager {
                 autoMapState.northAngle
             ) ?: return null
             val bearingToTarget = MapGeometry.bearing(gpsFix.coordinate, targetGps)
-
-            // Используем average3Bearing (2-3 сек) вместо 10-секундного, чтобы быстрее реагировать на поворот
-            val currentBearing = if (trackHistory.size >= 2) {
-                trackHistory.last().average3Bearing
-            } else {
-                gpsFix.bearing
-            }
-
+            val currentBearing = lastAvgBearing ?: gpsFix.bearing
             var deviation = currentBearing - bearingToTarget
             while (deviation > 180.0) deviation -= 360.0
             while (deviation < -180.0) deviation += 360.0
-
             val direction = when {
                 abs(deviation) <= 10.0 -> DeviationDirection.CENTER
                 deviation > 0.0 -> DeviationDirection.RIGHT
@@ -499,12 +470,10 @@ class AutoMoveManager {
             val distanceToTarget = MapGeometry.haversineDistance(gpsFix.coordinate, targetGps)
             return NavigationData(bearingToTarget, distanceToTarget, deviation, direction)
         }
-
         fun analyzeAudioSignal(navigation: NavigationData): AudioSignalState {
             val dist = navigation.distanceToTargetMeters
             val dev = navigation.deviationDeg
             val absDeg = abs(dev)
-
             if (dist < 40.0) {
                 return AudioSignalState(
                     type = AudioSignalType.ARRIVED,
@@ -535,8 +504,7 @@ class AutoMoveManager {
                     distanceToTargetMeters = dist
                 )
             }
-
-            // Мёртвая зона (коридор +/- 10°): движемся точно на цель — звук НЕ выводим
+// Мёртвая зона (коридор ±10°): движемся точно на цель — звук не выводим
             if (absDeg <= 10.0 || navigation.direction == DeviationDirection.CENTER) {
                 return AudioSignalState(
                     type = AudioSignalType.NONE,
@@ -547,7 +515,6 @@ class AutoMoveManager {
                     distanceToTargetMeters = dist
                 )
             }
-
             val freq = (800.0 - (((absDeg - 10.0) / 40.0) * 500.0)).coerceIn(300.0, 800.0).toInt()
             val clampedDeg = absDeg.coerceIn(0.0, 70.0)
             val balance = if (dev < 0.0) {
@@ -555,15 +522,12 @@ class AutoMoveManager {
             } else {
                 ((clampedDeg / 140.0) + 0.5).toFloat()
             }
-
-            // Чем больше отклонение от курса, тем меньше пауза (чаще сигнал)
             val intervalMs = when {
-                absDeg > 60.0 -> 4000L                   // сильное отклонение (> 60°): каждые 4 сек
-                absDeg > HEADING_TOLERANCE_DEG -> 8000L  // > 30°: каждые 8 сек
-                absDeg > 20.0 -> 15000L                  // > 20°: каждые 15 сек
-                else -> 25000L                           // 10°..20°: каждые 25 сек
+                absDeg > 60.0 -> 4000L
+                absDeg > HEADING_TOLERANCE_DEG -> 8000L
+                absDeg > 20.0 -> 15000L
+                else -> 25000L
             }
-
             return AudioSignalState(
                 type = AudioSignalType.DEVIATION,
                 frequencyHz = freq,

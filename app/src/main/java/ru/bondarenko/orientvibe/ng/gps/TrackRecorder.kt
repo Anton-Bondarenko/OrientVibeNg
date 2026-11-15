@@ -4,7 +4,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import ru.bondarenko.orientvibe.ng.model.*
-import java.util.LinkedList
 
 /**
  * Состояние компонента записи траектории движения.
@@ -12,7 +11,8 @@ import java.util.LinkedList
 data class TrackRecorderState(
     val trackPoints: List<TrackPoint> = emptyList(),
     val totalDistance: Double = 0.0,
-    val isTracking: Boolean = false
+    val isTracking: Boolean = false,
+    val version: Int = 0
 )
 
 /**
@@ -22,7 +22,18 @@ class TrackRecorder {
 
     private var _totalDistance = 0.0
     private var lastTrackPoint: TrackPoint? = null
-    private val _trackPoints = LinkedList<TrackPoint>()
+    private var _version = 0
+
+    // Плоский кольцевой буфер без объектов-узлов LinkedList
+    private val _trackPoints = ArrayDeque<TrackPoint>(1024)
+
+    // Лёгкая view-обёртка (O(1) по памяти и времени, без копирования массива)
+    private val _readOnlyPointsView: List<TrackPoint> = object : AbstractList<TrackPoint>() {
+        override val size: Int
+            get() = _trackPoints.size
+
+        override fun get(index: Int): TrackPoint = _trackPoints[index]
+    }
 
     private val _trackState = MutableStateFlow(TrackRecorderState())
     val trackState: StateFlow<TrackRecorderState> = _trackState.asStateFlow()
@@ -34,20 +45,24 @@ class TrackRecorder {
         _trackPoints.clear()
         _totalDistance = 0.0
         lastTrackPoint = null
+        _version++
         _trackState.value = TrackRecorderState(
-            trackPoints = emptyList(),
+            trackPoints = _readOnlyPointsView,
             totalDistance = 0.0,
-            isTracking = true
+            isTracking = true,
+            version = _version
         )
     }
 
     /** Включает трекинг без очистки — для начальной калибровки, трек сохраняется */
     fun enableTracking() {
-        _trackState.value = _trackState.value.copy(isTracking = true)
+        _version++
+        _trackState.value = _trackState.value.copy(isTracking = true, version = _version)
     }
 
     fun stopTracking() {
-        _trackState.value = _trackState.value.copy(isTracking = false)
+        _version++
+        _trackState.value = _trackState.value.copy(isTracking = false, version = _version)
     }
 
     fun recordPoint(fix: GpsFix, calibration: MapCalibration?): TrackPoint? {
@@ -62,19 +77,20 @@ class TrackRecorder {
         val imageX = pairGpsToImage?.first ?: 0.0
         val imageY = pairGpsToImage?.second ?: 0.0
 
-        val distanceFromLast = if (lastTrackPoint != null) {
+        val prev = lastTrackPoint
+        val distanceFromLast = if (prev != null) {
             MapCalibrationUtils.haversineDistance(
-                lastTrackPoint!!.gpsFix.coordinate, // Используем gpsFix для доступа к координатам
+                prev.gpsFix.coordinate,
                 fix.coordinate
             )
         } else {
             0.0
         }
 
-        val actualDistanceFromStart = if (_trackPoints.isEmpty()) {
+        val actualDistanceFromStart = if (prev == null) {
             0.0
         } else {
-            _trackPoints.last.distanceFromStart + distanceFromLast
+            prev.distanceFromStart + distanceFromLast
         }
 
         val trackPoint = TrackPoint(
@@ -85,18 +101,21 @@ class TrackRecorder {
             timestamp = fix.timestamp
         )
 
-        _trackPoints.addLast(trackPoint)
-        _totalDistance = actualDistanceFromStart
-        lastTrackPoint = trackPoint
-
-        while (_trackPoints.size > MAX_TRACK_POINTS) {
+        if (_trackPoints.size >= MAX_TRACK_POINTS) {
             _trackPoints.removeFirst()
         }
+        _trackPoints.addLast(trackPoint)
 
+        _totalDistance = actualDistanceFromStart
+        lastTrackPoint = trackPoint
+        _version++
+
+        // Передаём view на все точки без копирования, а version гарантирует срабатывание StateFlow
         _trackState.value = TrackRecorderState(
-            trackPoints = _trackPoints.toList(),
+            trackPoints = _readOnlyPointsView,
             totalDistance = _totalDistance,
-            isTracking = true
+            isTracking = true,
+            version = _version
         )
 
         return trackPoint
@@ -106,21 +125,28 @@ class TrackRecorder {
         _trackPoints.clear()
         _totalDistance = 0.0
         lastTrackPoint = null
+        _version++
         _trackState.value = TrackRecorderState(
             trackPoints = emptyList(),
             totalDistance = 0.0,
-            isTracking = false
+            isTracking = false,
+            version = _version
         )
     }
 
     /**
-     * Возвращает последние n точек трека в виде телеметрических данных.
+     * Возвращает последние n точек трека без копирования всего массива.
      */
     fun getTelemetryPoints(n: Int): List<TrackPoint> {
-        val pts = _trackPoints.toList()
-        if (pts.isEmpty()) return emptyList()
-        val fromIdx = if (pts.size > n) pts.size - n else 0
-        return pts.subList(fromIdx, pts.size)
+        val size = _trackPoints.size
+        if (size == 0 || n <= 0) return emptyList()
+        val count = minOf(size, n)
+        val startIdx = size - count
+        val result = ArrayList<TrackPoint>(count)
+        for (i in startIdx until size) {
+            result.add(_trackPoints[i])
+        }
+        return result
     }
 
     companion object {

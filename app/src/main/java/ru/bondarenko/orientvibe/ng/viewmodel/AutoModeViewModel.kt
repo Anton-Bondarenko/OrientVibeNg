@@ -1,6 +1,5 @@
 package ru.bondarenko.orientvibe.ng.viewmodel
 
-import StereoAudioPlayer
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -20,6 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import ru.bondarenko.orientvibe.ng.audio.StereoAudioPlayer
 import ru.bondarenko.orientvibe.ng.auto.AutoMoveManager
 import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
 import ru.bondarenko.orientvibe.ng.gps.MapGeometry
@@ -427,7 +427,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
                 fix,
                 it,
                 _mapState.value,
-                _autoMoveManager.trackHistory
+                _autoMoveManager.getLastAverage3Bearing()
             )
         }
 

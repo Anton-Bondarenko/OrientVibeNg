@@ -1,3 +1,5 @@
+package ru.bondarenko.orientvibe.ng.audio
+
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
@@ -13,13 +15,26 @@ class StereoAudioPlayer private constructor(context: Context) {
     private val maxVolume = 0.45f
     private val sampleRate: Int = DEFAULT_SAMPLE_RATE
 
+    // Переиспользуемый буфер на 2 секунды стереозвука (~384 КБ выделяется один раз при старте)
+    private val reusableStereoBuffer = ShortArray(MAX_BUFFER_FRAMES * 2)
+
+    // Кэшируем неизменяемые конфигурации аудиопотока
+    private val audioAttributes: AudioAttributes = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_MEDIA)
+        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+        .build()
+
+    private val audioFormat: AudioFormat = AudioFormat.Builder()
+        .setSampleRate(sampleRate)
+        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+        .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
+        .build()
+
     private val appContext: Context = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
         context.applicationContext.createAttributionContext("audioPlayback")
     } else {
         context.applicationContext
     }
-
-    // Блок init и initAudioTrack() удалены — MODE_STATIC создаётся по факту воспроизведения
 
     fun playTone(
         frequencyHz: Int = 440,
@@ -32,28 +47,30 @@ class StereoAudioPlayer private constructor(context: Context) {
         val clampedVolume = volume.coerceIn(0.0f, 1.0f) * maxVolume
         val balance = leftChannelBalance.coerceIn(0.0f, 1.0f)
 
-        val frames = ((sampleRate.toLong() * durationMs) / 1000).toInt().coerceAtLeast(1)
-        // Плавное нарастание и затухание по 15 мс, чтобы убрать щелчки
+        val frames = ((sampleRate.toLong() * durationMs) / 1000)
+            .toInt()
+            .coerceIn(1, MAX_BUFFER_FRAMES)
         val fadeFrames = ((sampleRate * 15L) / 1000).toInt().coerceAtMost(frames / 2)
 
-        val stereoBuffer = ShortArray(frames * 2)
         val phaseInc = (frequencyHz.toDouble() * 2.0 * Math.PI) / sampleRate.toDouble()
         val leftVol = balance * clampedVolume
         val rightVol = (1.0f - balance) * clampedVolume
 
-        for (i in 0 until frames) {
-            val fadeMultiplier = when {
-                i < fadeFrames -> i.toDouble() / fadeFrames
-                i >= frames - fadeFrames -> (frames - 1 - i).toDouble() / fadeFrames
-                else -> 1.0
+        synchronized(lock) {
+            for (i in 0 until frames) {
+                val fadeMultiplier = when {
+                    i < fadeFrames -> i.toDouble() / fadeFrames
+                    i >= frames - fadeFrames -> (frames - 1 - i).toDouble() / fadeFrames
+                    else -> 1.0
+                }
+
+                val sample = sin(i.toDouble() * phaseInc) * fadeMultiplier * 32767.0
+                reusableStereoBuffer[i * 2] = (sample * leftVol).toInt().coerceIn(-32768, 32767).toShort()
+                reusableStereoBuffer[i * 2 + 1] = (sample * rightVol).toInt().coerceIn(-32768, 32767).toShort()
             }
 
-            val sample = sin(i.toDouble() * phaseInc) * fadeMultiplier * 32767.0
-            stereoBuffer[i * 2] = (sample * leftVol).toInt().coerceIn(-32768, 32767).toShort()
-            stereoBuffer[i * 2 + 1] = (sample * rightVol).toInt().coerceIn(-32768, 32767).toShort()
+            playBufferLocked(frames * 2)
         }
-
-        playBuffer(stereoBuffer, frames)
     }
 
     fun playTrill(
@@ -68,32 +85,34 @@ class StereoAudioPlayer private constructor(context: Context) {
         val clampedVolume = volume.coerceIn(0.0f, 1.0f) * maxVolume
         val balance = leftChannelBalance.coerceIn(0.0f, 1.0f)
 
-        val frames = ((sampleRate.toLong() * durationMs) / 1000).toInt().coerceAtLeast(1)
+        val frames = ((sampleRate.toLong() * durationMs) / 1000)
+            .toInt()
+            .coerceIn(1, MAX_BUFFER_FRAMES)
         val fadeFrames = ((sampleRate * 15L) / 1000).toInt().coerceAtMost(frames / 2)
 
-        val stereoBuffer = ShortArray(frames * 2)
         val freqPhaseInc = (baseFreqHz.toDouble() * 2.0 * Math.PI) / sampleRate.toDouble()
         val modPhaseInc = (modulationFreqHz.toDouble() * 2.0 * Math.PI) / sampleRate.toDouble()
 
         val leftVol = balance * clampedVolume
         val rightVol = (1.0f - balance) * clampedVolume
 
-        for (i in 0 until frames) {
-            val fadeMultiplier = when {
-                i < fadeFrames -> i.toDouble() / fadeFrames
-                i >= frames - fadeFrames -> (frames - 1 - i).toDouble() / fadeFrames
-                else -> 1.0
+        synchronized(lock) {
+            for (i in 0 until frames) {
+                val fadeMultiplier = when {
+                    i < fadeFrames -> i.toDouble() / fadeFrames
+                    i >= frames - fadeFrames -> (frames - 1 - i).toDouble() / fadeFrames
+                    else -> 1.0
+                }
+
+                val envelope = 0.575 + 0.425 * sin(i.toDouble() * modPhaseInc)
+                val sample = sin(i.toDouble() * freqPhaseInc) * envelope * fadeMultiplier * 32767.0
+
+                reusableStereoBuffer[i * 2] = (sample * leftVol).toInt().coerceIn(-32768, 32767).toShort()
+                reusableStereoBuffer[i * 2 + 1] = (sample * rightVol).toInt().coerceIn(-32768, 32767).toShort()
             }
 
-            // Плавная модуляция амплитуды от 0.15 до 1.0 без резких ступенек
-            val envelope = 0.575 + 0.425 * sin(i.toDouble() * modPhaseInc)
-            val sample = sin(i.toDouble() * freqPhaseInc) * envelope * fadeMultiplier * 32767.0
-
-            stereoBuffer[i * 2] = (sample * leftVol).toInt().coerceIn(-32768, 32767).toShort()
-            stereoBuffer[i * 2 + 1] = (sample * rightVol).toInt().coerceIn(-32768, 32767).toShort()
+            playBufferLocked(frames * 2)
         }
-
-        playBuffer(stereoBuffer, frames)
     }
 
     fun stop() {
@@ -111,67 +130,48 @@ class StereoAudioPlayer private constructor(context: Context) {
         stop()
     }
 
-    private fun playBuffer(pcm: ShortArray, frameCount: Int) {
-        synchronized(lock) {
-            val lengthBytes = pcm.size * 2
-            val staticTrack = initAudioTrackStatic(lengthBytes.toLong()) ?: return
+    // Вызывается строго внутри synchronized(lock)
+    private fun playBufferLocked(sampleCount: Int) {
+        val lengthBytes = sampleCount * 2
+        val staticTrack = initAudioTrackStatic(lengthBytes) ?: return
 
-            staticTrack.write(pcm, 0, pcm.size)
+        staticTrack.write(reusableStereoBuffer, 0, sampleCount)
 
-            try {
-                audioTrack?.stop()
-                audioTrack?.release()
-            } catch (_: Exception) {
-            }
-
-            audioTrack = staticTrack
-            staticTrack.play()
+        try {
+            audioTrack?.stop()
+            audioTrack?.release()
+        } catch (_: Exception) {
         }
+
+        audioTrack = staticTrack
+        staticTrack.play()
     }
 
-    private fun initAudioTrackStatic(bufferSizeInBytes: Long): AudioTrack? {
-        if (bufferSizeInBytes <= 0 || bufferSizeInBytes > 10485760) return null
-
-        val format = AudioFormat.Builder()
-            .setSampleRate(sampleRate)
-            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-            .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
-            .build()
+    private fun initAudioTrackStatic(bufferSizeInBytes: Int): AudioTrack? {
+        if (bufferSizeInBytes <= 0 || bufferSizeInBytes > MAX_BUFFER_FRAMES * 4) return null
 
         return try {
-            createAudioTrack(appContext, format, bufferSizeInBytes.toInt(), AudioTrack.MODE_STATIC)
+            val builder = AudioTrack.Builder()
+                .setAudioAttributes(audioAttributes)
+                .setAudioFormat(audioFormat)
+                .setBufferSizeInBytes(bufferSizeInBytes)
+                .setTransferMode(AudioTrack.MODE_STATIC)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                builder.setContext(appContext)
+            }
+
+            builder.build()
         } catch (e: IllegalArgumentException) {
             Log.w(TAG, "initAudioTrackStatic: buffer size $bufferSizeInBytes rejected", e)
             null
         }
     }
 
-    private fun createAudioTrack(
-        context: Context,
-        format: AudioFormat,
-        bufferSizeInBytes: Int,
-        mode: Int
-    ): AudioTrack {
-        val audioAttributes = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_MEDIA)
-            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-            .build()
-
-        val builder = AudioTrack.Builder()
-            .setAudioAttributes(audioAttributes)
-            .setAudioFormat(format)
-            .setBufferSizeInBytes(bufferSizeInBytes)
-            .setTransferMode(mode)
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            builder.setContext(context)
-        }
-
-        return builder.build()
-    }
-
     companion object {
         private const val DEFAULT_SAMPLE_RATE = 48000
+        // Максимум 2 секунды на один сигнал (48000 * 2)
+        private const val MAX_BUFFER_FRAMES = DEFAULT_SAMPLE_RATE * 2
         private const val TAG = "StereoAudioPlayer"
 
         @Volatile
