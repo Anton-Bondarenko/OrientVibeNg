@@ -83,6 +83,8 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
 
     private var _calibration: MapCalibration? = null
     private var arrivedPlayedForControlNum: Int = -1
+    private var lastAudioPlayTimestampMs: Long = 0L
+    private var lastPlayedSignalType: AudioSignalType = AudioSignalType.NONE
     private var _firstGps: GpsCoordinate? = null
     private var accuracyLevelTransitionCount = 0
 
@@ -488,7 +490,8 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
                 Log.d("AudioNav", "▶ ARRIVED trill for CP #$currentCpNum")
                 _audioPlayer.playTrill(1300, 15.0f, 600L, 1.0f, audioState.leftBalance)
                 arrivedPlayedForControlNum = currentCpNum
-                updatedState.lastAudioPlayMs = System.currentTimeMillis()
+                lastAudioPlayTimestampMs = System.currentTimeMillis()
+                lastPlayedSignalType = AudioSignalType.ARRIVED
             }
             updatedState.audioSignalState = AudioSignalState(type = AudioSignalType.NONE)
             updatedState.approachControlNum = 0
@@ -497,57 +500,51 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             return
         }
 
-        // Сохраняем новый audioState, чтобы updatedState.canPlayAudioSignal() видел актуальный intervalMs
         updatedState.audioSignalState = audioState
 
         val now = System.currentTimeMillis()
-        val canPlayByTimer = (now - updatedState.lastAudioPlayMs) >= audioState.intervalMs
-        val shouldPlay = audioState.type != AudioSignalType.NONE &&
-                (audioState.type != prevSignal || canPlayByTimer)
+        val elapsedMs = now - lastAudioPlayTimestampMs
+        val canPlayByTimer = elapsedMs >= audioState.intervalMs
+        val isSignalChanged = audioState.type != lastPlayedSignalType
+
+        // Сигналы приближения (APPROACH) срабатывают сразу при входе в зону 100м/50м,
+        // а сигналы отклонения (DEVIATION) — строго по таймеру intervalMs
+        val shouldPlay = when (audioState.type) {
+            AudioSignalType.NONE -> false
+            AudioSignalType.APPROACH_SINGLE, AudioSignalType.APPROACH_DOUBLE -> true
+            else -> canPlayByTimer || (isSignalChanged && lastPlayedSignalType != AudioSignalType.ARRIVED && elapsedMs >= 3000L)
+        }
 
         if (shouldPlay) {
             Log.d(
                 "AudioNav",
                 String.format(
                     Locale.US,
-                    "type=%s | dist=%.1fm | dev=%.1f° | pause=%dms (elapsed=%dms)",
+                    "[PLAY] type=%s | dist=%.1fm | dev=%.1f° | pause=%dms (elapsed=%dms)",
                     audioState.type,
                     audioState.distanceToTargetMeters,
                     audioState.deviationDeg,
                     audioState.intervalMs,
-                    System.currentTimeMillis() - updatedState.lastAudioPlayMs
+                    elapsedMs
                 )
             )
             when (audioState.type) {
                 AudioSignalType.APPROACH_SINGLE, AudioSignalType.APPROACH_DOUBLE -> {
-                    val distKey =
-                        if (audioState.type == AudioSignalType.APPROACH_SINGLE) 100 else 50
+                    val distKey = if (audioState.type == AudioSignalType.APPROACH_SINGLE) 100 else 50
                     if (updatedState.approachControlNum != updatedState.currentControl.num || updatedState.approachDistKey != distKey) {
                         playDoubleBeep(audioState)
                         updatedState.approachControlNum = updatedState.currentControl.num
                         updatedState.approachDistKey = distKey
-                        updatedState.lastAudioPlayMs = now
+                        lastAudioPlayTimestampMs = now
+                        lastPlayedSignalType = audioState.type
                     }
                 }
 
-                AudioSignalType.ARRIVED -> {
-                    _audioPlayer.playTrill(600, 8.0f, 500L, 1.0f, audioState.leftBalance)
-                    updatedState.audioSignalState = AudioSignalState(type = AudioSignalType.NONE)
-                    updatedState.approachControlNum = 0
-                    updatedState.approachDistKey = 0
-                    updatedState.lastAudioPlayMs = now
-                }
-
                 AudioSignalType.DEVIATION -> {
-                    val durationMs =
-                        (200.0 + (5.0 * abs(audioState.deviationDeg))).toLong().coerceAtMost(600L)
-                    _audioPlayer.playTone(
-                        audioState.frequencyHz,
-                        durationMs,
-                        1.0f,
-                        audioState.leftBalance
-                    )
-                    updatedState.lastAudioPlayMs = now
+                    val durationMs = (200.0 + (5.0 * abs(audioState.deviationDeg))).toLong().coerceAtMost(600L)
+                    _audioPlayer.playTone(audioState.frequencyHz, durationMs, 1.0f, audioState.leftBalance)
+                    lastAudioPlayTimestampMs = now
+                    lastPlayedSignalType = AudioSignalType.DEVIATION
                 }
 
                 else -> {}
@@ -621,6 +618,9 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         _telemetryPoints.value = emptyList()
         _autoCalibrationsList.value = emptyList()
         _calibrationVersion.value = _calibrationVersion.value + 1
+        arrivedPlayedForControlNum = -1
+        lastAudioPlayTimestampMs = 0L
+        lastPlayedSignalType = AudioSignalType.NONE
     }
 
     private fun playDoubleBeep(audioState: AudioSignalState) {
