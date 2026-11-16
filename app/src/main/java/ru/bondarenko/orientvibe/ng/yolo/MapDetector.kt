@@ -67,7 +67,9 @@ class MapDetector(private val context: Context) {
     }
 
     suspend fun init(): Boolean = withContext(Dispatchers.IO) {
-        var primaryOk = try {
+        if (initialized && detector != null) return@withContext true
+
+        val primaryOk = try {
             val det = OnnxObjectDetector(context)
             det.setProgressListener(object : DetectionProgressListener {
                 override fun onProgressUpdate(current: Int, total: Int, message: String) {
@@ -105,15 +107,19 @@ class MapDetector(private val context: Context) {
     }
 
     suspend fun detect(bitmap: Bitmap): MapDetectionResult = withContext(Dispatchers.IO) {
+        if (!initialized || detector == null) {
+            init()
+        }
+
         val activeDetector = detector
         if (activeDetector == null) {
-            Log.w(tag, "detect() called before init()")
-            return@withContext MapDetectionResult(emptyList(), emptyList())
+            Log.w(tag, "detect() failed: detector is null")
+            return@withContext MapDetectionResult(emptyList<BoundingBox>(), emptyList<BoundingBox>())
         }
 
         try {
             emitProgress(1, "YOLO детекция...")
-            val allDetections = activeDetector.detect(bitmap)
+            val allDetections: List<DetectionResult> = activeDetector.detect(bitmap)
 
             emitProgress(2, "Разделение объектов...")
             val controlsBoxes = ArrayList<BoundingBox>()
@@ -129,8 +135,8 @@ class MapDetector(private val context: Context) {
                 }
             }
 
-            val dedupedControls = dedupOverlappingBoxes(controlsBoxes)
-            val dedupedNumbers = dedupOverlappingBoxes(numbersBoxes)
+            val dedupedControls: List<BoundingBox> = dedupOverlappingBoxes(controlsBoxes)
+            val dedupedNumbers: List<BoundingBox> = dedupOverlappingBoxes(numbersBoxes)
 
             Log.d(
                 tag,
@@ -148,14 +154,14 @@ class MapDetector(private val context: Context) {
                 )
             }
 
-            val filteredControls = if (skipControlFiltering) {
+            val filteredControls: List<BoundingBox> = if (skipControlFiltering) {
                 Log.d(tag, "  [DIAG] Skipping control filtering — all ${dedupedControls.size} boxes passed")
                 dedupedControls
             } else {
                 filterControlsByMedianArea(dedupedControls)
             }
 
-            val filteredNumbers = if (skipNumberFiltering) {
+            val filteredNumbers: List<BoundingBox> = if (skipNumberFiltering) {
                 Log.d(tag, "  [DIAG] Skipping number filtering — all ${dedupedNumbers.size} boxes passed")
                 dedupedNumbers
             } else {
@@ -180,17 +186,17 @@ class MapDetector(private val context: Context) {
             emitProgress(3, "Распознавание номеров...")
             coroutineContext.ensureActive()
 
-            val digitResult = if (detectorDigits != null && filteredNumbers.isNotEmpty()) {
+            val digitResult: DigitAssemblyResult = if (detectorDigits != null && filteredNumbers.isNotEmpty()) {
                 detectAndAssembleNumbers(bitmap, filteredNumbers)
             } else {
-                DigitAssemblyResult(filteredNumbers, filteredNumbers.map { emptyList() })
+                DigitAssemblyResult(filteredNumbers, filteredNumbers.map { emptyList<Pair<Float, Float>>() })
             }
 
-            val finalNumbers = digitResult.numbers.ifEmpty { filteredNumbers }
+            val finalNumbers: List<BoundingBox> = digitResult.numbers.ifEmpty { filteredNumbers }
 
             emitProgress(3, "Привязка номеров...")
             coroutineContext.ensureActive()
-            val matchedControls = attachNumbersBySquareSearch(filteredControls, finalNumbers)
+            val matchedControls: List<BoundingBox> = attachNumbersBySquareSearch(filteredControls, finalNumbers)
 
             emitProgress(4, "Почти готово...")
             Log.d(tag, "=== FINAL NUMBER BOX TRACE ===")
@@ -201,7 +207,9 @@ class MapDetector(private val context: Context) {
                     it === rawBox || (it.centerX == rawBox.centerX && it.centerY == rawBox.centerY)
                 }
                 val hasNumber = matchedNumBox?.number != null
-                val attachedCpNum = matchedControls.firstOrNull { it.number != null }?.number
+                val attachedCpNum = matchedControls.firstOrNull {
+                    it.number != null && it.number == matchedNumBox?.number
+                }?.number
 
                 Log.d(
                     tag,
@@ -225,7 +233,15 @@ class MapDetector(private val context: Context) {
         } catch (e: Exception) {
             if (e is java.util.concurrent.CancellationException) throw e
             Log.e(tag, "Detection error", e)
-            MapDetectionResult(emptyList(), emptyList())
+            MapDetectionResult(emptyList<BoundingBox>(), emptyList<BoundingBox>())
+        } finally {
+            // Выгружаем обе ONNX-модели из нативной памяти сразу после распознавания карты
+            try {
+                close()
+                Log.d(tag, "ONNX models unloaded after detection to free native memory")
+            } catch (e: Exception) {
+                Log.w(tag, "Error unloading ONNX models after detection", e)
+            }
         }
     }
 
@@ -247,7 +263,6 @@ class MapDetector(private val context: Context) {
         val rawHalfH = (box.bottom - box.top) / 2.0f
         val halfWNorm = rawHalfW / sizePx.toFloat()
         val halfHNorm = rawHalfH / sizePx.toFloat()
-
         Log.d(
             tag,
             String.format(
@@ -273,11 +288,10 @@ class MapDetector(private val context: Context) {
         bitmap: Bitmap,
         numbersBoxes: List<BoundingBox>
     ): DigitAssemblyResult {
-        val results = ArrayList<BoundingBox>()
-        val digitsPerNum = ArrayList<List<Pair<Float, Float>>>()
-        for (numberBox in numbersBoxes) {
+        val results = ArrayList<BoundingBox>(numbersBoxes.size)
+        val digitsPerNum = ArrayList<List<Pair<Float, Float>>>(numbersBoxes.size)
+        numbersBoxes.forEachIndexed { idx, numberBox ->
             coroutineContext.ensureActive()
-            val idx = numbersBoxes.indexOf(numberBox)
             Log.d(
                 tag,
                 String.format(
@@ -324,15 +338,15 @@ class MapDetector(private val context: Context) {
             val roiY2 = (cPx.y.toDouble() + (halfH * DIGIT_ROI_EXPANSION_FACTOR)).coerceAtMost(bitmap.height.toDouble()).toInt()
             if (roiX2 - roiX1 < 8 || roiY2 - roiY1 < 8) {
                 Log.w(tag, "  >>> SKIP ROI too small [NUM#$idx]: ${roiX2 - roiX1}x${roiY2 - roiY1}")
-                digitsPerNum.add(emptyList())
-                continue
+                digitsPerNum.add(emptyList<Pair<Float, Float>>())
+                return@forEachIndexed
             }
             val cropW = min(max(roiX2 - roiX1, MIN_ROI_WIDTH), bitmap.width - roiX1)
             val cropH = min(max(roiY2 - roiY1, MIN_ROI_HEIGHT), bitmap.height - roiY1)
             if (cropW <= 0 || cropH <= 0) {
                 Log.w(tag, "  >>> SKIP crop dims invalid: w=$cropW h=$cropH")
-                digitsPerNum.add(emptyList())
-                continue
+                digitsPerNum.add(emptyList<Pair<Float, Float>>())
+                return@forEachIndexed
             }
             Log.d(tag, "  finalCrop=[$roiX1,$roiY1] ${cropW}x$cropH")
             val roiBitmap = Bitmap.createBitmap(bitmap, roiX1, roiY1, cropW, cropH)
@@ -340,14 +354,14 @@ class MapDetector(private val context: Context) {
                 val digitDetector = detectorDigits
                 if (digitDetector == null) {
                     Log.w(tag, "  >>> SKIP digitDetector is null")
-                    digitsPerNum.add(emptyList())
-                    continue
+                    digitsPerNum.add(emptyList<Pair<Float, Float>>())
+                    return@forEachIndexed
                 }
-                val rawDigits = digitDetector.detect(roiBitmap)
+                val rawDigits: List<DetectionResult> = digitDetector.detect(roiBitmap)
                 if (rawDigits.isEmpty()) {
                     Log.d(tag, "  rawDigits=0 — no detections")
-                    digitsPerNum.add(emptyList())
-                    continue
+                    digitsPerNum.add(emptyList<Pair<Float, Float>>())
+                    return@forEachIndexed
                 }
                 Log.d(tag, "  rawDigits=${rawDigits.size} on ${roiBitmap.width}x${roiBitmap.height}")
                 val validDigits = ArrayList<Pair<BoundingBox, Int>>()
@@ -389,10 +403,10 @@ class MapDetector(private val context: Context) {
                 Log.d(tag, "  validDigits=${validDigits.size}$sb")
                 if (validDigits.isEmpty()) {
                     Log.w(tag, "  >>> SKIP no valid digits found — all ${rawDigits.size} raw:$sb")
-                    digitsPerNum.add(emptyList())
-                    continue
+                    digitsPerNum.add(emptyList<Pair<Float, Float>>())
+                    return@forEachIndexed
                 }
-                val sortedDigits = validDigits.sortedBy { it.first.centerX }
+                val sortedDigits: List<Pair<BoundingBox, Int>> = validDigits.sortedBy { it.first.centerX }
                 val traceStr = sortedDigits.joinToString(", ") { (b, digit) ->
                     String.format(
                         Locale.ROOT,
@@ -436,7 +450,7 @@ class MapDetector(private val context: Context) {
             }
         }
         while (digitsPerNum.size < results.size) {
-            digitsPerNum.add(emptyList())
+            digitsPerNum.add(emptyList<Pair<Float, Float>>())
         }
         val withNum = results.count { it.number != null }
         Log.d(tag, "OCR SUMMARY: $withNum/${results.size} numbers recognized:")
@@ -472,10 +486,10 @@ class MapDetector(private val context: Context) {
     }
     private fun filterControlsByMedianArea(boxes: List<BoundingBox>): List<BoundingBox> {
         if (boxes.size <= 2) return boxes
-        val areas = boxes.map { (it.width * it.height).toFloat() }
+        val areas: List<Float> = boxes.map { (it.width * it.height).toFloat() }
         val med = median(areas) ?: return boxes
         val minArea = 0.8f * med
-        val kept = boxes.filter { box ->
+        val kept: List<BoundingBox> = boxes.filter { box ->
             val area = box.width * box.height
             if (area < minArea) {
                 Log.d(
@@ -518,9 +532,9 @@ class MapDetector(private val context: Context) {
     }
     private fun filterNumbersByMedianHeight(boxes: List<BoundingBox>): List<BoundingBox> {
         if (boxes.size <= 2) return boxes
-        val heights = boxes.map { it.height.toFloat() }
+        val heights: List<Float> = boxes.map { it.height.toFloat() }
         val med = median(heights) ?: return boxes
-        val kept = boxes.filter { box ->
+        val kept: List<BoundingBox> = boxes.filter { box ->
             val diff = abs(box.height - med.toDouble()) / med.toDouble()
             val keep = diff < 0.25
             Log.d(
@@ -535,27 +549,16 @@ class MapDetector(private val context: Context) {
         }
         return kept.ifEmpty { boxes.take(1) }
     }
-    private fun makeEmptyBox(original: BoundingBox): BoundingBox {
-        return BoundingBox(
-            centerX = original.centerX,
-            centerY = original.centerY,
-            width = original.width,
-            height = original.height,
-            confidence = original.confidence,
-            label = "number",
-            number = null
-        )
-    }
     private fun attachNumbersBySquareSearch(
         controls: List<BoundingBox>,
         numbers: List<BoundingBox>
     ): List<BoundingBox> {
         if (controls.isEmpty() || numbers.isEmpty()) return controls
-        val resultControls = controls.map { it.copy() }
+        val resultControls: List<BoundingBox> = controls.map { it.copy() }
         val attachedNumbers = LinkedHashSet<Int>()
         resultControls.forEachIndexed { cpIdx, cp ->
-            val halfWidth = cp.width * (SEARCH_BOX_SIZE_MUL / 2.0) // 3.0 * width
-            val halfHeight = cp.height * (SEARCH_BOX_SIZE_MUL / 2.0) // 3.0 * height
+            val halfWidth = cp.width * (SEARCH_BOX_SIZE_MUL / 2.0)
+            val halfHeight = cp.height * (SEARCH_BOX_SIZE_MUL / 2.0)
             val candidates = numbers.withIndex().filter { (_, nb) ->
                 abs(nb.centerX - cp.centerX) < halfWidth && abs(nb.centerY - cp.centerY) < halfHeight
             }
@@ -579,7 +582,7 @@ class MapDetector(private val context: Context) {
                     val dxRel = abs(numBox.centerX - cp.centerX)
                     val dyRel = abs(numBox.centerY - cp.centerY)
                     val distRel = sqrt((dxRel * dxRel) + (dyRel * dyRel))
-                    val maxDistRel = (SEARCH_BOX_SIZE_MUL / 2.0) * cp.height // 3.0 * height
+                    val maxDistRel = (SEARCH_BOX_SIZE_MUL / 2.0) * cp.height
                     if (distRel > maxDistRel) {
                         Log.d(
                             tag,
@@ -663,8 +666,8 @@ class MapDetector(private val context: Context) {
                 if (changed) break
             }
         }
-        val keptBoxes = boxes.filterIndexed { index, _ -> kept[index] }
-        val removedBoxes = boxes.mapIndexedNotNull { index, box ->
+        val keptBoxes: List<BoundingBox> = boxes.filterIndexed { index, _ -> kept[index] }
+        val removedBoxes: List<Pair<Int, BoundingBox>> = boxes.mapIndexedNotNull { index, box ->
             if (!kept[index]) index to box else null
         }
         val removedLog = if (removedBoxes.isEmpty()) {
@@ -694,9 +697,15 @@ class MapDetector(private val context: Context) {
     }
     @Throws(OrtException::class)
     fun close() {
-        detector?.close()
+        try {
+            detector?.close()
+        } catch (_: Exception) {
+        }
         detector = null
-        detectorDigits?.close()
+        try {
+            detectorDigits?.close()
+        } catch (_: Exception) {
+        }
         detectorDigits = null
         initialized = false
     }

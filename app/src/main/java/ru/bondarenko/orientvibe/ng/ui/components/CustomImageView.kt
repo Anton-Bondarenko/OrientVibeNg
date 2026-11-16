@@ -74,6 +74,16 @@ open class CustomImageView(context: Context) : View(context) {
     private val scaleMax = 10.0
     private val imageMatrix = Matrix()
     private val inverseMatrix = Matrix()
+    private val tempPointBuf = FloatArray(2)
+    private var isMatrixPreparedForFrame = false
+
+    init {
+        routeOverlay.sourceToViewCoord = { x, y -> this.sourceToViewCoord(x, y) }
+        routeOverlay.viewToSourceCoord = { x, y -> this.viewToSourceCoord(x, y) }
+        controlPointOverlay.sourceToViewCoord = { x, y -> this.sourceToViewCoord(x, y) }
+        trackOverlay.sourceToViewCoord = { x, y -> this.sourceToViewCoord(x, y) }
+        trackOverlay.sourceToViewCoordFast = { x, y, out -> this.sourceToViewCoordFast(x, y, out) }
+    }
 
     var mapRotation = 0.0
         set(value) {
@@ -156,15 +166,34 @@ open class CustomImageView(context: Context) : View(context) {
         imageMatrix.invert(inverseMatrix)
     }
 
-    fun sourceToViewCoord(x: Double, y: Double): PointF? {
-        val b = bitmap ?: return null
-        if (b.width <= 0 || b.height <= 0) return null
-
+    fun prepareImageMatrixForFrame() {
         computeImageMatrix()
-        val pixels = MapGeometry.convertToPixels(x, y, b.width.toDouble(), b.height.toDouble())
-        val pts = floatArrayOf(pixels.x, pixels.y)
-        imageMatrix.mapPoints(pts)
-        return PointF(pts[0], pts[1])
+        isMatrixPreparedForFrame = true
+    }
+
+    /** Нулевые аллокации: пишет экранные координаты в outPoint без пересчёта матрицы */
+    fun sourceToViewCoordFast(x: Double, y: Double, outPoint: PointF): Boolean {
+        val b = bitmap ?: return false
+        val w = b.width.toDouble()
+        val h = b.height.toDouble()
+        if (w <= 0.0 || h <= 0.0) return false
+
+        if (!isMatrixPreparedForFrame) {
+            computeImageMatrix()
+        }
+
+        val size = if (w < h) w else h
+        tempPointBuf[0] = ((x * size) + (w - size) / 2.0).toFloat()
+        tempPointBuf[1] = ((y * size) + (h - size) / 2.0).toFloat()
+        imageMatrix.mapPoints(tempPointBuf)
+        outPoint.x = tempPointBuf[0]
+        outPoint.y = tempPointBuf[1]
+        return true
+    }
+
+    fun sourceToViewCoord(x: Double, y: Double): PointF? {
+        val res = PointF()
+        return if (sourceToViewCoordFast(x, y, res)) res else null
     }
 
     fun viewToSourceCoord(x: Double, y: Double): PointF {
@@ -267,7 +296,7 @@ open class CustomImageView(context: Context) : View(context) {
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!isInteractionEnabled) return false
-        updateOverlayCoords()
+//        updateOverlayCoords()
 
         if (northIndicator.handleTouchEvent(event)) {
             invalidate()
@@ -282,23 +311,7 @@ open class CustomImageView(context: Context) : View(context) {
         return gestureDetector.onTouchEvent(event) || handledScale
     }
 
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        val b = bitmap ?: return
-        if (b.width <= 0 || b.height <= 0) return
-        if (mapRotation != 0.0 && !mapTransformApplied) {
-            applyMapTransform()
-        }
-        updateOverlayCoords()
-        computeImageMatrix()
-        val saved = canvas.save()
-        canvas.concat(imageMatrix)
-        if (!b.isRecycled) {
-            canvas.drawBitmap(b, 0.0f, 0.0f, null)
-        } else {
-            bitmap = null
-        }
-        canvas.restoreToCount(saved)
+    protected open fun drawOverlays(canvas: Canvas, b: Bitmap) {
         val hasOverlays = controlPointOverlay.controlsBoundingBoxes.isNotEmpty() ||
                 routeOverlay.startPoint != null || routeOverlay.finishPoint != null ||
                 trackOverlay.trackPoints.isNotEmpty() || trackOverlay.currentFix != null
@@ -311,5 +324,26 @@ open class CustomImageView(context: Context) : View(context) {
             northIndicator.draw(canvas)
             northIndicator.angle = savedAngle
         }
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val b = bitmap ?: return
+        if (b.width <= 0 || b.height <= 0) return
+        if (mapRotation != 0.0 && !mapTransformApplied) {
+            applyMapTransform()
+        }
+        prepareImageMatrixForFrame()
+        val saved = canvas.save()
+        canvas.concat(imageMatrix)
+        if (!b.isRecycled) {
+            canvas.drawBitmap(b, 0.0f, 0.0f, null)
+        } else {
+            bitmap = null
+        }
+        canvas.restoreToCount(saved)
+
+        drawOverlays(canvas, b)
+        isMatrixPreparedForFrame = false
     }
 }

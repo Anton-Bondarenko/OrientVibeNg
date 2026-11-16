@@ -64,14 +64,20 @@ class NavViewModel(context: Context) : ViewModel() {
         }
 
         // 2. Отдельно слушаем обновления списка точек из TrackRecorder
+        // Используем version-флаг для подавления избыточных StateFlow emissions:
+        // emitter только когда recorderState.version изменился (реальное обновление трека).
         viewModelScope.launch {
             trackRecorder.trackState.collect { recorderState ->
+                val state = _gpsState.value
+                // trackPoints всегда одна и та же view-ссылка (_readOnlyPointsView),
+                // so copy() только когда totalDistance или isTracking реально изменились.
+                if (state.totalDistance == recorderState.totalDistance && state.isTracking == recorderState.isTracking) return@collect
                 val derivedMapScaleX = calibration?.scaleMetersPerMapX ?: 0.0
                 val derivedMapScaleY = calibration?.scaleMetersPerMapY ?: 0.0
 
-                _gpsState.value = _gpsState.value.copy(
+                _gpsState.value = state.copy(
                     trackPoints = recorderState.trackPoints,
-                    totalDistance = if (recorderState.isTracking) recorderState.totalDistance else _gpsState.value.totalDistance,
+                    totalDistance = if (recorderState.isTracking) recorderState.totalDistance else state.totalDistance,
                     isTracking = recorderState.isTracking,
                     mapScaleX = if (derivedMapScaleX > 0.0) derivedMapScaleX else null,
                     mapScaleY = if (derivedMapScaleY > 0.0) derivedMapScaleY else null

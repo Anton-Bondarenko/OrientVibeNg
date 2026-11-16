@@ -281,17 +281,30 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
 
         when (currentLevel) {
             AccuracyLevel.HIGH_ACCURACY -> {
-                accuracyLevelTransitionCount++
-                if (accuracyLevelTransitionCount == 1) {
-                    showMoveReadyAlert()
-                    _firstGps = fix?.coordinate
-                }
                 if (fix != null) {
-                    if (_calibration == null) {
-                        onNoBind(fix)
+                    // 1. Сразу после загрузки карты и получения хорошего GPS включаем запись трека
+                    // (даже если детекция YOLO ещё идёт)
+                    navVm?.enableTrackingWithoutClearing()
+
+                    // 2. Фиксируем самую первую точную GPS-координату после загрузки карты
+                    if (_firstGps == null) {
+                        _firstGps = fix.coordinate
+                        Log.d(tag, "Captured first GPS point after map load: $_firstGps")
                     }
-                    // TrackRecorder записывает точку через NavViewModel.init GPS-коллектор
-                    onMove(fix)
+
+                    accuracyLevelTransitionCount++
+                    if (accuracyLevelTransitionCount == 1) {
+                        showMoveReadyAlert()
+                    }
+
+                    // 3. Привязку КП #1 и навигацию выполняем только когда детекция завершена
+                    if (!_mapState.value.isProcessing) {
+                        if (_calibration == null) {
+                            onNoBind(fix)
+                        } else {
+                            onMove(fix)
+                        }
+                    }
                 }
             }
 
@@ -310,7 +323,9 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
                 MoveReadyAlert(active = true, remainingMs = 5000L, elapsedMs = 0L)
             var elapsed = 0L
             while (elapsed < 5000L && _moveReadyAlert.value.active) {
-                bindGpsToCurrentControl()
+                if (!_mapState.value.isProcessing && _calibration == null) {
+                    navVm?.gpsState?.value?.currentFix?.let { onNoBind(it) }
+                }
                 delay(100L)
                 elapsed += 100L
                 _moveReadyAlert.value = MoveReadyAlert(
@@ -337,7 +352,6 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
 
     private fun applyDetectionResult(result: MapDetectionResult?, taskVersion: Int) {
         val currentHandle = mapDetector.currentTaskRef.get()
-        // Двойная защита: применяем только если версия совпадает с текущей активной задачей
         if (currentHandle != null && currentHandle.version == taskVersion && !currentHandle.job.isCancelled && result != null) {
             _mapState.value = _mapState.value.copy(
                 controlsBoundingBoxes = result.controlsBoundingBoxes,
@@ -345,6 +359,23 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
                 isProcessing = false,
                 progressMessage = null
             )
+
+            // Детекция завершена: привязываем КП #1 к самой первой точке трека после загрузки карты
+            if (_calibration == null) {
+                val navViewModel = navVm
+                val startCoord = _firstGps
+                    ?: navViewModel?.trackData?.trackPoints?.firstOrNull()?.coordinate
+                    ?: navViewModel?.gpsState?.value?.currentFix?.coordinate
+
+                if (startCoord != null && navViewModel != null) {
+                    val bindResult = bindGpsToCp(startCoord, 1)
+                    if (bindResult != null) {
+                        applyBind(bindResult, navViewModel)
+                        setCurrentControl(2)
+                        Log.d(tag, "Post-detection auto-bind CP #1 to start point: $startCoord")
+                    }
+                }
+            }
         }
     }
 
@@ -414,8 +445,11 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             prevControl = ms.prevControl.copy()
         )
         _autoMoveManager.doMove(_mapState.value, updatedState, mapCalibration, fix)
-        val list = _autoMoveManager.autoCalibrations
-        _autoCalibrationsList.value = list
+        // Only emit autoCalibrations when doMove actually produced a new calibration
+        // (avoids unnecessary ArrayList copy + StateFlow emission on every onMove)
+        if (updatedState.newMapCalibration != null) {
+            _autoCalibrationsList.value = _autoMoveManager.autoCalibrations
+        }
 
         val navData = _calibration?.let {
             AutoMoveManager.analyzeNavigation(
@@ -516,8 +550,12 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
     private fun launchDetectionWithBitmap(bitmap: Bitmap?) {
         if (bitmap == null) return
 
-        // 1. Сначала регистрируем новую задачу — это автоматически вызовет .cancel() у предыдущей!
         val task = mapDetector.launchDetection()
+
+        // Сбрасываем предыдущую привязку и стартовую точку для новой карты
+        _calibration = null
+        _firstGps = null
+        accuracyLevelTransitionCount = 0
 
         _mapState.value = AutoMapState(
             bitmap = bitmap,

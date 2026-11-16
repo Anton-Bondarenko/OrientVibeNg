@@ -18,6 +18,7 @@ import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import kotlin.collections.isNotEmpty
 import kotlin.coroutines.coroutineContext
 import kotlin.math.ceil
 import kotlin.math.max
@@ -44,9 +45,12 @@ class OnnxObjectDetector(private val context: Context) {
     private var inputImageWidth: Int = MapDetector.SLICE_SIZE
     private var inputImageHeight: Int = MapDetector.SLICE_SIZE
 
-    private val labels: List<String> = listOf("control_point")
     private val nmsIouThreshold: Float = 0.45f
     private val nmsMergingIouThreshold: Float = 0.7f
+
+    // Переиспользуемые буферы для препроцессинга тайлов (освобождаются в close())
+    private var reusablePixels: IntArray? = null
+    private var reusableInputBuffer: FloatBuffer? = null
 
     fun setProgressListener(listener: DetectionProgressListener?) {
         this.progressListener = listener
@@ -84,7 +88,7 @@ class OnnxObjectDetector(private val context: Context) {
     }
 
     private fun copyAssetToTempFile(assetPath: String): File {
-        val tempFile = File(context.cacheDir, "temp_model.onnx")
+        val tempFile = File(context.cacheDir, "temp_model_${System.nanoTime()}.onnx")
         context.assets.open(assetPath).use { inputStream ->
             FileOutputStream(tempFile).use { outputStream ->
                 inputStream.copyTo(outputStream)
@@ -96,11 +100,11 @@ class OnnxObjectDetector(private val context: Context) {
     suspend fun detect(bitmap: Bitmap): List<DetectionResult> = withContext(Dispatchers.Default) {
         val session = ortSession ?: run {
             Log.e(tag, "ONNX session not initialized")
-            return@withContext emptyList()
+            return@withContext emptyList<DetectionResult>()
         }
         if (bitmap.isRecycled) {
             Log.w(tag, "Detect called with recycled bitmap")
-            return@withContext emptyList()
+            return@withContext emptyList<DetectionResult>()
         }
 
         try {
@@ -108,7 +112,7 @@ class OnnxObjectDetector(private val context: Context) {
         } catch (e: Exception) {
             if (e is java.util.concurrent.CancellationException) throw e
             Log.e(tag, "Error during detection", e)
-            emptyList()
+            emptyList<DetectionResult>()
         }
     }
 
@@ -156,7 +160,7 @@ class OnnxObjectDetector(private val context: Context) {
 
                 val sliceBitmap = Bitmap.createBitmap(original, sliceX1, sliceY1, sliceWidth, sliceHeight)
                 try {
-                    val sliceDetections = detectSingleImage(sliceBitmap, session)
+                    val sliceDetections: List<DetectionResult> = detectSingleImage(sliceBitmap, session)
                     for (det in sliceDetections) {
                         val box = det.boundingBox
                         val mappedBox = RectF(
@@ -190,17 +194,16 @@ class OnnxObjectDetector(private val context: Context) {
             }
         }
 
-        val afterNms = applyNMSByArea(allDetections)
+        val afterNms: List<DetectionResult> = applyNMSByArea(allDetections)
         return applyNMSWithMerging(afterNms)
     }
 
     private fun applyNMSByArea(results: List<DetectionResult>): List<DetectionResult> {
         if (results.isEmpty()) return results
-        // Сортируем по убыванию площади рамки, чтобы при пересечении тайлов выживал целый объект, а не обрезанный
-        val sorted = results.sortedByDescending {
+        val sorted: List<DetectionResult> = results.sortedByDescending {
             it.boundingBox.width() * it.boundingBox.height()
         }
-        val selected = ArrayList<DetectionResult>()
+        val selected = ArrayList<DetectionResult>(sorted.size)
 
         for (result in sorted) {
             var keep = true
@@ -223,9 +226,11 @@ class OnnxObjectDetector(private val context: Context) {
         bitmap: Bitmap,
         session: OrtSession
     ): List<DetectionResult> {
+        var inputTensor: OnnxTensor? = null
+        var outputs: OrtSession.Result? = null
         try {
             val inputBuffer = preprocessImage(bitmap)
-            val inputName = session.inputNames.firstOrNull() ?: return emptyList()
+            val inputName = session.inputNames.firstOrNull() ?: return emptyList<DetectionResult>()
             val inputInfo = session.inputInfo[inputName]
 
             val modelInputShape: LongArray? = try {
@@ -234,8 +239,6 @@ class OnnxObjectDetector(private val context: Context) {
                 Log.w(tag, "Could not get input shape from info, using default", e)
                 longArrayOf(1L, 3L, inputImageHeight.toLong(), inputImageWidth.toLong())
             }
-
-            Log.d(tag, "Input info shape: ${modelInputShape?.contentToString()}")
 
             val expectedSize = if (modelInputShape != null) {
                 if (modelInputShape.isEmpty()) {
@@ -246,7 +249,6 @@ class OnnxObjectDetector(private val context: Context) {
                 inputImageHeight * 3 * inputImageWidth
             }
 
-            Log.d(tag, "Expected size from model: $expectedSize, Input buffer capacity: ${inputBuffer.capacity()}")
             inputBuffer.rewind()
 
             if (inputBuffer.capacity() != expectedSize) {
@@ -255,27 +257,24 @@ class OnnxObjectDetector(private val context: Context) {
             }
 
             val inputShape = modelInputShape ?: longArrayOf(1L, 3L, inputImageHeight.toLong(), inputImageWidth.toLong())
-            val inputTensor = OnnxTensor.createTensor(ortEnvironment, inputBuffer, inputShape)
-            val outputs = session.run(mapOf(inputName to inputTensor))
+            inputTensor = OnnxTensor.createTensor(ortEnvironment, inputBuffer, inputShape)
+            outputs = session.run(mapOf(inputName to inputTensor))
             val output = outputs.get(0)
-
-            val outputInfo = output.info
-            Log.d(tag, "Output info: $outputInfo")
             val outputValue = output.value
-
             val outputBuffer: FloatBuffer = when (outputValue) {
                 is FloatBuffer -> outputValue
                 is ByteBuffer -> {
-                    val fb = ByteBuffer.allocateDirect(outputValue.remaining() / 4)
+                    val fb = ByteBuffer.allocateDirect(outputValue.remaining())
+                        .order(ByteOrder.nativeOrder())
+                        .asFloatBuffer()
                     outputValue.rewind()
                     while (outputValue.hasRemaining()) {
-                        fb.putFloat(outputValue.getFloat())
+                        fb.put(outputValue.getFloat())
                     }
                     fb.rewind()
-                    fb.asFloatBuffer()
+                    fb
                 }
                 is Array<*> -> {
-                    Log.d(tag, "Output is array type: ${outputValue.javaClass}")
                     val outputShape: LongArray? = try {
                         val info = ortSession?.outputInfo?.values?.firstOrNull()?.info
                         (info as? TensorInfo)?.shape
@@ -286,21 +285,16 @@ class OnnxObjectDetector(private val context: Context) {
                     val numValues = outputShape?.getOrNull(1)?.toInt() ?: 14
                     val numDetections = outputShape?.getOrNull(2)?.toInt() ?: 8400
                     val expectedOutSize = numValues * numDetections
-                    Log.d(tag, "Expected buffer size: $expectedOutSize (1 x $numValues x $numDetections)")
                     val byteBuffer = ByteBuffer.allocateDirect(expectedOutSize * 4).order(ByteOrder.nativeOrder())
+
                     @Suppress("UNCHECKED_CAST")
                     val batchArray = outputValue as Array<Array<FloatArray>>
-                    Log.d(tag, "Batch array size: ${batchArray.size}")
 
                     var index = 0
                     if (batchArray.isNotEmpty()) {
-                        val valuesArray: Array<FloatArray> = batchArray.first() // Берем первый (и единственный) батч
-                        Log.d(tag, "Values array size: ${valuesArray.size}")
-
+                        val valuesArray = batchArray.first()
                         if (valuesArray.isNotEmpty()) {
-                            val detectionSize: Int = valuesArray.first().size // Берем длину массива из 8400 чисел
-                            Log.d(tag, "Detection array size: $detectionSize")
-
+                            val detectionSize = valuesArray.first().size
                             for (detIdx in 0 until detectionSize) {
                                 for (valIdx in valuesArray.indices) {
                                     coroutineContext.ensureActive()
@@ -312,24 +306,30 @@ class OnnxObjectDetector(private val context: Context) {
                             }
                         }
                     }
-                    Log.d(tag, "Copied $index elements to buffer")
                     byteBuffer.rewind()
                     byteBuffer.asFloatBuffer()
                 }
                 else -> {
-                    Log.e(tag, "Unsupported output type: ${outputValue.javaClass}")
-                    throw IllegalArgumentException("Unsupported output type: ${outputValue.javaClass}")
+                    Log.e(tag, "Unsupported output type: ${outputValue?.javaClass}")
+                    throw IllegalArgumentException("Unsupported output type: ${outputValue?.javaClass}")
                 }
             }
-            val results = postprocessResults(outputBuffer, bitmap.width, bitmap.height)
-            if (!inputTensor.isClosed) inputTensor.close()
-            output.close()
-            outputs.close()
-            return results
+            return postprocessResults(outputBuffer, bitmap.width, bitmap.height)
         } catch (e: Exception) {
             if (e is java.util.concurrent.CancellationException) throw e
             Log.e(tag, "Error during single image detection", e)
             return emptyList()
+        } finally {
+            try {
+                outputs?.close()
+            } catch (_: Exception) {
+            }
+            try {
+                if (inputTensor != null && !inputTensor.isClosed) {
+                    inputTensor.close()
+                }
+            } catch (_: Exception) {
+            }
         }
     }
     private fun preprocessImage(bitmap: Bitmap): FloatBuffer {
@@ -343,42 +343,38 @@ class OnnxObjectDetector(private val context: Context) {
         val newHeight = (originalHeight * scale).toInt()
         val resizedBitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
         val letterboxBitmap = Bitmap.createBitmap(inputImageWidth, inputImageHeight, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(letterboxBitmap)
-        canvas.drawColor(-16777216)
-        val offsetX = (inputImageWidth - newWidth) / 2
-        val offsetY = (inputImageHeight - newHeight) / 2
-        canvas.drawBitmap(resizedBitmap, offsetX.toFloat(), offsetY.toFloat(), null)
-        val expectedSize = inputImageHeight * 3 * inputImageWidth
-        val buffer = FloatBuffer.allocate(expectedSize)
-        Log.d(
-            tag,
-            "Preprocess: Original: ${originalWidth}x${originalHeight}, Resized: ${newWidth}x${newHeight}, Letterbox: ${inputImageWidth}x${inputImageHeight}, Scale: $scale"
-        )
-        val pixels = IntArray(inputImageWidth * inputImageHeight)
-        letterboxBitmap.getPixels(pixels, 0, inputImageWidth, 0, 0, inputImageWidth, inputImageHeight)
-        for (y in 0 until inputImageHeight) {
-            for (x in 0 until inputImageWidth) {
-                val pixel = pixels[(inputImageWidth * y) + x]
-                buffer.put(((pixel shr 16) and 255) / 255.0f)
+        try {
+            val canvas = Canvas(letterboxBitmap)
+            canvas.drawColor(-16777216)
+            val offsetX = (inputImageWidth - newWidth) / 2
+            val offsetY = (inputImageHeight - newHeight) / 2
+            canvas.drawBitmap(resizedBitmap, offsetX.toFloat(), offsetY.toFloat(), null)
+            val pixelCount = inputImageWidth * inputImageHeight
+            val expectedSize = pixelCount * 3
+            val pixels: IntArray = reusablePixels?.takeIf { it.size == pixelCount }
+                ?: IntArray(pixelCount).also { reusablePixels = it }
+            val buffer: FloatBuffer = reusableInputBuffer?.takeIf { it.capacity() == expectedSize }
+                ?: ByteBuffer.allocateDirect(expectedSize * 4)
+                    .order(ByteOrder.nativeOrder())
+                    .asFloatBuffer()
+                    .also { reusableInputBuffer = it }
+            buffer.clear()
+            letterboxBitmap.getPixels(pixels, 0, inputImageWidth, 0, 0, inputImageWidth, inputImageHeight)
+            for (i in 0 until pixelCount) {
+                buffer.put(((pixels[i] shr 16) and 255) / 255.0f)
             }
-        }
-        for (y in 0 until inputImageHeight) {
-            for (x in 0 until inputImageWidth) {
-                val pixel = pixels[(inputImageWidth * y) + x]
-                buffer.put(((pixel shr 8) and 255) / 255.0f)
+            for (i in 0 until pixelCount) {
+                buffer.put(((pixels[i] shr 8) and 255) / 255.0f)
             }
-        }
-        for (y in 0 until inputImageHeight) {
-            for (x in 0 until inputImageWidth) {
-                val pixel = pixels[(inputImageWidth * y) + x]
-                buffer.put((pixel and 255) / 255.0f)
+            for (i in 0 until pixelCount) {
+                buffer.put((pixels[i] and 255) / 255.0f)
             }
+            buffer.rewind()
+            return buffer
+        } finally {
+            resizedBitmap.recycle()
+            letterboxBitmap.recycle()
         }
-        resizedBitmap.recycle()
-        letterboxBitmap.recycle()
-        buffer.rewind()
-        Log.d(tag, "Preprocess: Buffer position: ${buffer.position()}, Buffer remaining: ${buffer.remaining()}")
-        return buffer
     }
     private fun postprocessResults(
         outputBuffer: FloatBuffer,
@@ -404,9 +400,6 @@ class OnnxObjectDetector(private val context: Context) {
         val newHeight = (originalHeight * scale).toInt()
         val offsetX = (inputImageWidth - newWidth) / 2.0f
         val offsetY = (inputImageHeight - newHeight) / 2.0f
-        Log.d(tag, "Postprocess: Original: ${originalWidth}x${originalHeight}, Scale: $scale, Offset: ($offsetX, $offsetY)")
-        Log.d(tag, "Buffer capacity: ${outputBuffer.capacity()}, numDetections: $numDetections, numValues: $numValues")
-        var detectionsAboveThreshold = 0
         for (i in 0 until numDetections) {
             var maxConfidence = 0.0f
             var maxClassId = 0
@@ -421,7 +414,6 @@ class OnnxObjectDetector(private val context: Context) {
                 }
             }
             if (maxConfidence > 0.5f) {
-                detectionsAboveThreshold++
                 val centerX = outputBuffer.get(i * numValues)
                 val centerY = outputBuffer.get((i * numValues) + 1)
                 val width = outputBuffer.get((i * numValues) + 2)
@@ -443,17 +435,18 @@ class OnnxObjectDetector(private val context: Context) {
                 results.add(DetectionResult(boundingBox, maxConfidence, maxClassId, null))
             }
         }
-        Log.d(tag, "Detections above threshold: $detectionsAboveThreshold")
         return applyNMS(results)
     }
     private fun applyNMS(results: List<DetectionResult>): List<DetectionResult> {
         if (results.isEmpty()) return results
-        val sorted = results.sortedByDescending { it.confidence }
-        val selected = ArrayList<DetectionResult>()
+        val sorted: List<DetectionResult> = results.sortedByDescending { it.confidence }
+        val selected = ArrayList<DetectionResult>(sorted.size)
         for (result in sorted) {
             var keep = true
             for (selectedResult in selected) {
-                if (result.classId == selectedResult.classId && calculateIoU(result.boundingBox, selectedResult.boundingBox) > nmsIouThreshold) {
+                if (result.classId == selectedResult.classId &&
+                    calculateIoU(result.boundingBox, selectedResult.boundingBox) > nmsIouThreshold
+                ) {
                     keep = false
                     break
                 }
@@ -469,8 +462,8 @@ class OnnxObjectDetector(private val context: Context) {
         iomThreshold: Float = 0.65f
     ): List<DetectionResult> {
         if (results.isEmpty()) return results
-        val sorted = results.sortedByDescending { it.confidence }
-        val merged = ArrayList<DetectionResult>()
+        val sorted: List<DetectionResult> = results.sortedByDescending { it.confidence }
+        val merged = ArrayList<DetectionResult>(sorted.size)
         val used = BooleanArray(sorted.size)
         for (i in sorted.indices) {
             if (used[i]) continue
@@ -555,8 +548,12 @@ class OnnxObjectDetector(private val context: Context) {
     }
     @Throws(OrtException::class)
     fun close() {
-        ortSession?.close()
+        try {
+            ortSession?.close()
+        } catch (_: Exception) {
+        }
         ortSession = null
-        ortEnvironment.close()
+        reusablePixels = null
+        reusableInputBuffer = null
     }
 }

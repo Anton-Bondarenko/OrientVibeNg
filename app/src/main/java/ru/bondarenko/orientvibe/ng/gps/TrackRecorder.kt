@@ -86,9 +86,11 @@ class TrackRecorder {
 
         val prev = lastTrackPoint
         val distanceFromLast = if (prev != null) {
-            MapCalibrationUtils.haversineDistance(
-                prev.gpsFix.coordinate,
-                fix.coordinate
+            MapGeometry.haversineDistancePrim(
+                prev.latitude,
+                prev.longitude,
+                fix.coordinate.latitude,
+                fix.coordinate.longitude
             )
         } else {
             0.0
@@ -161,6 +163,6 @@ class TrackRecorder {
     }
 
     companion object {
-        const val MAX_TRACK_POINTS = 100000
+        const val MAX_TRACK_POINTS = 10000
     }
 }

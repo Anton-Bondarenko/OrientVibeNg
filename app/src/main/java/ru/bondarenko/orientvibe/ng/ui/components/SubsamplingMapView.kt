@@ -53,6 +53,25 @@ class OverlayMapView(
 
     var onAutoBindTapCallback: ((Double, Double) -> Boolean)? = null
 
+    private val autoBindFixPaint = Paint().apply {
+        color = Color.argb(180, 76, 175, 80)
+        style = Paint.Style.FILL
+        isAntiAlias = true
+    }
+
+    private val pointBPaint = Paint().apply {
+        color = Color.argb(180, 156, 39, 176)
+        style = Paint.Style.FILL
+        isAntiAlias = true
+    }
+
+    private val markerStrokePaint = Paint().apply {
+        color = Color.WHITE
+        strokeWidth = 3.0f
+        style = Paint.Style.STROKE
+        isAntiAlias = true
+    }
+
     init {
         updateStartPoint(startPoint)
         updateFinishPoint(finishPoint)
@@ -90,20 +109,9 @@ class OverlayMapView(
         return super.onTouchEvent(event)
     }
 
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        val currentBitmap = bitmap ?: return
-        val sWidth = currentBitmap.width.toDouble()
-        val sHeight = currentBitmap.height.toDouble()
-        if (sWidth <= 0.0 || sHeight <= 0.0) return
-
-        if (mapRotation != 0.0 && !mapTransformApplied) {
-            applyMapTransform()
-        }
-        updateOverlayCoords()
-
-        // Отрисовка базовых слоев
-        controlPointOverlay.draw(canvas, currentBitmap.width, currentBitmap.height)
+    override fun drawOverlays(canvas: Canvas, b: Bitmap) {
+        // Отрисовка базовых слоев (1 раз за кадр!)
+        controlPointOverlay.draw(canvas, b.width, b.height)
         routeOverlay.draw(canvas)
         trackOverlay.draw(canvas)
 
@@ -114,19 +122,8 @@ class OverlayMapView(
                 val fixY = fixPos.second
                 if (fixX != null && fixY != null) {
                     sourceToViewCoord(fixX, fixY)?.let { viewPt ->
-                        val paint = Paint().apply {
-                            color = Color.argb(180, 76, 175, 80) // Полупрозрачный зеленый
-                            style = Paint.Style.FILL
-                            isAntiAlias = true
-                        }
-                        val stroke = Paint().apply {
-                            color = Color.WHITE
-                            strokeWidth = 2.0f
-                            style = Paint.Style.STROKE
-                            isAntiAlias = true
-                        }
-                        canvas.drawCircle(viewPt.x, viewPt.y, 12.0f, paint)
-                        canvas.drawCircle(viewPt.x, viewPt.y, 12.0f, stroke)
+                        canvas.drawCircle(viewPt.x, viewPt.y, 12.0f, autoBindFixPaint)
+                        canvas.drawCircle(viewPt.x, viewPt.y, 12.0f, markerStrokePaint)
                     }
                 }
             }
@@ -139,19 +136,8 @@ class OverlayMapView(
                 val imgX = pairGpsToImage?.first ?: return@let
                 val imgY = pairGpsToImage?.second ?: return@let
                 sourceToViewCoord(imgX, imgY)?.let { viewPt ->
-                        val paint = Paint().apply {
-                            color = Color.argb(180, 156, 39, 176) // Полупрозрачный фиолетовый
-                            style = Paint.Style.FILL
-                            isAntiAlias = true
-                        }
-                        val stroke = Paint().apply {
-                            color = Color.WHITE
-                            strokeWidth = 2.0f
-                            style = Paint.Style.STROKE
-                            isAntiAlias = true
-                        }
-                        canvas.drawCircle(viewPt.x, viewPt.y, 14.0f, paint)
-                        canvas.drawCircle(viewPt.x, viewPt.y, 14.0f, stroke)
+                    canvas.drawCircle(viewPt.x, viewPt.y, 14.0f, pointBPaint)
+                    canvas.drawCircle(viewPt.x, viewPt.y, 14.0f, markerStrokePaint)
                 }
             }
         }
@@ -253,7 +239,7 @@ fun SubsamplingMapView(
         onDispose { }
     }
 
-    DisposableEffect(trackPoints, calibrationVersionTrigger) {
+    DisposableEffect(trackPoints.size, calibrationVersionTrigger) {
         overlayView.updateTrackPoints(trackPoints)
         onDispose { }
     }

@@ -371,60 +371,126 @@ class AutoMoveManager {
         oldCurrentBox: BoundingBox,
         rawMapCal: MapCalibration
     ): MapCalibration {
-        val merged = ArrayList<MapCalibration>(_autoCalibrations.size + 1).apply {
-            add(rawMapCal)
-            addAll(_autoCalibrations)
-        }
-        Log.d(TAG, "computeAveragedOldCalibration merged.size=${merged.size}")
-        if (merged.size == 1) return rawMapCal
+        // Избегаем ArrayList аллокации: итерируем rawMapCal + _autoCalibrations вручную
+        val hasHistory = _autoCalibrations.isNotEmpty()
+        Log.d(TAG, "computeAveragedOldCalibration items=${if (hasHistory) _autoCalibrations.size + 1 else 1}")
+        if (!hasHistory) return rawMapCal
+
         val centerGps = MapGeometry.imageToGpsTrueNorth(
             oldCurrentBox.centerX,
             oldCurrentBox.centerY,
             rawMapCal
         )
-        Log.d(TAG, String.format("computeAveragedOldCalibration targetGps=(%.6f, %.6f)", centerGps.latitude, centerGps.longitude))
-        val scalars = MapCalibrationUtils.averageScalarsAt(merged, centerGps)
-        if (scalars == null || !scalars.hasPointB) {
+        Log.d(TAG, "computeAveragedOldCalibration targetGps=(${MapGeometry.fmt(centerGps.latitude, 6)},${MapGeometry.fmt(centerGps.longitude, 6)})")
+
+        // Inline averageScalarsAt — avoids allocating merged ArrayList, listOfNotNull per iteration
+        var totalWeight = 0.0
+        var scaleXSum = 0.0
+        var scaleYSum = 0.0
+        var bearingSin = 0.0
+        var bearingCos = 0.0
+        var magDeclSum = 0.0
+        var physDeclSum = 0.0
+        var hasPointB = false
+
+        // rawMapCal first — inline listOfNotNull(pointA, pointB) without ArrayList
+        val ptA_raw = rawMapCal.pointA ?: return rawMapCal
+        val ptB_raw = rawMapCal.pointB ?: return rawMapCal
+        val cLat_raw = (ptA_raw.gps.latitude + ptB_raw.gps.latitude) / 2.0
+        val cLon_raw = (ptA_raw.gps.longitude + ptB_raw.gps.longitude) / 2.0
+        val confSum_raw = ptA_raw.confidence + ptB_raw.confidence
+        val dist_raw = MapGeometry.haversineDistancePrim(centerGps.latitude, centerGps.longitude, cLat_raw, cLon_raw)
+        val distWeight_raw = 1.0 / max(dist_raw * dist_raw, 100.0)
+        val weight_raw = (confSum_raw / 2.0) * distWeight_raw
+        if (weight_raw > 0.0) {
+            totalWeight += weight_raw
+            scaleXSum += rawMapCal.scaleMetersPerMapX * weight_raw
+            scaleYSum += rawMapCal.scaleMetersPerMapY * weight_raw
+            bearingSin += sin(Math.toRadians(rawMapCal.bearingDegrees)) * weight_raw
+            bearingCos += cos(Math.toRadians(rawMapCal.bearingDegrees)) * weight_raw
+            magDeclSum += rawMapCal.magneticDeclination * weight_raw
+            physDeclSum += rawMapCal.physicalDeclination * weight_raw
+            hasPointB = true
+        }
+
+        // _autoCalibrations items
+        for (i in _autoCalibrations.indices) {
+            val cal = _autoCalibrations[i]
+            // Direct access without listOfNotNull ArrayList allocation
+            val ptA = cal.pointA ?: continue
+            val ptB = cal.pointB ?: continue
+            val ptsCount = 2
+            val cLat = (ptA.gps.latitude + ptB.gps.latitude) / ptsCount
+            val cLon = (ptA.gps.longitude + ptB.gps.longitude) / ptsCount
+            val confSum = ptA.confidence + ptB.confidence
+            val dist = MapGeometry.haversineDistancePrim(centerGps.latitude, centerGps.longitude, cLat, cLon)
+            val distWeight = 1.0 / max(dist * dist, 100.0)
+            val weight = (confSum / ptsCount) * distWeight
+            if (weight > 0.0) {
+                totalWeight += weight
+                scaleXSum += cal.scaleMetersPerMapX * weight
+                scaleYSum += cal.scaleMetersPerMapY * weight
+                bearingSin += sin(Math.toRadians(cal.bearingDegrees)) * weight
+                bearingCos += cos(Math.toRadians(cal.bearingDegrees)) * weight
+                magDeclSum += cal.magneticDeclination * weight
+                physDeclSum += cal.physicalDeclination * weight
+                hasPointB = true
+            }
+        }
+
+        val hasScalars = totalWeight > 0.0
+        var avgScaleX = 0.0
+        var avgScaleY = 0.0
+        var avgBearingDegrees = 0.0
+        var avgMagDecl = 0.0
+        var avgPhysDecl = 0.0
+        if (hasScalars) {
+            avgScaleX = scaleXSum / totalWeight
+            avgScaleY = scaleYSum / totalWeight
+            avgBearingDegrees = Math.toDegrees(atan2(bearingSin, bearingCos))
+            avgMagDecl = magDeclSum / totalWeight
+            avgPhysDecl = physDeclSum / totalWeight
+        }
+        if (!hasScalars || !hasPointB) {
             Log.d(TAG, "computeAveragedOldCalibration no pointB in history, using raw")
             return rawMapCal
         }
         var bestPointB: CalibrationPoint? = null
         var maxWeightForPointB = 0.0
-        for (cal in _autoCalibrations) {
+        for (i in _autoCalibrations.indices) {
+            val cal = _autoCalibrations[i]
             val calPointB = cal.pointB ?: continue
-            val pts = listOfNotNull(cal.pointA, calPointB)
-            if (pts.isNotEmpty()) {
-                val centerLat = pts.sumOf { it.gps.latitude } / pts.size
-                val centerLon = pts.sumOf { it.gps.longitude } / pts.size
-                val avgConf = pts.sumOf { it.confidence } / pts.size
-                val center = GpsCoordinate(centerLat, centerLon)
-                val dist = MapGeometry.haversineDistance(centerGps, center)
-                val distWeight = 1.0 / max(dist * dist, 100.0)
-                val weight = avgConf * distWeight
-                if (weight > maxWeightForPointB) {
-                    maxWeightForPointB = weight
-                    bestPointB = calPointB
-                }
+            val calPointA = cal.pointA ?: continue
+            // Direct averaging without listOfNotNull ArrayList allocation
+            val centerLat = (calPointA.gps.latitude + calPointB.gps.latitude) / 2.0
+            val centerLon = (calPointA.gps.longitude + calPointB.gps.longitude) / 2.0
+            val avgConf = (calPointA.confidence + calPointB.confidence) / 2.0
+            val dist = MapGeometry.haversineDistancePrim(centerGps.latitude, centerGps.longitude, centerLat, centerLon)
+            val distWeight = 1.0 / max(dist * dist, 100.0)
+            val weight = avgConf * distWeight
+            if (weight > maxWeightForPointB) {
+                maxWeightForPointB = weight
+                bestPointB = calPointB
             }
         }
         if (bestPointB == null) return rawMapCal
         val avg = MapCalibration(
             pointA = rawMapCal.pointA,
             pointB = bestPointB,
-            scaleMetersPerMapX = scalars.scaleX,
-            scaleMetersPerMapY = scalars.scaleY,
-            bearingDegrees = scalars.bearingDegrees,
-            magneticDeclination = scalars.magneticDeclination,
-            physicalDeclination = scalars.physicalDeclination
+            scaleMetersPerMapX = avgScaleX,
+            scaleMetersPerMapY = avgScaleY,
+            bearingDegrees = avgBearingDegrees,
+            magneticDeclination = avgMagDecl,
+            physicalDeclination = avgPhysDecl
         )
-        Log.d(TAG, String.format("  oldScaleX=%.1f oldScaleY=%.1f", rawMapCal.scaleMetersPerMapX, rawMapCal.scaleMetersPerMapY))
-        Log.d(TAG, String.format("  avgScaleX=%.1f avgScaleY=%.1f", avg.scaleMetersPerMapX, avg.scaleMetersPerMapY))
-        Log.d(TAG, String.format("  oldDecl=%.3f avgDecl=%.3f", rawMapCal.magneticDeclination, avg.magneticDeclination))
-        Log.d(TAG, String.format("  oldBearing=%.1f avgBearing=%.1f", rawMapCal.bearingDegrees, avg.bearingDegrees))
+        Log.d(TAG, "  oldScaleX=${MapGeometry.fmt(rawMapCal.scaleMetersPerMapX, 1)} oldScaleY=${MapGeometry.fmt(rawMapCal.scaleMetersPerMapY, 1)}")
+        Log.d(TAG, "  avgScaleX=${MapGeometry.fmt(avg.scaleMetersPerMapX, 1)} avgScaleY=${MapGeometry.fmt(avg.scaleMetersPerMapY, 1)}")
+        Log.d(TAG, "  oldDecl=${MapGeometry.fmt(rawMapCal.magneticDeclination, 3)} avgDecl=${MapGeometry.fmt(avg.magneticDeclination, 3)}")
+        Log.d(TAG, "  oldBearing=${MapGeometry.fmt(rawMapCal.bearingDegrees, 1)} avgBearing=${MapGeometry.fmt(avg.bearingDegrees, 1)}")
         val imgToGpsRaw = MapGeometry.imageToGpsTrueNorth(rawMapCal.pointA.imageX, rawMapCal.pointA.imageY, rawMapCal)
         val imgToGpsAvg = MapGeometry.imageToGpsTrueNorth(rawMapCal.pointA.imageX, rawMapCal.pointA.imageY, avg)
         val gpsShift = MapGeometry.haversineDistance(imgToGpsRaw, imgToGpsAvg)
-        Log.d(TAG, String.format("  pointA image→gps shift raw→avg: %.2fm", gpsShift))
+        Log.d(TAG, "  pointA image→gps shift raw→avg: ${MapGeometry.fmt(gpsShift, 2)}m")
         return avg
     }
     companion object {

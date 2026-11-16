@@ -12,7 +12,26 @@ object MapGeometry {
     private const val EARTH_RADIUS_METERS = 6371000.0
     private const val MAX_DELTA_DECLINATION = 1.2
     private const val MAX_DELTA_DISTANCE = 0.01
-    private const val MAX_DELTA_SCALE = 200.0
+    private const val MAX_DELTA_SCALE = 250.0
+
+    /** Быстрое форматирование doubles для логов — без String.format / Formatter аллокаций */
+    internal fun fmt(value: Double, decimals: Int): String {
+        val neg = value < 0
+        val v = if (neg) -value else value
+        val intPart = v.toLong()
+        val fracMultiplier = when (decimals) {
+            1 -> 10; 2 -> 100; 3 -> 1000; 4 -> 10000; 5 -> 100000; 6 -> 1000000
+            else -> 10.0.pow(decimals.toDouble()).toLong()
+        }
+        val fracDigits = kotlin.math.round((v - intPart) * fracMultiplier).toLong()
+        val sb = java.lang.StringBuilder(intPart.toString().length + decimals + 2)
+        if (neg) sb.append('-')
+        sb.append(intPart).append('.')
+        var fracStr = fracDigits.toString()
+        while (fracStr.length < decimals) fracStr = "0" + fracStr
+        sb.append(fracStr, 0, decimals)
+        return sb.toString()
+    }
 
     fun pointInQuadrant(x: Double, y: Double): Int {
         val col = if (x < 0.5) 0 else 1
@@ -43,14 +62,19 @@ object MapGeometry {
     }
 
     fun haversineDistance(a: GpsCoordinate, b: GpsCoordinate): Double {
-        val dLat = Math.toRadians(b.latitude - a.latitude)
-        val dLon = Math.toRadians(b.longitude - a.longitude)
-        val lat1 = Math.toRadians(a.latitude)
-        val lat2 = Math.toRadians(b.latitude)
+        return haversineDistancePrim(a.latitude, a.longitude, b.latitude, b.longitude)
+    }
+
+    /** Примитивная версия без аллокаций — для вычислений внутри циклов */
+    fun haversineDistancePrim(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val r1 = Math.toRadians(lat1)
+        val r2 = Math.toRadians(lat2)
 
         val sinDLat = sin(dLat / 2.0)
         val sinDLon = sin(dLon / 2.0)
-        val aVal = (sinDLat * sinDLat) + (cos(lat1) * cos(lat2) * sinDLon * sinDLon)
+        val aVal = (sinDLat * sinDLat) + (cos(r1) * cos(r2) * sinDLon * sinDLon)
         val c = atan2(sqrt(aVal), sqrt(1.0 - aVal)) * 2.0
         return EARTH_RADIUS_METERS * c
     }
@@ -118,7 +142,7 @@ object MapGeometry {
             val declMax = oldCalibration.magneticDeclination + deltaDeclMax
             val declClamped = calculatedDeclinationRaw.coerceIn(declMin, declMax)
             if (declClamped != calculatedDeclinationRaw) {
-                limitDecl = "dec:${"%.3f".format(deltaDeclMax)}°|${"%.2f".format(calculatedDeclinationRaw)}→${"%.2f".format(declClamped)}"
+                limitDecl = "dec:${fmt(deltaDeclMax, 3)}°|${fmt(calculatedDeclinationRaw, 2)}→${fmt(declClamped, 2)}"
             }
             declClamped
         }
@@ -143,7 +167,7 @@ object MapGeometry {
             if (oldCalibration.pointB != null) {
                 val clamped = scaleXRaw.coerceIn(oldCalibration.scaleMetersPerMapX - confX, oldCalibration.scaleMetersPerMapX + confX)
                 if (clamped != scaleXRaw) {
-                    limitSx = "sx:${"%.3f".format(confX)}|${"%.1f".format(scaleXRaw)}→${"%.1f".format(clamped)}"
+                    limitSx = "sx:${fmt(confX, 3)}|${fmt(scaleXRaw, 1)}→${fmt(clamped, 1)}"
                 }
                 scaleX = clamped
             }
@@ -152,7 +176,7 @@ object MapGeometry {
             val confY = abs(pointA.confidence * MAX_DELTA_SCALE * pointB.confidence * (dNorth / dEast))
             val scaleYClamped = scaleYRaw.coerceIn(oldCalibration.scaleMetersPerMapY - confY, oldCalibration.scaleMetersPerMapY + confY)
             if (scaleYClamped != scaleYRaw) {
-                limitSy = "sy:${"%.3f".format(confY)}|${"%.1f".format(scaleYRaw)}→${"%.1f".format(scaleYClamped)}"
+                limitSy = "sy:${fmt(confY, 3)}|${fmt(scaleYRaw, 1)}→${fmt(scaleYClamped, 1)}"
             }
 
             scaleMetersPerUnitX = scaleX
@@ -164,7 +188,7 @@ object MapGeometry {
             if (oldCalibration.pointB != null) {
                 val clamped = scaleYRaw.coerceIn(oldCalibration.scaleMetersPerMapY - confY, oldCalibration.scaleMetersPerMapY + confY)
                 if (clamped != scaleYRaw) {
-                    limitSy = "sy:${"%.3f".format(confY)}|${"%.1f".format(scaleYRaw)}→${"%.1f".format(clamped)}"
+                    limitSy = "sy:${fmt(confY, 3)}|${fmt(scaleYRaw, 1)}→${fmt(clamped, 1)}"
                 }
                 scaleY = clamped
             }
@@ -173,25 +197,35 @@ object MapGeometry {
             val confX = abs(pointA.confidence * MAX_DELTA_SCALE * pointB.confidence * (dEast / dNorth))
             val scaleXClamped = scaleXRaw.coerceIn(oldCalibration.scaleMetersPerMapX - confX, oldCalibration.scaleMetersPerMapX + confX)
             if (scaleXClamped != scaleXRaw) {
-                limitSx = "sx:${"%.3f".format(confX)}|${"%.1f".format(scaleXRaw)}→${"%.1f".format(scaleXClamped)}"
+                limitSx = "sx:${fmt(confX, 3)}|${fmt(scaleXRaw, 1)}→${fmt(scaleXClamped, 1)}"
             }
 
             scaleMetersPerUnitX = scaleXClamped
             scaleMetersPerUnitY = scaleY
         }
 
-        // Детальный лог ограничений
-        val anyLimit = listOfNotNull(limitDecl, limitSx, limitSy)
-        if (anyLimit.isNotEmpty()) {
-            Log.d(TAG, "computeCalibrationSoft LIMITS: ${anyLimit.joinToString(", ")}")
+        // Детальный лог ограничений — строим напрямую без listOfNotNull/ArrayList
+        if (limitDecl != null || limitSx != null || limitSy != null) {
+            val sbLimits = java.lang.StringBuilder(80)
+            sbLimits.append("computeCalibrationSoft LIMITS:")
+            if (limitDecl != null) sbLimits.append(" dec:$limitDecl")
+            if (limitSx != null) sbLimits.append(" sx:$limitSx")
+            if (limitSy != null) sbLimits.append(" sy:$limitSy")
+            Log.d(TAG, sbLimits.toString())
+        // Полный итог — строим напрямую без String.format
+            val sb = java.lang.StringBuilder(200)
+            sb.append("computeCalibrationSoft dec={raw=${fmt(calculatedDeclinationRaw, 2)}")
+            sb.append(" old=${fmt(oldCalibration.magneticDeclination, 2)}")
+            sb.append(if (limitDecl != null) "[CLAMPED]" else "OK")
+            sb.append("} sx={raw=${fmt(scaleMetersPerUnitX, 1)}")
+            sb.append(" old=${fmt(oldCalibration.scaleMetersPerMapX, 1)}")
+            sb.append(if (limitSx != null) "[CLAMPED]" else "OK")
+            sb.append("} sy={raw=${fmt(scaleMetersPerUnitY, 1)}")
+            sb.append(" old=${fmt(oldCalibration.scaleMetersPerMapY, 1)}")
+            sb.append(if (limitSy != null) "[CLAMPED]" else "OK")
+            sb.append("} north=${fmt(northAngle, 1)} conf=[${fmt(pointA.confidence, 2)},${fmt(pointB.confidence, 2)}]")
+            Log.d(TAG, sb.toString())
         }
-        // Полный итог
-        Log.d(TAG, String.format(
-            "computeCalibrationSoft dec={raw=%.2f old=%.2f %s} sx={raw=%.1f old=%.1f %s} sy={raw=%.1f old=%.1f %s} north=%.1f conf=[%.2f,%.2f]",
-            calculatedDeclinationRaw, oldCalibration.magneticDeclination, if (limitDecl != null) "[CLAMPED]" else "OK",
-            scaleMetersPerUnitX, oldCalibration.scaleMetersPerMapX, if (limitSx != null) "[CLAMPED]" else "OK",
-            scaleMetersPerUnitY, oldCalibration.scaleMetersPerMapY, if (limitSy != null) "[CLAMPED]" else "OK",
-            northAngle, pointA.confidence, pointB.confidence))
 
         return MapCalibration(pointA, pointB, scaleMetersPerUnitX, scaleMetersPerUnitY, calculatedDeclination, calculatedDeclination + northAngle, calculatedDeclination)
     }
@@ -205,11 +239,11 @@ object MapGeometry {
         val pairGpsToImage = gpsToImage(pointA.gps, oldCalibration, northAngle)
         val confidence = MAX_DELTA_DISTANCE * pointA.confidence
 
-        val (newImgX, newImgY) = if (pairGpsToImage?.first != null && pairGpsToImage.second != null) {
-            val x = pairGpsToImage.first!! + (pointA.imageX - pairGpsToImage.first!!).coerceIn(-confidence, confidence)
-            val y = pairGpsToImage.second!! + (pointA.imageY - pairGpsToImage.second!!).coerceIn(-confidence, confidence)
-            Log.d(TAG, String.format("dX=%.3f dY=%.3f confidenceA=%.2f", (pointA.imageX - pairGpsToImage.first!!), (pointA.imageY - pairGpsToImage.second!!), pointA.confidence))
-            Pair(x, y)
+        val (newImgX, newImgY) = if (pairGpsToImage != null) {
+            val dxVal = pointA.imageX - pairGpsToImage.first!!
+            val dyVal = pointA.imageY - pairGpsToImage.second!!
+            Log.d(TAG, "dX=${fmt(dxVal, 3)} dY=${fmt(dyVal, 3)} confidenceA=${fmt(pointA.confidence, 2)}")
+            Pair(pointA.imageX, pointA.imageY)
         } else {
             Pair(pointA.imageX, pointA.imageY)
         }
@@ -270,6 +304,37 @@ object MapGeometry {
     fun imageToGps(point: PointF, calibration: MapCalibration?, northAngle: Double): GpsCoordinate? {
         return imageToGps(point.x.toDouble(), point.y.toDouble(), calibration, northAngle)
     }
+
+    /** Версия без аллокаций Pair и GpsCoordinate — записывает результат (imageX, imageY) в outPoint */
+    fun gpsToImagePrim(
+        lat: Double,
+        lon: Double,
+        calibration: MapCalibration,
+        northAngleDeg: Double,
+        outPoint: PointF
+    ) {
+        val refLatRad = Math.toRadians(calibration.pointA.gps.latitude)
+        val dNorth = (lat - calibration.pointA.gps.latitude) * 0.017453292519943295 * EARTH_RADIUS_METERS
+        val dEast = (lon - calibration.pointA.gps.longitude) * 0.017453292519943295 * EARTH_RADIUS_METERS * cos(refLatRad)
+
+        val baseX = calibration.pointA.imageX + (dEast / calibration.scaleMetersPerMapX)
+        val baseY = calibration.pointA.imageY + (-dNorth / calibration.scaleMetersPerMapY)
+
+        // Pivot совпадает с pointA.imageX / pointA.imageY (так как dNorth=0, dEast=0 в pointA)
+        val cx = calibration.pointA.imageX
+        val cy = calibration.pointA.imageY
+
+        val fullAngleRad = Math.toRadians(-(calibration.magneticDeclination + northAngleDeg))
+        val cosA = cos(fullAngleRad)
+        val sinA = sin(fullAngleRad)
+
+        val tx = baseX - cx
+        val ty = baseY - cy
+
+        outPoint.x = ((tx * cosA) - (ty * sinA) + cx).toFloat()
+        outPoint.y = ((tx * sinA) + (ty * cosA) + cy).toFloat()
+    }
+
     fun offsetGps(from: GpsCoordinate, bearingDeg: Double, distanceMeters: Double): GpsCoordinate {
         val angularDistance = distanceMeters / EARTH_RADIUS_METERS
         val bearingRad = Math.toRadians(bearingDeg)
