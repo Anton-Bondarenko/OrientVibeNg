@@ -109,13 +109,18 @@ object MapGeometry {
         val screenBearing = screenBearing(pointA.imageX, pointA.imageY, pointB.imageX, pointB.imageY) - northAngle
         val calculatedDeclinationRaw = trueBearing - screenBearing
 
+        var limitDecl: String? = null
         val calculatedDeclination = if (oldCalibration.pointB == null) {
             calculatedDeclinationRaw
         } else {
-            oldCalibration.magneticDeclination + (calculatedDeclinationRaw - oldCalibration.magneticDeclination).coerceIn(
-                pointA.confidence * -MAX_DELTA_DECLINATION * pointB.confidence,
-                pointA.confidence * MAX_DELTA_DECLINATION * pointB.confidence
-            )
+            val deltaDeclMax = pointA.confidence * MAX_DELTA_DECLINATION * pointB.confidence
+            val declMin = oldCalibration.magneticDeclination - deltaDeclMax
+            val declMax = oldCalibration.magneticDeclination + deltaDeclMax
+            val declClamped = calculatedDeclinationRaw.coerceIn(declMin, declMax)
+            if (declClamped != calculatedDeclinationRaw) {
+                limitDecl = "dec:${"%.3f".format(deltaDeclMax)}°|${"%.2f".format(calculatedDeclinationRaw)}→${"%.2f".format(declClamped)}"
+            }
+            declClamped
         }
 
         val dNorth = northDistance(pointA.gps, pointB.gps)
@@ -126,39 +131,67 @@ object MapGeometry {
         val dx = rotatedPoint.first - pointA.imageX
         val dy = rotatedPoint.second - pointA.imageY
 
+        var limitSx: String? = null
+        var limitSy: String? = null
         val scaleMetersPerUnitX: Double
         val scaleMetersPerUnitY: Double
 
         if (abs(dNorth) < abs(dEast)) {
-            var scaleX = abs(dEast / dx)
+            val scaleXRaw = abs(dEast / dx)
+            val confX = pointA.confidence * MAX_DELTA_SCALE * pointB.confidence
+            var scaleX = scaleXRaw
             if (oldCalibration.pointB != null) {
-                val confidence = pointA.confidence * MAX_DELTA_SCALE * pointB.confidence
-                scaleX = oldCalibration.scaleMetersPerMapX + (scaleX - oldCalibration.scaleMetersPerMapX).coerceIn(-confidence, confidence)
+                val clamped = scaleXRaw.coerceIn(oldCalibration.scaleMetersPerMapX - confX, oldCalibration.scaleMetersPerMapX + confX)
+                if (clamped != scaleXRaw) {
+                    limitSx = "sx:${"%.3f".format(confX)}|${"%.1f".format(scaleXRaw)}→${"%.1f".format(clamped)}"
+                }
+                scaleX = clamped
             }
+
             val scaleYRaw = abs(dNorth / dy)
-            val confidenceY = abs(pointA.confidence * MAX_DELTA_SCALE * pointB.confidence * (dNorth / dEast))
+            val confY = abs(pointA.confidence * MAX_DELTA_SCALE * pointB.confidence * (dNorth / dEast))
+            val scaleYClamped = scaleYRaw.coerceIn(oldCalibration.scaleMetersPerMapY - confY, oldCalibration.scaleMetersPerMapY + confY)
+            if (scaleYClamped != scaleYRaw) {
+                limitSy = "sy:${"%.3f".format(confY)}|${"%.1f".format(scaleYRaw)}→${"%.1f".format(scaleYClamped)}"
+            }
 
             scaleMetersPerUnitX = scaleX
-            scaleMetersPerUnitY = oldCalibration.scaleMetersPerMapY + (scaleYRaw - oldCalibration.scaleMetersPerMapY).coerceIn(-confidenceY, confidenceY)
+            scaleMetersPerUnitY = scaleYClamped
         } else {
             val scaleYRaw = abs(dNorth / dy)
-            val scaleY = if (oldCalibration.pointB == null) {
-                scaleYRaw
-            } else {
-                val confidence = pointA.confidence * MAX_DELTA_SCALE * pointB.confidence
-                oldCalibration.scaleMetersPerMapY + (scaleYRaw - oldCalibration.scaleMetersPerMapY).coerceIn(-confidence, confidence)
+            val confY = pointA.confidence * MAX_DELTA_SCALE * pointB.confidence
+            var scaleY = scaleYRaw
+            if (oldCalibration.pointB != null) {
+                val clamped = scaleYRaw.coerceIn(oldCalibration.scaleMetersPerMapY - confY, oldCalibration.scaleMetersPerMapY + confY)
+                if (clamped != scaleYRaw) {
+                    limitSy = "sy:${"%.3f".format(confY)}|${"%.1f".format(scaleYRaw)}→${"%.1f".format(clamped)}"
+                }
+                scaleY = clamped
             }
-            val scaleXRaw = abs(dEast / dx)
-            val confidenceX = abs(pointA.confidence * MAX_DELTA_SCALE * pointB.confidence * (dEast / dNorth))
 
-            scaleMetersPerUnitX = oldCalibration.scaleMetersPerMapX + (scaleXRaw - oldCalibration.scaleMetersPerMapX).coerceIn(-confidenceX, confidenceX)
+            val scaleXRaw = abs(dEast / dx)
+            val confX = abs(pointA.confidence * MAX_DELTA_SCALE * pointB.confidence * (dEast / dNorth))
+            val scaleXClamped = scaleXRaw.coerceIn(oldCalibration.scaleMetersPerMapX - confX, oldCalibration.scaleMetersPerMapX + confX)
+            if (scaleXClamped != scaleXRaw) {
+                limitSx = "sx:${"%.3f".format(confX)}|${"%.1f".format(scaleXRaw)}→${"%.1f".format(scaleXClamped)}"
+            }
+
+            scaleMetersPerUnitX = scaleXClamped
             scaleMetersPerUnitY = scaleY
         }
 
-        Log.d(TAG, String.format("computeCalibrationSoft Sx=%.1f Sy=%.1f declination=%.1f dDec=%.1f north=%.1f dSx=%.1f dSy=%.1f confidenceA=%.2f confidenceB=%.2f",
-            scaleMetersPerUnitX, scaleMetersPerUnitY, calculatedDeclination, (calculatedDeclination - oldCalibration.magneticDeclination),
-            northAngle, (scaleMetersPerUnitX - oldCalibration.scaleMetersPerMapX), (scaleMetersPerUnitY - oldCalibration.scaleMetersPerMapY),
-            pointA.confidence, pointB.confidence))
+        // Детальный лог ограничений
+        val anyLimit = listOfNotNull(limitDecl, limitSx, limitSy)
+        if (anyLimit.isNotEmpty()) {
+            Log.d(TAG, "computeCalibrationSoft LIMITS: ${anyLimit.joinToString(", ")}")
+        }
+        // Полный итог
+        Log.d(TAG, String.format(
+            "computeCalibrationSoft dec={raw=%.2f old=%.2f %s} sx={raw=%.1f old=%.1f %s} sy={raw=%.1f old=%.1f %s} north=%.1f conf=[%.2f,%.2f]",
+            calculatedDeclinationRaw, oldCalibration.magneticDeclination, if (limitDecl != null) "[CLAMPED]" else "OK",
+            scaleMetersPerUnitX, oldCalibration.scaleMetersPerMapX, if (limitSx != null) "[CLAMPED]" else "OK",
+            scaleMetersPerUnitY, oldCalibration.scaleMetersPerMapY, if (limitSy != null) "[CLAMPED]" else "OK",
+            northAngle, pointA.confidence, pointB.confidence))
 
         return MapCalibration(pointA, pointB, scaleMetersPerUnitX, scaleMetersPerUnitY, calculatedDeclination, calculatedDeclination + northAngle, calculatedDeclination)
     }

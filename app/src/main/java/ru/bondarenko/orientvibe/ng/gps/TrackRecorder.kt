@@ -56,8 +56,15 @@ class TrackRecorder {
 
     /** Включает трекинг без очистки — для начальной калибровки, трек сохраняется */
     fun enableTracking() {
+        val prev = _trackState.value
+        if (prev.isTracking && prev.version == _version) return // Already enabled, avoid redundant StateFlow emit
         _version++
-        _trackState.value = _trackState.value.copy(isTracking = true, version = _version)
+        _trackState.value = TrackRecorderState(
+            trackPoints = _readOnlyPointsView,
+            totalDistance = _totalDistance,
+            isTracking = true,
+            version = _version
+        )
     }
 
     fun stopTracking() {
@@ -94,7 +101,11 @@ class TrackRecorder {
         }
 
         val trackPoint = TrackPoint(
-            gpsFix = fix,
+            latitude = fix.coordinate.latitude,
+            longitude = fix.coordinate.longitude,
+            accuracy = fix.accuracy,
+            bearing = fix.bearing,
+            speed = fix.speed,
             imageX = imageX,
             imageY = imageY,
             distanceFromStart = actualDistanceFromStart,

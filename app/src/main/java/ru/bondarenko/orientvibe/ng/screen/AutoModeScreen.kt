@@ -264,7 +264,7 @@ fun AutoModeScreen() {
                 northAngle = mapState.northAngle,
                 onNorthAngleChanged = { angle -> autoVm.updateNorthAngle(angle) },
                 onNorthAngleReset = { autoVm.resetNorthAngle() },
-                trackPoints = autoVm.getTelemetryTrackPoints(),
+                trackPoints = gpsState.trackPoints,
                 calibrationVersionTrigger = calibrationVersion,
                 calibration = gpsState.calibration,
                 currentFix = gpsState.currentFix,

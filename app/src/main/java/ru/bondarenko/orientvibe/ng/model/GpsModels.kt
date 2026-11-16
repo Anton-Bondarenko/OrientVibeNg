@@ -41,14 +41,33 @@ data class GpsFix(
 
 /**
  * Точка записанного пользовательского трека.
+ * Хранит координаты flat (без вложенного GpsFix/GpsCoordinate) для экономии памяти.
  */
 data class TrackPoint(
-    val gpsFix: GpsFix,
+    val latitude: Double,
+    val longitude: Double,
+    val accuracy: Double,
+    val bearing: Double,
+    val speed: Double,
     val imageX: Double,
     val imageY: Double,
     val distanceFromStart: Double,
     val timestamp: Long
-)
+) {
+    /** Ленивый геттер для обратной совместимости API — создаёт GpsFix по запросу */
+    val gpsFix: GpsFix
+        get() = GpsFix(
+            coordinate = GpsCoordinate(latitude, longitude),
+            accuracy = accuracy,
+            bearing = bearing,
+            speed = speed,
+            timestamp = timestamp
+        )
+
+    /** Ленивый геттер для обратной совместимости API */
+    val coordinate: GpsCoordinate
+        get() = GpsCoordinate(latitude, longitude)
+}
 
 /**
  * Модель активной калибровочной матрицы карты.

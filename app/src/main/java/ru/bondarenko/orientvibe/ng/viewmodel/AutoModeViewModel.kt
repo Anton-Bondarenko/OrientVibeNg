@@ -326,11 +326,6 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         }
     }
 
-    fun getTelemetryTrackPoints(): List<TrackPoint> {
-        val navViewModel = navVm ?: return emptyList()
-        return navViewModel.trackData.trackPoints
-    }
-
     override fun onProgressUpdate(current: Int, total: Int, message: String) {
         viewModelScope.launch {
             val currentHandle = mapDetector.currentTaskRef.get()
@@ -412,30 +407,25 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         val mapCalibration = _calibration ?: return
         val fix = gpsFix ?: return
 
-        val workingState = ms.copy(
+        // doMove mutates its movementState arg in-place and returns it as result2,
+        // so result2 IS workingState — skip the second .copy() cascade (3 objects)
+        val updatedState = ms.copy(
             currentControl = ms.currentControl.copy(),
             prevControl = ms.prevControl.copy()
         )
-
-        val result2 = _autoMoveManager.doMove(_mapState.value, workingState, mapCalibration, fix)
+        _autoMoveManager.doMove(_mapState.value, updatedState, mapCalibration, fix)
         val list = _autoMoveManager.autoCalibrations
         _autoCalibrationsList.value = list
 
         val navData = _calibration?.let {
             AutoMoveManager.analyzeNavigation(
-                result2.currentControl.num,
+                updatedState.currentControl.num,
                 fix,
                 it,
                 _mapState.value,
                 _autoMoveManager.getLastAverage3Bearing()
             )
         }
-
-        val updatedState = result2.copy(
-            currentControl = result2.currentControl.copy(),
-            prevControl = result2.prevControl.copy(),
-            autoCalibrations = list.toMutableList()
-        )
 
         val prevSignal = updatedState.audioSignalState.type
         val audioState = navData?.let { AutoMoveManager.analyzeAudioSignal(it) }
@@ -513,7 +503,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         // Сохраняем в StateFlow уже ПОСЛЕ обновления lastAudioPlayMs и audioSignalState
         _movementState.value = updatedState
 
-        result2.newMapCalibration?.let { newCalib ->
+        updatedState.newMapCalibration?.let { newCalib ->
             val prefs = context.getSharedPreferences("orientvibe_settings", 0)
             if (prefs.getBoolean("auto_calibration", true)) {
                 applyNewCalibration(newCalib)
