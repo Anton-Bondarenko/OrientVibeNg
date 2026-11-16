@@ -235,17 +235,50 @@ object MapGeometry {
         return MapCalibration(pointA, pointB, scaleX, scaleY, magneticDeclination, magneticDeclination + northAngle, magneticDeclination)
     }
 
-    fun calibrationSingleSoft(pointA: CalibrationPoint, magneticDeclination: Double, northAngle: Double = 0.0, scaleX: Double, scaleY: Double, oldCalibration: MapCalibration): MapCalibration {
+    fun calibrationSingleSoft(
+        pointA: CalibrationPoint,
+        magneticDeclination: Double,
+        northAngle: Double = 0.0,
+        scaleX: Double,
+        scaleY: Double,
+        oldCalibration: MapCalibration
+    ): MapCalibration {
         val pairGpsToImage = gpsToImage(pointA.gps, oldCalibration, northAngle)
-        val confidence = MAX_DELTA_DISTANCE * pointA.confidence
+        val maxDelta = MAX_DELTA_DISTANCE * pointA.confidence
 
-        val (newImgX, newImgY) = if (pairGpsToImage != null) {
-            val dxVal = pointA.imageX - pairGpsToImage.first!!
-            val dyVal = pointA.imageY - pairGpsToImage.second!!
-            Log.d(TAG, "dX=${fmt(dxVal, 3)} dY=${fmt(dyVal, 3)} confidenceA=${fmt(pointA.confidence, 2)}")
-            Pair(pointA.imageX, pointA.imageY)
+        var clamped = false
+        val newImgX: Double
+        val newImgY: Double
+
+        if (pairGpsToImage != null) {
+            val oldImgX = pairGpsToImage.first
+            val oldImgY = pairGpsToImage.second
+            val dxVal = pointA.imageX - oldImgX
+            val dyVal = pointA.imageY - oldImgY
+            val dist = sqrt((dxVal * dxVal) + (dyVal * dyVal))
+
+            if (dist > maxDelta && dist > 1e-9) {
+                val ratio = maxDelta / dist
+                newImgX = oldImgX + (dxVal * ratio)
+                newImgY = oldImgY + (dyVal * ratio)
+                clamped = true
+            } else {
+                newImgX = pointA.imageX
+                newImgY = pointA.imageY
+            }
+
+            val sb = java.lang.StringBuilder(180)
+            sb.append("calibrationSingleSoft ")
+            sb.append(if (clamped) "[CLAMPED]" else "OK")
+            sb.append(" dist=${fmt(dist, 5)} maxDelta=${fmt(maxDelta, 5)}")
+            sb.append(" conf=${fmt(pointA.confidence, 2)}")
+            sb.append(" dX=${fmt(dxVal, 4)}→${fmt(newImgX - oldImgX, 4)}")
+            sb.append(" dY=${fmt(dyVal, 4)}→${fmt(newImgY - oldImgY, 4)}")
+            Log.d(TAG, sb.toString())
         } else {
-            Pair(pointA.imageX, pointA.imageY)
+            newImgX = pointA.imageX
+            newImgY = pointA.imageY
+            Log.d(TAG, "calibrationSingleSoft [NO_OLD_PROJ] raw=(${fmt(newImgX, 4)}, ${fmt(newImgY, 4)})")
         }
 
         return MapCalibration(
