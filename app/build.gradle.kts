@@ -36,6 +36,9 @@ android {
     aaptOptions {
         noCompress += "onnx"
     }
+    lint {
+        baseline = file("lint-baseline.xml")
+    }
 }
 
 dependencies {

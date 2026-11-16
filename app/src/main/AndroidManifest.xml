@@ -31,7 +31,6 @@
         android:theme="@style/Theme.OrientVibe"
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
-        android:debuggable="true"
         android:allowBackup="true"
         android:supportsRtl="true"
        

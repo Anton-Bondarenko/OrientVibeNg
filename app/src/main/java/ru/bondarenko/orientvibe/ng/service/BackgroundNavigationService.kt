@@ -17,6 +17,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.os.PowerManager
+import android.Manifest
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
@@ -83,6 +84,8 @@ class BackgroundNavigationService : Service() {
     private var audioActive = true
     @Volatile
     private var isForegroundActive = false
+    @Volatile
+    private var isForegroundStarted = false
 
     private val latestFix = object {
         var coordinate: GpsCoordinate? = null
@@ -125,27 +128,37 @@ class BackgroundNavigationService : Service() {
             val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
             nm.createNotificationChannel(channel)
 
-            val notification = NotificationCompat.Builder(this, channelId)
-                .setContentTitle(getString(R.string.app_name) + getString(R.string.nav_notification_title))
-                .setContentText(getString(R.string.nav_notification_text))
-                .setSmallIcon(R.drawable.ic_launcher_foreground)
-                .setOngoing(true)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
-                .setContentIntent(pendingIntent)
-                .build()
+            if (hasLocationPermission()) {
+                val notification = NotificationCompat.Builder(this, channelId)
+                    .setContentTitle(getString(R.string.app_name) + getString(R.string.nav_notification_title))
+                    .setContentText(getString(R.string.nav_notification_text))
+                    .setSmallIcon(R.drawable.ic_launcher_foreground)
+                    .setOngoing(true)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setContentIntent(pendingIntent)
+                    .build()
 
-            startForeground(1, notification)
-            notificationId = 1
+                startForeground(1, notification)
+                notificationId = 1
+                isForegroundStarted = true
+            } else {
+                Log.w(TAG, "Location permission not granted — deferring startForeground")
+            }
         } else {
-            val notification = NotificationCompat.Builder(this, channelId)
-                .setContentTitle(getString(R.string.app_name))
-                .setContentText("Навигация активна")
-                .setSmallIcon(R.drawable.ic_launcher_foreground)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
-                .setContentIntent(pendingIntent)
-                .build()
-            startForeground(1, notification)
-            notificationId = 1
+            if (hasLocationPermission()) {
+                val notification = NotificationCompat.Builder(this, channelId)
+                    .setContentTitle(getString(R.string.app_name))
+                    .setContentText("Навигация активна")
+                    .setSmallIcon(R.drawable.ic_launcher_foreground)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setContentIntent(pendingIntent)
+                    .build()
+                startForeground(1, notification)
+                notificationId = 1
+                isForegroundStarted = true
+            } else {
+                Log.w(TAG, "Location permission not granted — deferring startForeground")
+            }
         }
 
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
@@ -171,6 +184,14 @@ class BackgroundNavigationService : Service() {
         Log.d(TAG, "Service created OK")
     }
 
+    private fun hasLocationPermission(): Boolean {
+        val fine = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ||
+            checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val coarse = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ||
+            checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        return fine || coarse
+    }
+
     private fun startBackgroundAudioThread() {
         serviceScope.launch {
             while (true) {
@@ -184,6 +205,32 @@ class BackgroundNavigationService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "onStartCommand: action=${intent?.action}")
+
+        // Defer startForeground() if permissions weren't granted at onCreate time
+        if (!isForegroundStarted && hasLocationPermission()) {
+            val channelId = "orientvibe_nav_channel"
+            val pendingIntent = PendingIntent.getActivity(
+                this, 0,
+                Intent(this, MainActivity::class.java),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val notification = NotificationCompat.Builder(this, channelId)
+                .setContentTitle(getString(R.string.app_name) + getString(R.string.nav_notification_title))
+                .setContentText(getString(R.string.nav_notification_text))
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setOngoing(true)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setContentIntent(pendingIntent)
+                .build()
+
+            startForeground(1, notification)
+            isForegroundStarted = true
+            Log.d(TAG, "startForeground called in onStartCommand after permission grant")
+        } else if (!isForegroundStarted) {
+            Log.w(TAG, "Location permission not yet granted — skipping GPS tracking")
+            return START_NOT_STICKY
+        }
+
         startGpsTracking()
 
         if (intent?.action == ACTION_PLAY_AUDIO) {

@@ -93,6 +93,7 @@ fun AutoModeScreen() {
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         if (permissions.values.any { it }) {
+            autoVm.startBackgroundService()
             navVm.startGps()
         }
     }

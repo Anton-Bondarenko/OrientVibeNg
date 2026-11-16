@@ -103,7 +103,6 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
 
     init {
         mapDetector.progressListener = this
-        startBackgroundService()
 
         viewModelScope.launch {
             val ok = mapDetector.init()
@@ -235,12 +234,20 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
 
         val pointB =
             CalibrationPoint(currentFix.coordinate, targetBox.centerX, targetBox.centerY, 1.0)
-        val newCal = MapGeometry.computeCalibrationSoft(
-            calibration.pointA,
-            pointB,
-            _mapState.value.northAngle,
-            calibration
-        ) ?: return Pair(false, "Точки слишком близко — нельзя рассчитать масштаб")
+        val newCal =
+            if (calibration.pointB != null) MapGeometry.computeCalibrationSoft(
+                calibration.pointA,
+                pointB,
+                _mapState.value.northAngle,
+                calibration
+                ) ?: return Pair(false, "Точки слишком близко — нельзя рассчитать масштаб")
+            else
+                MapGeometry.computeCalibrationHard(
+                    calibration.pointA,
+                    pointB,
+                    MapGeometry.calculateMagneticDeclination(currentFix.coordinate.latitude, currentFix.coordinate.longitude, currentFix.timestamp),
+                    _mapState.value.northAngle
+                ) ?: return Pair(false, "Точки слишком близко — нельзя рассчитать масштаб")
 
         Log.d(tag, "===== recalibrateToTargetControl END =====")
         applyNewCalibration(newCal)
@@ -636,7 +643,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
     }
 
     // --- Lifecycle foreground-службы для фонового GPS/аудио ---
-    private fun startBackgroundService() {
+    fun startBackgroundService() {
         val intent = BackgroundNavigationService.createStartIntent(context)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.startForegroundService(intent)
