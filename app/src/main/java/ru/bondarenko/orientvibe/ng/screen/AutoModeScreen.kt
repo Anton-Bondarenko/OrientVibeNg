@@ -35,6 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -497,6 +498,17 @@ fun AutoModeScreen() {
                 )
             )
         }
+        var autoBindPref by remember {
+            mutableStateOf(
+                sharedPreferences.getBoolean("auto_bind", true)
+            )
+        }
+        var soundModePref by remember {
+            mutableStateOf(
+                sharedPreferences.getString("sound_mode", "errors") ?: "errors"
+            )
+        }
+        val soundModeOptions = listOf("off" to "Нет звука", "errors" to "Ошибки", "tracking" to "Ведение")
         AlertDialog(
             onDismissRequest = { showSettingsDialog = false },
             title = { Text("Настройки авто-режима") },
@@ -524,6 +536,35 @@ fun AutoModeScreen() {
                             onCheckedChange = { showAllBoxesPref = it })
                     }
                     Spacer(modifier = Modifier.height(16.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Авто привязка")
+                        Switch(
+                            checked = autoBindPref,
+                            onCheckedChange = { autoBindPref = it })
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Column {
+                        Text("Режим звукового ведения")
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            soundModeOptions.forEach { (value, label) ->
+                                FilterChip(
+                                    onClick = { soundModePref = value },
+                                    label = { Text(label) },
+                                    selected = soundModePref == value,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
                     Button(
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                         onClick = {
@@ -539,8 +580,14 @@ fun AutoModeScreen() {
                 TextButton(onClick = {
                     sharedPreferences.edit().apply {
                         putBoolean("auto_calibration", autoCalibrationPref)
+                        putBoolean("auto_bind", autoBindPref)
                         putBoolean("show_all_bounding_boxes", showAllBoxesPref)
+                        putString("sound_mode", soundModePref)
                         apply()
+                    }
+                    // Полностью остановить навигационное аудио при переключении на "Нет звука"
+                    if (soundModePref == "off") {
+                        autoVm.setSoundMuted(true)
                     }
                     showAllBoxes = showAllBoxesPref
                     showSettingsDialog = false

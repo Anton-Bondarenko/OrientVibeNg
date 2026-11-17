@@ -59,7 +59,8 @@ class AutoMoveManager {
         autoMapState: AutoMapState,
         movementState: MovementState,
         mapCalibration: MapCalibration,
-        gpsFix: GpsFix
+        gpsFix: GpsFix,
+        autoBind: Boolean = true
     ): MovementState {
         val boundingBox = movementState.currentControl.boundingBox ?: return movementState
 
@@ -77,7 +78,7 @@ class AutoMoveManager {
         addTrackHistory(gpsFix)
 
         if (shouldSwitch(distance) && mapCalibration.pointB != null) {
-            movementState.newMapCalibration = switchControl(autoMapState, movementState, mapCalibration)
+            movementState.newMapCalibration = switchControl(autoMapState, movementState, mapCalibration, autoBind)
         } else {
             movementState.newMapCalibration = null
         }
@@ -291,7 +292,8 @@ class AutoMoveManager {
     private fun switchControl(
         mapState: AutoMapState,
         ms: MovementState,
-        mapCalibration: MapCalibration
+        mapCalibration: MapCalibration,
+        autoBind: Boolean
     ): MapCalibration? {
         val currentNum = ms.currentControl.num
         Log.d(TAG, "дошли до КП #$currentNum, переключение на следующий")
@@ -306,7 +308,8 @@ class AutoMoveManager {
         } else {
             null
         }
-        val newCalibration: MapCalibration? = if (oldCurrentBox != null && effectivePoint != null) {
+        val newCalibration: MapCalibration? = if (autoBind && oldCurrentBox != null && effectivePoint != null) {
+            Log.d(TAG, "Автопривязка вкл — вычисляем калибровку")
             val oldCal = computeAveragedOldCalibration(oldCurrentBox, mapCalibration)
             if (mapCalibration.pointB == null) {
                 Log.d(TAG, "Калибровка computeCalibrationSoft(первая)")
@@ -345,6 +348,9 @@ class AutoMoveManager {
                     )
                 }
             }
+        } else if (!autoBind) {
+            Log.d(TAG, "Автопривязка выкл — калибровку не вычисляем, только переключение КП")
+            null
         } else {
             null
         }
@@ -535,73 +541,6 @@ class AutoMoveManager {
             }
             val distanceToTarget = MapGeometry.haversineDistance(gpsFix.coordinate, targetGps)
             return NavigationData(bearingToTarget, distanceToTarget, deviation, direction)
-        }
-        fun analyzeAudioSignal(navigation: NavigationData): AudioSignalState {
-            val dist = navigation.distanceToTargetMeters
-            val dev = navigation.deviationDeg
-            val absDeg = abs(dev)
-            if (dist < 40.0) {
-                return AudioSignalState(
-                    type = AudioSignalType.ARRIVED,
-                    frequencyHz = 600,
-                    leftBalance = 0.5f,
-                    intervalMs = 0L,
-                    deviationDeg = dev,
-                    distanceToTargetMeters = dist
-                )
-            }
-            if (dist <= 50.0) {
-                return AudioSignalState(
-                    type = AudioSignalType.APPROACH_DOUBLE,
-                    frequencyHz = 600,
-                    leftBalance = 0.5f,
-                    intervalMs = 10000L,
-                    deviationDeg = dev,
-                    distanceToTargetMeters = dist
-                )
-            }
-            if (dist <= 100.0) {
-                return AudioSignalState(
-                    type = AudioSignalType.APPROACH_SINGLE,
-                    frequencyHz = 600,
-                    leftBalance = 0.5f,
-                    intervalMs = 10000L,
-                    deviationDeg = dev,
-                    distanceToTargetMeters = dist
-                )
-            }
-// Мёртвая зона (коридор ±10°): движемся точно на цель — звук не выводим
-            if (absDeg <= 10.0 || navigation.direction == DeviationDirection.CENTER) {
-                return AudioSignalState(
-                    type = AudioSignalType.NONE,
-                    frequencyHz = 0,
-                    leftBalance = 0.5f,
-                    intervalMs = 0L,
-                    deviationDeg = dev,
-                    distanceToTargetMeters = dist
-                )
-            }
-            val freq = (800.0 - (((absDeg - 10.0) / 40.0) * 500.0)).coerceIn(300.0, 800.0).toInt()
-            val clampedDeg = absDeg.coerceIn(0.0, 70.0)
-            val balance = if (dev < 0.0) {
-                (0.5 - (clampedDeg / 140.0)).toFloat()
-            } else {
-                ((clampedDeg / 140.0) + 0.5).toFloat()
-            }
-            val intervalMs = when {
-                absDeg > 60.0 -> 4000L
-                absDeg > HEADING_TOLERANCE_DEG -> 8000L
-                absDeg > 20.0 -> 15000L
-                else -> 25000L
-            }
-            return AudioSignalState(
-                type = AudioSignalType.DEVIATION,
-                frequencyHz = freq,
-                leftBalance = balance,
-                intervalMs = intervalMs,
-                deviationDeg = dev,
-                distanceToTargetMeters = dist
-            )
         }
     }
 }

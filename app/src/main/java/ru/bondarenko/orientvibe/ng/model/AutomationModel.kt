@@ -1,15 +1,6 @@
 package ru.bondarenko.orientvibe.ng.model
 
-/**
- * Перечисление типов генерируемых аудиосигналов навигации.
- */
-enum class AudioSignalType {
-    NONE,
-    ARRIVED,
-    DEVIATION,
-    APPROACH_SINGLE,
-    APPROACH_DOUBLE
-}
+import ru.bondarenko.orientvibe.ng.audio.AudioSignalType
 
 /**
  * Направление отклонения пользователя от целевого маршрута.

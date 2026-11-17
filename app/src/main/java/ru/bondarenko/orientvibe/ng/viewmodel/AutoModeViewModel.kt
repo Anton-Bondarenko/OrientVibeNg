@@ -19,14 +19,19 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import ru.bondarenko.orientvibe.ng.auto.ApproachEvents
+import ru.bondarenko.orientvibe.ng.audio.ApproachState
+import ru.bondarenko.orientvibe.ng.audio.AudioPlayConfig
+import ru.bondarenko.orientvibe.ng.audio.AudioSignalConfig
 import ru.bondarenko.orientvibe.ng.audio.StereoAudioPlayer
+import ru.bondarenko.orientvibe.ng.audio.ArrivedState
 import ru.bondarenko.orientvibe.ng.auto.AutoMoveManager
 import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
 import ru.bondarenko.orientvibe.ng.gps.MapGeometry
 import ru.bondarenko.orientvibe.ng.gps.NavViewModel
 import ru.bondarenko.orientvibe.ng.model.AccuracyLevel
 import ru.bondarenko.orientvibe.ng.model.AudioSignalState
-import ru.bondarenko.orientvibe.ng.model.AudioSignalType
+import ru.bondarenko.orientvibe.ng.audio.AudioSignalType
 import ru.bondarenko.orientvibe.ng.model.AutoMapState
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.model.CalibrationPoint
@@ -37,14 +42,11 @@ import ru.bondarenko.orientvibe.ng.model.GpsState
 import ru.bondarenko.orientvibe.ng.model.MapCalibration
 import ru.bondarenko.orientvibe.ng.model.MoveReadyAlert
 import ru.bondarenko.orientvibe.ng.model.MovementState
-import ru.bondarenko.orientvibe.ng.model.TrackPoint
 import ru.bondarenko.orientvibe.ng.service.BackgroundNavigationService
 import ru.bondarenko.orientvibe.ng.yolo.MapDetectionProgressListener
 import ru.bondarenko.orientvibe.ng.yolo.MapDetectionResult
 import ru.bondarenko.orientvibe.ng.yolo.MapDetector
-import java.util.Locale
 import kotlin.concurrent.thread
-import kotlin.math.abs
 
 /**
  * Внутренний результат жесткой привязки к координате.
@@ -81,10 +83,29 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
     private var arrivedPlayedForControlNum: Int = -1
     private var lastAudioPlayTimestampMs: Long = 0L
     private var lastPlayedSignalType: AudioSignalType = AudioSignalType.NONE
+
+    // Состояние подхода для событийной модели (персистент между кадрами)
+    private var lastApproachControlNum: Int = -1
+    private var approachWasInSearch: Boolean = false
+    private var approachWasInDouble: Boolean = false
+    private var approachWasInSingle: Boolean = false
+    private var approachWasOnMoveToCP: Boolean = false
     private var _firstGps: GpsCoordinate? = null
     private var accuracyLevelTransitionCount = 0
 
     var navVm: NavViewModel? = null
+
+    /** Полностью останавливает навигационное аудио (для режима "Нет звука"). */
+    fun setSoundMuted(muted: Boolean) {
+        if (muted) {
+            _audioPlayer.stop()
+            lastPlayedSignalType = AudioSignalType.NONE
+            Log.d(tag, "Навигационное аудио полностью отключено")
+        } else {
+            lastPlayedSignalType = AudioSignalType.APPROACH_SINGLE // форсировать ресет
+            Log.d(tag, "Навигационное аудио включено")
+        }
+    }
 
     val isLoading: Boolean
         get() = _mapState.value.bitmap == null
@@ -440,6 +461,24 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         }
     }
 
+    private fun getSoundMode(): String {
+        return try {
+            val prefs = context.getSharedPreferences("orientvibe_settings", 0)
+            prefs.getString("sound_mode", "errors") ?: "errors"
+        } catch (_: Exception) {
+            "errors"
+        }
+    }
+
+    private fun getAutoBind(): Boolean {
+        return try {
+            val prefs = context.getSharedPreferences("orientvibe_settings", 0)
+            prefs.getBoolean("auto_bind", true)
+        } catch (_: Exception) {
+            true
+        }
+    }
+
     private fun onMove(gpsFix: GpsFix?) {
         val ms = _movementState.value
         val mapCalibration = _calibration ?: return
@@ -447,11 +486,12 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
 
         // doMove mutates its movementState arg in-place and returns it as result2,
         // so result2 IS workingState — skip the second .copy() cascade (3 objects)
+        val autoBind = getAutoBind()
         val updatedState = ms.copy(
             currentControl = ms.currentControl.copy(),
             prevControl = ms.prevControl.copy()
         )
-        _autoMoveManager.doMove(_mapState.value, updatedState, mapCalibration, fix)
+        _autoMoveManager.doMove(_mapState.value, updatedState, mapCalibration, fix, autoBind)
         // Only emit autoCalibrations when doMove actually produced a new calibration
         // (avoids unnecessary ArrayList copy + StateFlow emission on every onMove)
         if (updatedState.newMapCalibration != null) {
@@ -468,88 +508,72 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             )
         }
 
-        val prevSignal = updatedState.audioSignalState.type
-        val audioState = navData?.let { AutoMoveManager.analyzeAudioSignal(it) }
-            ?: AudioSignalState(type = AudioSignalType.NONE)
+        // ── Аудио-сигнал: единый вызов playSignal со всеми параметрами ──────────────
+        val confA = _calibration?.pointA?.confidence ?: 1.0
+        val confB = _calibration?.pointB?.confidence ?: 1.0
+        val confProduct = if (_calibration?.pointB != null) confA * confB else confA
 
-        // Полная тишина в радиусе 40 метров от КП
-        // В радиусе 50 м от КП: один раз проигрываем трель прибытия, затем молчим
-        if (audioState.distanceToTargetMeters < 50.0) {
-            val currentCpNum = updatedState.currentControl.num
-            if (arrivedPlayedForControlNum != currentCpNum) {
-                Log.d("AudioNav", "▶ ARRIVED trill for CP #$currentCpNum")
-                _audioPlayer.playTrill(1300, 15.0f, 600L, 1.0f, audioState.leftBalance)
-                arrivedPlayedForControlNum = currentCpNum
-                lastAudioPlayTimestampMs = System.currentTimeMillis()
-                lastPlayedSignalType = AudioSignalType.ARRIVED
+        AudioSignalConfig.playSignal(
+            AudioPlayConfig(
+                audioPlayer = _audioPlayer,
+                context = context,
+                approachState = if (updatedState.approachControlNum != lastApproachControlNum) {
+                    // Новая точка калибровки — полный сброс
+                    ApproachState(updatedState.approachControlNum)
+                } else {
+                    // Тот же CP — сохраняем wasIn* флаги, создаём свежий events контейнер
+                    ApproachState(
+                        controlNum = updatedState.approachControlNum,
+                        events = ApproachEvents(),
+                        wasInSearchRadius = approachWasInSearch,
+                        wasInApproachDouble = approachWasInDouble,
+                        wasInApproachSingle = approachWasInSingle,
+                        wasOnMoveToCP = approachWasOnMoveToCP
+                    )
+                },
+                arrivedState = ArrivedState(arrivedPlayedForControlNum),
+                lastPlayedSignalType = lastPlayedSignalType,
+                lastAudioPlayTimestampMs = lastAudioPlayTimestampMs,
+                soundMode = getSoundMode(),
+                fixSpeedKmH = fix.speed.toFloat() * 3.6f,
+                confidenceProduct = confProduct,
+                hasCalibrationPointB = _calibration?.pointB != null,
+                navData = navData
+        ).also { cfg ->
+            // playSignal обновляет поля cfg в place — синхронизируем обратно в ViewModel
+            updatedState.audioSignalState = cfg.audioSignalState
+            lastPlayedSignalType = cfg.lastPlayedSignalType
+            lastAudioPlayTimestampMs = cfg.lastAudioPlayTimestampMs
+            arrivedPlayedForControlNum = cfg.arrivedState.playedControlNum
+
+            // События подхода — персистент между кадрами
+            if (updatedState.approachControlNum == lastApproachControlNum) {
+                approachWasInSearch = cfg.approachState.wasInSearchRadius
+                approachWasInDouble = cfg.approachState.wasInApproachDouble
+                approachWasInSingle = cfg.approachState.wasInApproachSingle
+                approachWasOnMoveToCP = cfg.approachState.wasOnMoveToCP
+            } else {
+                lastApproachControlNum = updatedState.approachControlNum
             }
-            updatedState.audioSignalState = AudioSignalState(type = AudioSignalType.NONE)
-            updatedState.approachControlNum = 0
-            updatedState.approachDistKey = 0
-            _movementState.value = updatedState
-            return
-        }
 
-        updatedState.audioSignalState = audioState
-
-        val now = System.currentTimeMillis()
-        val elapsedMs = now - lastAudioPlayTimestampMs
-        val canPlayByTimer = elapsedMs >= audioState.intervalMs
-        val isSignalChanged = audioState.type != lastPlayedSignalType
-
-        // Сигналы приближения (APPROACH) срабатывают сразу при входе в зону 100м/50м,
-        // а сигналы отклонения (DEVIATION) — строго по таймеру intervalMs
-        val shouldPlay = when (audioState.type) {
-            AudioSignalType.NONE -> false
-            AudioSignalType.APPROACH_SINGLE, AudioSignalType.APPROACH_DOUBLE -> true
-            else -> canPlayByTimer || (isSignalChanged && lastPlayedSignalType != AudioSignalType.ARRIVED && elapsedMs >= 3000L)
-        }
-
-        if (shouldPlay) {
-            Log.d(
-                "AudioNav",
-                String.format(
-                    Locale.US,
-                    "[PLAY] type=%s | dist=%.1fm | dev=%.1f° | pause=%dms (elapsed=%dms)",
-                    audioState.type,
-                    audioState.distanceToTargetMeters,
-                    audioState.deviationDeg,
-                    audioState.intervalMs,
-                    elapsedMs
-                )
-            )
-            when (audioState.type) {
-                AudioSignalType.APPROACH_SINGLE, AudioSignalType.APPROACH_DOUBLE -> {
-                    val distKey = if (audioState.type == AudioSignalType.APPROACH_SINGLE) 100 else 50
-                    if (updatedState.approachControlNum != updatedState.currentControl.num || updatedState.approachDistKey != distKey) {
-                        playDoubleBeep(audioState)
-                        updatedState.approachControlNum = updatedState.currentControl.num
-                        updatedState.approachDistKey = distKey
-                        lastAudioPlayTimestampMs = now
-                        lastPlayedSignalType = audioState.type
-                    }
-                }
-
-                AudioSignalType.DEVIATION -> {
-                    val durationMs = (200.0 + (5.0 * abs(audioState.deviationDeg))).toLong().coerceAtMost(600L)
-                    _audioPlayer.playTone(audioState.frequencyHz, durationMs, 1.0f, audioState.leftBalance)
-                    lastAudioPlayTimestampMs = now
-                    lastPlayedSignalType = AudioSignalType.DEVIATION
-                }
-
-                else -> {}
+            // arrivedPlayedForControlNum — синхронизируем обратно, иначе трель играет каждый кадр!
+            if (cfg.audioSignalState.type == AudioSignalType.NONE && cfg.arrivedState.playedControlNum != -1) {
+                arrivedPlayedForControlNum = cfg.arrivedState.playedControlNum
             }
         }
+        )
 
         // Сохраняем в StateFlow уже ПОСЛЕ обновления lastAudioPlayMs и audioSignalState
         _movementState.value = updatedState
 
         updatedState.newMapCalibration?.let { newCalib ->
             val prefs = context.getSharedPreferences("orientvibe_settings", 0)
-            if (prefs.getBoolean("auto_calibration", true)) {
+            if (!autoBind) {
+                Log.d(tag, "Автопривязка выключена — newMapCalibration пропущен")
+            } else if (prefs.getBoolean("auto_calibration", true)) {
                 applyNewCalibration(newCalib)
             } else {
-                Log.d("AutoModeVM", "Автокалибровка отключена — newMapCalibration пропущен")
+                Log.d(tag, "Автокалибровка отключена — newMapCalibration пропущен")
             }
         }
     }
@@ -614,6 +638,11 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         arrivedPlayedForControlNum = -1
         lastAudioPlayTimestampMs = 0L
         lastPlayedSignalType = AudioSignalType.NONE
+        lastApproachControlNum = -1
+        approachWasInSearch = false
+        approachWasInDouble = false
+        approachWasInSingle = false
+        approachWasOnMoveToCP = false
     }
 
     private fun playDoubleBeep(audioState: AudioSignalState) {
@@ -622,17 +651,17 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             "AudioPlayer",
             "playDoubleBeep: " + if (isDoublePair) "double-pair(4beeps)" else "single-pair(2beeps)"
         )
-        _audioPlayer.playTone(1400, 120L, 1.0f, 0.5f)
+        _audioPlayer.playTone(AudioSignalConfig.APPROACH_TONE1_FREQ, AudioSignalConfig.APPROACH_TONE_DUR_MS, 1.0f, AudioSignalConfig.APPROACH_TONE_BALANCE)
         thread(start = true) {
-            Thread.sleep(180L)
-            _audioPlayer.playTone(1100, 120L, 1.0f, 0.5f)
+            Thread.sleep(AudioSignalConfig.APPROACH_PAIR_GAP_MS)
+            _audioPlayer.playTone(AudioSignalConfig.APPROACH_TONE2_FREQ, AudioSignalConfig.APPROACH_TONE_DUR_MS, 1.0f, AudioSignalConfig.APPROACH_TONE_BALANCE)
         }
         if (isDoublePair) {
             thread(start = true) {
-                Thread.sleep(900L)
-                _audioPlayer.playTone(1400, 120L, 1.0f, 0.5f)
-                Thread.sleep(180L)
-                _audioPlayer.playTone(1100, 120L, 1.0f, 0.5f)
+                Thread.sleep(AudioSignalConfig.APPROACH_DOUBLE_GAP_MS)
+                _audioPlayer.playTone(AudioSignalConfig.APPROACH_TONE1_FREQ, AudioSignalConfig.APPROACH_TONE_DUR_MS, 1.0f, AudioSignalConfig.APPROACH_TONE_BALANCE)
+                Thread.sleep(AudioSignalConfig.APPROACH_PAIR_GAP_MS)
+                _audioPlayer.playTone(AudioSignalConfig.APPROACH_TONE2_FREQ, AudioSignalConfig.APPROACH_TONE_DUR_MS, 1.0f, AudioSignalConfig.APPROACH_TONE_BALANCE)
             }
         }
     }
