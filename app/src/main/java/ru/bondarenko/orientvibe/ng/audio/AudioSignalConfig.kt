@@ -2,8 +2,9 @@ package ru.bondarenko.orientvibe.ng.audio
 
 import android.content.Context
 import android.util.Log
-import ru.bondarenko.orientvibe.ng.auto.ApproachEvent
 import ru.bondarenko.orientvibe.ng.auto.ApproachEvents
+import ru.bondarenko.orientvibe.ng.auto.FrameEvent
+import ru.bondarenko.orientvibe.ng.auto.FrameEventGenerator
 import ru.bondarenko.orientvibe.ng.model.AudioSignalState
 import ru.bondarenko.orientvibe.ng.model.DeviationDirection
 import ru.bondarenko.orientvibe.ng.model.NavigationData
@@ -113,71 +114,10 @@ object AudioSignalConfig {
     const val DEVIATION_BASE_DUR_MS = 200L
     const val DEVIATION_DEG_PER_MS = 5.0
 
+    // ═══════════ 1. ГЕНЕРАЦИЯ СОБЫТИЙ КАДРА (вынесено в auto/FrameEvent.kt) ═══════════
+
     private fun scaleFactorFor(confidenceProduct: Double): Double {
         return if (confidenceProduct > 0.0) 1.0 / confidenceProduct else Double.MAX_VALUE
-    }
-
-    // ═══════════ 1. ГЕНЕРАЦИЯ СОБЫТИЙ КАДРА ═══════════
-
-    /**
-     * Вычисляет события текущего кадра на основе дистанции и истории пересечений.
-     * - ON_SEARCH_RADIUS, ON_APPROACH_RADIUS, ON_100_RADIUS — строго 1 раз при входе.
-     * - ON_MOVE_TO_CP — каждый кадр, пока находимся вне ON_SEARCH_RADIUS.
-     */
-    fun evaluateFrameEvents(
-        controlNum: Int,
-        navData: NavigationData,
-        confidenceProduct: Double,
-        state: ApproachState
-    ): List<ApproachEvent> {
-        if (state.controlNum != controlNum) {
-            state.resetForControl(controlNum)
-        } else {
-            state.events.clear()
-        }
-
-        val sf = scaleFactorFor(confidenceProduct)
-        val searchRadius = BASE_SILENT_RADIUS_M * sf
-        val approachRadius = BASE_APPROACH_DOUBLE_M * sf
-        val radius100 = BASE_APPROACH_SINGLE_M * sf
-
-        val dist = navData.distanceToTargetMeters
-        val devDeg = navData.deviationDeg
-
-        val inSearchNow = dist < searchRadius
-        val inDoubleNow = dist < approachRadius
-        val inSingleNow = dist < radius100
-
-        // Одноразовые события при пересечении границы снаружи внутрь
-        if (inSearchNow && !state.wasInSearchRadius) {
-            state.events.add(
-                ApproachEvent(ApproachEvent.EventType.ON_SEARCH_RADIUS, controlNum, dist.toFloat(), devDeg)
-            )
-        }
-        if (inDoubleNow && !state.wasInApproachDouble) {
-            state.events.add(
-                ApproachEvent(ApproachEvent.EventType.ON_APPROACH_RADIUS, controlNum, dist.toFloat(), devDeg)
-            )
-        }
-        if (inSingleNow && !state.wasInApproachSingle) {
-            state.events.add(
-                ApproachEvent(ApproachEvent.EventType.ON_100_RADIUS, controlNum, dist.toFloat(), devDeg)
-            )
-        }
-
-        // Непрерывное событие движения — каждый кадр вне радиуса поиска
-        if (!inSearchNow) {
-            state.events.add(
-                ApproachEvent(ApproachEvent.EventType.ON_MOVE_TO_CP, controlNum, dist.toFloat(), devDeg)
-            )
-        }
-
-        // Фиксируем состояние для следующего кадра
-        state.wasInSearchRadius = inSearchNow
-        state.wasInApproachDouble = inDoubleNow
-        state.wasInApproachSingle = inSingleNow
-
-        return state.events.items()
     }
 
     // ═══════════ 2. ОБРАБОТКА СОБЫТИЙ И ВЫВОД ЗВУКА ═══════════
@@ -187,7 +127,7 @@ object AudioSignalConfig {
      */
     fun playSignal(cfg: AudioPlayConfig) {
         val navData = cfg.navData ?: return
-        val events = evaluateFrameEvents(
+        val events = FrameEventGenerator.evaluate(
             controlNum = cfg.approachState.controlNum,
             navData = navData,
             confidenceProduct = cfg.confidenceProduct,
@@ -199,7 +139,7 @@ object AudioSignalConfig {
     /**
      * Реагирует на список самостоятельных событий кадра.
      */
-    fun handleFrameEvents(events: List<ApproachEvent>, cfg: AudioPlayConfig) {
+    fun handleFrameEvents(events: List<FrameEvent>, cfg: AudioPlayConfig) {
         val navData = cfg.navData ?: return
         val dist = navData.distanceToTargetMeters
         val devDeg = navData.deviationDeg
@@ -207,10 +147,10 @@ object AudioSignalConfig {
 
         val sf = scaleFactorFor(cfg.confidenceProduct)
         val deadZoneDeg = BASE_DEAD_ZONE_DEG * sf
-        val isMovingToCp = events.any { it.type == ApproachEvent.EventType.ON_MOVE_TO_CP }
+        val isMovingToCp = events.any { it.type == FrameEvent.EventType.ON_MOVE_TO_CP }
 
         // Если мы внутри радиуса поиска (!isMovingToCp), но событие входа уже прошло в прошлых кадрах — тишина
-        if (!isMovingToCp && events.none { it.type == ApproachEvent.EventType.ON_SEARCH_RADIUS }) {
+        if (!isMovingToCp && events.none { it.type == FrameEvent.EventType.ON_SEARCH_RADIUS }) {
             cfg.audioSignalState = AudioSignalState(type = AudioSignalType.NONE, intervalMs = 0L)
             cfg.lastPlayedSignalType = AudioSignalType.NONE
             return
@@ -228,7 +168,7 @@ object AudioSignalConfig {
         for (event in events) {
             when (event.type) {
                 // ── Вход в 40 м (срабатывает 1 раз) ──────────────────────────
-                ApproachEvent.EventType.ON_SEARCH_RADIUS -> {
+                FrameEvent.EventType.ON_SEARCH_RADIUS -> {
                     val curCpNum = event.controlNum
                     if (cfg.arrivedState.playedControlNum != curCpNum) {
                         Log.d("AudioNav", "▶ ARRIVED trill: CP#$curCpNum dist=${"%.1f".format(Locale.US, event.distM)}m")
@@ -247,20 +187,20 @@ object AudioSignalConfig {
                 }
 
                 // ── Вход в 50 м (срабатывает 1 раз) ──────────────────────────
-                ApproachEvent.EventType.ON_APPROACH_RADIUS -> {
+                FrameEvent.EventType.ON_APPROACH_RADIUS -> {
                     Log.d("AudioNav", "▶ APPROACH_DOUBLE: dist=${"%.1f".format(Locale.US, event.distM)}m dev=${"%.1f".format(Locale.US, event.devDeg)}°")
                     playApproachDoubleBeep(cfg.audioPlayer)
                     activeTypeForState = AudioSignalType.APPROACH_DOUBLE
                 }
 
 // ── Вход в 100 м (срабатывает 1 раз) ─────────────────────────
-                ApproachEvent.EventType.ON_100_RADIUS -> {
+                FrameEvent.EventType.ON_100_RADIUS -> {
                     Log.d("AudioNav", "▶ APPROACH_SINGLE: dist=${"%.1f".format(Locale.US, event.distM)}m dev=${"%.1f".format(Locale.US, event.devDeg)}°")
                     playApproachSingleBeep(cfg.audioPlayer)
                     activeTypeForState = AudioSignalType.APPROACH_SINGLE
                 }
 // ── Движение к КП (каждый кадр вне 40 м) ──────────────────────
-                ApproachEvent.EventType.ON_MOVE_TO_CP -> {
+                FrameEvent.EventType.ON_MOVE_TO_CP -> {
                     val angleIsCenter = absDegVal <= deadZoneDeg || navData.direction == DeviationDirection.CENTER
                     if (angleIsCenter) {
                         if (activeTypeForState == AudioSignalType.NONE) {
