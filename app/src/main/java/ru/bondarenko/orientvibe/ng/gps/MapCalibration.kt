@@ -9,8 +9,9 @@ import kotlin.math.max
 import kotlin.math.sin
 
 /**
- * Результат усреднения скалярных значений калибровок на треке.
+ * Утилитарный менеджер для расчетов и геометрических преобразований калибровки карты.
  */
+/** Усреднённые скаляры калибровки */
 data class AveragedScalars(
     val scaleX: Double,
     val scaleY: Double,
@@ -20,17 +21,12 @@ data class AveragedScalars(
     val hasPointB: Boolean
 )
 
-/**
- * Результат жесткой привязки GPS к финишной точке.
- */
+/** Результат привязки GPS к финишу */
 data class BindResult(
     val calibration: MapCalibration,
-    val northAngleDegrees: Double
+    val northAngleDeg: Double
 )
 
-/**
- * Утилитарный менеджер для расчетов и геометрических преобразований калибровки карты.
- */
 object MapCalibrationUtils {
 
     private const val DEFAULT_SCALE = 4000.0

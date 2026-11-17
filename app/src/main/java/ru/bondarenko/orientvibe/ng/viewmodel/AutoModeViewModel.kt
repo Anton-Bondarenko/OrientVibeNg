@@ -25,9 +25,9 @@ import ru.bondarenko.orientvibe.ng.audio.AudioPlayConfig
 import ru.bondarenko.orientvibe.ng.audio.AudioSignalConfig
 import ru.bondarenko.orientvibe.ng.audio.AudioSignalType
 import ru.bondarenko.orientvibe.ng.audio.StereoAudioPlayer
-import ru.bondarenko.orientvibe.ng.auto.AutoMoveManager
 import ru.bondarenko.orientvibe.ng.auto.FrameEventGenerator
 import ru.bondarenko.orientvibe.ng.auto.RecalibrationManager
+import ru.bondarenko.orientvibe.ng.auto.TrackCalculation
 import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
 import ru.bondarenko.orientvibe.ng.gps.MapGeometry
 import ru.bondarenko.orientvibe.ng.gps.NavViewModel
@@ -36,16 +36,19 @@ import ru.bondarenko.orientvibe.ng.model.AutoMapState
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.model.CalibrationPoint
 import ru.bondarenko.orientvibe.ng.model.CurrentControl
+import ru.bondarenko.orientvibe.ng.model.DeviationDirection
 import ru.bondarenko.orientvibe.ng.model.GpsCoordinate
 import ru.bondarenko.orientvibe.ng.model.GpsFix
 import ru.bondarenko.orientvibe.ng.model.GpsState
 import ru.bondarenko.orientvibe.ng.model.MapCalibration
 import ru.bondarenko.orientvibe.ng.model.MoveReadyAlert
 import ru.bondarenko.orientvibe.ng.model.MovementState
+import ru.bondarenko.orientvibe.ng.model.NavigationData
 import ru.bondarenko.orientvibe.ng.service.BackgroundNavigationService
 import ru.bondarenko.orientvibe.ng.yolo.MapDetectionProgressListener
 import ru.bondarenko.orientvibe.ng.yolo.MapDetectionResult
 import ru.bondarenko.orientvibe.ng.yolo.MapDetector
+import kotlin.math.abs
 
 /**
  * Внутренний результат жесткой привязки к координате.
@@ -72,9 +75,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
     val calibrationVersion: StateFlow<Int> = _calibrationVersion.asStateFlow()
 
     private val _autoCalibrationsList = MutableStateFlow<List<MapCalibration>>(emptyList())
-    val autoCalibrations: StateFlow<List<MapCalibration>> = _autoCalibrationsList.asStateFlow()
-
-    private val _autoMoveManager = AutoMoveManager()
+//    private val _autoMoveManager = AutoMoveManager()
     private val _audioPlayer: StereoAudioPlayer = StereoAudioPlayer.getInstance(context)
     private val mapDetector = MapDetector(context)
 
@@ -457,6 +458,36 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             true
         }
     }
+
+    fun analyzeNavigation(
+        currentControlNum: Int,
+        gpsFix: GpsFix,
+        mapCalibration: MapCalibration,
+        autoMapState: AutoMapState,
+        lastAvgBearing: Double? = null
+    ): NavigationData? {
+        if (mapCalibration.pointB == null) return null
+        val currentControlBoundingBox = autoMapState.controlsBoundingBoxes
+            .firstOrNull { it.number == currentControlNum } ?: return null
+        val targetGps = MapGeometry.imageToGps(
+            currentControlBoundingBox.centerX,
+            currentControlBoundingBox.centerY,
+            mapCalibration,
+            autoMapState.northAngle
+        ) ?: return null
+        val bearingToTarget = MapGeometry.bearing(gpsFix.coordinate, targetGps)
+        val currentBearing = lastAvgBearing ?: gpsFix.bearing
+        var deviation = currentBearing - bearingToTarget
+        while (deviation > 180.0) deviation -= 360.0
+        while (deviation < -180.0) deviation += 360.0
+        val direction = when {
+            abs(deviation) <= 10.0 -> DeviationDirection.CENTER
+            deviation > 0.0 -> DeviationDirection.RIGHT
+            else -> DeviationDirection.LEFT
+        }
+        val distanceToTarget = MapGeometry.haversineDistance(gpsFix.coordinate, targetGps)
+        return NavigationData(bearingToTarget, distanceToTarget, deviation, direction)
+    }
     private fun onMove(gpsFix: GpsFix?) {
         val ms = _movementState.value
         val mapCalibration = _calibration ?: return
@@ -466,18 +497,18 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             currentControl = ms.currentControl.copy(),
             prevControl = ms.prevControl.copy()
         )
-        _autoMoveManager.doMove(_mapState.value, updatedState, mapCalibration, fix, autoBind)
-        if (updatedState.newMapCalibration != null) {
-            _autoCalibrationsList.value = _autoMoveManager.autoCalibrations
-        }
+//        _autoMoveManager.doMove(_mapState.value, updatedState, mapCalibration, fix, autoBind)
+//        if (updatedState.newMapCalibration != null) {
+//            _autoCalibrationsList.value = _autoMoveManager.autoCalibrations
+//        }
         val currentCpNum = updatedState.currentControl.num
         val navData = _calibration?.let {
-            AutoMoveManager.analyzeNavigation(
+            analyzeNavigation(
                 currentCpNum,
                 fix,
                 it,
                 _mapState.value,
-                _autoMoveManager.getLastAverage3Bearing()
+                TrackCalculation.getLastAverage3Bearing()
             )
         }
 // ── Синхронизируем номер текущего КП и генерируем FrameEvent каждый кадр ──
@@ -499,7 +530,19 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         } ?: emptyList()
 
         // Распределение событий по модулям
-        RecalibrationManager.handleFrameEvents(frameEvents)
+        val autoCalibList = _autoCalibrationsList.value.toMutableList()
+        RecalibrationManager.handleFrameEvents(
+            events = frameEvents,
+            mapState = _mapState.value,
+            movementState = updatedState,
+            mapCalibration = mapCalibration,
+            autoBind = autoBind,
+            trackHistory = TrackCalculation.trackHistory,
+            autoCalibrations = autoCalibList
+        )
+        if (autoCalibList.isNotEmpty() && autoCalibList != _autoCalibrationsList.value) {
+            _autoCalibrationsList.value = autoCalibList
+        }
 
         val audioPlayConfig = AudioPlayConfig(
             audioPlayer = _audioPlayer,
@@ -515,6 +558,9 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             navData = navData
         )
         AudioSignalConfig.handleAudio(frameEvents, audioPlayConfig)
+
+        TrackCalculation.onMove(gpsFix)
+
 // Синхронизируем обновлённые поля обратно в ViewModel
         updatedState.audioSignalState = audioPlayConfig.audioSignalState
         lastPlayedSignalType = audioPlayConfig.lastPlayedSignalType

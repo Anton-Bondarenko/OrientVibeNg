@@ -30,17 +30,9 @@ data class FrameEvent(
         /** Пересечение радиуса одиночного писка (100 м) */
         ON_100_RADIUS,
         /** Выход за DIST_GAP после подхода к КП — срабатывает ОДИН РАЗ */
-        ON_LEAVING_CP;
-
-        /** Дистанция по умолчанию для confidence=1.0 */
-        val baseRadiusM: Float
-            get() = when (this) {
-                ON_MOVE_TO_CP -> 0f      // не радиус, а состояние "вне всех"
-                ON_SEARCH_RADIUS -> 40f
-                ON_APPROACH_RADIUS -> 50f
-                ON_100_RADIUS -> 100f
-                ON_LEAVING_CP -> 0f      // событие перехода, не радиус
-            }
+        ON_LEAVING_CP,
+        /** Движение каждый кадр — всегда, без условий */
+        ON_MOVE;
     }
 
     /** Название события для логгирования */
@@ -51,6 +43,7 @@ data class FrameEvent(
             EventType.ON_APPROACH_RADIUS -> "ON_APPROACH_RADIUS"
             EventType.ON_100_RADIUS -> "ON_100_RADIUS"
             EventType.ON_LEAVING_CP -> "ON_LEAVING_CP"
+            EventType.ON_MOVE -> "ON_MOVE"
         }
 }
 
@@ -118,6 +111,9 @@ object FrameEventGenerator {
         if (!inSearchNow) {
             state.events.add(FrameEvent(FrameEvent.EventType.ON_MOVE_TO_CP, controlNum, dist.toFloat(), devDeg))
         }
+
+        // ON_MOVE — каждый кадр без условий
+        state.events.add(FrameEvent(FrameEvent.EventType.ON_MOVE, controlNum, dist.toFloat(), devDeg))
 
         state.wasInSearchRadius = inSearchNow
         state.wasInApproachDouble = inApproachNow

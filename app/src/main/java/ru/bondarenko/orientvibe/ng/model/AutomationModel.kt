@@ -53,36 +53,6 @@ data class MovementState(
     var approachControlNum: Int = 0,
     var approachDistKey: Int = 0
 ) {
-    val isPeriodicSignal: Boolean
-        get() = audioSignalState.type == AudioSignalType.DEVIATION
-
-    /**
-     * Проверка возможности воспроизведения очередного навигационного аудио-сигнала по таймауту.
-     */
-    fun canPlayAudioSignal(): Boolean {
-        val interval = audioSignalState.intervalMs
-        return interval <= 0L || (System.currentTimeMillis() - lastAudioPlayMs) >= interval
-    }
-
-    /**
-     * Флаг, определяющий, произошло ли переключение на следующий контрольный пункт.
-     */
-    fun didSwitchControl(): Boolean {
-        return currentControl.num != prevControl.num && prevControl.num > 0
-    }
-
-    /**
-     * Сдвиг индексации навигации на следующее BoundingBox препятствие.
-     */
-    fun nextControl(mapState: AutoMapState) {
-        prevControl = currentControl
-        val nextNum = currentControl.num + 1
-
-        val nextBoundingBox = mapState.controlsBoundingBoxes
-            .firstOrNull { (it as BoundingBox).number == nextNum } as? BoundingBox
-
-        currentControl = CurrentControl(nextNum, nextBoundingBox)
-    }
 
     /**
      * Установка конкретного контрольного пункта с автоматическим вычислением предыдущего.
@@ -96,15 +66,5 @@ data class MovementState(
 
         currentControl = CurrentControl(num, nextBoundingBox)
         prevControl = CurrentControl(num - 1, prevBoundingBox)
-    }
-
-    companion object {
-        // Константы, перенесённые из глобального файла утилит AutomationModelKt
-        const val APPROACH_DOUBLE_DIST = 50.0f
-        const val APPROACH_SINGLE_DIST = 100.0f
-        const val AUDIO_ARRIVED_DIST = 40.0f
-        const val CLOSE_INTERVAL_MS = 10000L
-        const val FAR_INTERVAL_MS = 30000L
-        const val ON_TARGET_DEG = 10.0
     }
 }
