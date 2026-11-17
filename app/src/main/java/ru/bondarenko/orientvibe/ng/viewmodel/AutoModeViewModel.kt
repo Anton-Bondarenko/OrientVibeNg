@@ -26,6 +26,8 @@ import ru.bondarenko.orientvibe.ng.audio.AudioSignalConfig
 import ru.bondarenko.orientvibe.ng.audio.AudioSignalType
 import ru.bondarenko.orientvibe.ng.audio.StereoAudioPlayer
 import ru.bondarenko.orientvibe.ng.auto.AutoMoveManager
+import ru.bondarenko.orientvibe.ng.auto.FrameEventGenerator
+import ru.bondarenko.orientvibe.ng.auto.RecalibrationManager
 import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
 import ru.bondarenko.orientvibe.ng.gps.MapGeometry
 import ru.bondarenko.orientvibe.ng.gps.NavViewModel
@@ -478,13 +480,27 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
                 _autoMoveManager.getLastAverage3Bearing()
             )
         }
-// ── Синхронизируем номер текущего КП перед генерацией событий кадра ──────
+// ── Синхронизируем номер текущего КП и генерируем FrameEvent каждый кадр ──
         if (approachState.controlNum != currentCpNum) {
             approachState.resetForControl(currentCpNum)
         }
         val confA = _calibration?.pointA?.confidence ?: 1.0
         val confB = _calibration?.pointB?.confidence ?: 1.0
         val confProduct = if (_calibration?.pointB != null) confA * confB else confA
+
+        // Генерация событий кадра — доступна всем модулям
+        val frameEvents = navData?.let { nd ->
+            FrameEventGenerator.evaluate(
+                controlNum = approachState.controlNum,
+                navData = nd,
+                confidenceProduct = confProduct,
+                state = approachState
+            )
+        } ?: emptyList()
+
+        // Распределение событий по модулям
+        RecalibrationManager.handleFrameEvents(frameEvents)
+
         val audioPlayConfig = AudioPlayConfig(
             audioPlayer = _audioPlayer,
             context = context,
@@ -498,7 +514,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             hasCalibrationPointB = _calibration?.pointB != null,
             navData = navData
         )
-        AudioSignalConfig.playSignal(audioPlayConfig)
+        AudioSignalConfig.handleAudio(frameEvents, audioPlayConfig)
 // Синхронизируем обновлённые поля обратно в ViewModel
         updatedState.audioSignalState = audioPlayConfig.audioSignalState
         lastPlayedSignalType = audioPlayConfig.lastPlayedSignalType

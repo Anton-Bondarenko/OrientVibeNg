@@ -1,7 +1,13 @@
 package ru.bondarenko.orientvibe.ng.auto
 
+import kotlin.math.min
+
 import ru.bondarenko.orientvibe.ng.audio.ApproachState
 import ru.bondarenko.orientvibe.ng.model.NavigationData
+
+/** Константы, общие с AutoMoveManager (shouldSwitch) */
+const val AUTO_APPROACHED_DIST = 80.0
+const val LEAVING_CP_MIN_GAP = 30.0
 
 /** Собыие пересечения радиуса — срабатывает ОДИН РАЗ в момент входа в зону */
 data class FrameEvent(
@@ -22,7 +28,9 @@ data class FrameEvent(
         /** Пересечение радиуса двойного писка (50 м) */
         ON_APPROACH_RADIUS,
         /** Пересечение радиуса одиночного писка (100 м) */
-        ON_100_RADIUS;
+        ON_100_RADIUS,
+        /** Выход за DIST_GAP после подхода к КП — срабатывает ОДИН РАЗ */
+        ON_LEAVING_CP;
 
         /** Дистанция по умолчанию для confidence=1.0 */
         val baseRadiusM: Float
@@ -31,6 +39,7 @@ data class FrameEvent(
                 ON_SEARCH_RADIUS -> 40f
                 ON_APPROACH_RADIUS -> 50f
                 ON_100_RADIUS -> 100f
+                ON_LEAVING_CP -> 0f      // событие перехода, не радиус
             }
     }
 
@@ -41,6 +50,7 @@ data class FrameEvent(
             EventType.ON_SEARCH_RADIUS -> "ON_SEARCH_RADIUS"
             EventType.ON_APPROACH_RADIUS -> "ON_APPROACH_RADIUS"
             EventType.ON_100_RADIUS -> "ON_100_RADIUS"
+            EventType.ON_LEAVING_CP -> "ON_LEAVING_CP"
         }
 }
 
@@ -65,11 +75,17 @@ object FrameEventGenerator {
     private const val BASE_APPROACH_DOUBLE_M = 50.0
     private const val BASE_APPROACH_SINGLE_M = 100.0
 
+    /** Константы, общие с AutoMoveManager */
+    const val AUTO_APPROACHED_DIST = 80.0
+    const val LEAVING_CP_MIN_GAP = 30.0
+
     fun evaluate(
         controlNum: Int,
         navData: ru.bondarenko.orientvibe.ng.model.NavigationData,
         confidenceProduct: Double,
-        state: ApproachState
+        state: ApproachState,
+        autoApproachedDist: Double = AUTO_APPROACHED_DIST,
+        distGap: Double = LEAVING_CP_MIN_GAP
     ): List<FrameEvent> {
         if (state.controlNum != controlNum) {
             state.resetForControl(controlNum)
@@ -107,66 +123,25 @@ object FrameEventGenerator {
         state.wasInApproachDouble = inApproachNow
         state.wasInApproachSingle = in100Now
 
+// В FrameEventGenerator.evaluate:
+// ── Detect ON_LEAVING_CP (точный аналог shouldSwitch) ───────────────────
+        if (dist < autoApproachedDist) {
+            state.wasApproachingCP = true
+        }
+
+        if (state.wasApproachingCP) {
+            state.approachMinDist = min(state.approachMinDist, dist)
+            if ((dist - state.approachMinDist) > distGap && !state.wasLeavingCP) {
+                state.events.add(
+                    FrameEvent(FrameEvent.EventType.ON_LEAVING_CP, controlNum, dist.toFloat(), devDeg)
+                )
+                state.wasLeavingCP = true
+            }
+        }
         return state.events.items()
     }
 
     private fun scaleFactorFor(confidenceProduct: Double): Double {
         return if (confidenceProduct > 0.0) 1.0 / confidenceProduct else Double.MAX_VALUE
-    }
-}
-
-class ApproachEventDetector {
-    private var lastControlNum: Int = -1
-    private var wasInSearchRadius: Boolean = false
-    private var wasInApproachRadius: Boolean = false
-    private var wasIn100Radius: Boolean = false
-
-    fun evaluate(
-        controlNum: Int,
-        distM: Float,
-        devDeg: Double,
-        confidenceProduct: Double
-    ): List<FrameEvent> {
-        // 1. При смене КП сбрасываем историю пересечений
-        if (controlNum != lastControlNum) {
-            lastControlNum = controlNum
-            wasInSearchRadius = false
-            wasInApproachRadius = false
-            wasIn100Radius = false
-        }
-
-        val scale = if (confidenceProduct > 0.0) (1.0 / confidenceProduct).toFloat() else Float.MAX_VALUE
-        val searchRadius = FrameEvent.EventType.ON_SEARCH_RADIUS.baseRadiusM * scale
-        val approachRadius = FrameEvent.EventType.ON_APPROACH_RADIUS.baseRadiusM * scale
-        val radius100 = FrameEvent.EventType.ON_100_RADIUS.baseRadiusM * scale
-
-        val inSearchNow = distM < searchRadius
-        val inApproachNow = distM < approachRadius
-        val in100Now = distM < radius100
-
-        val frameEvents = mutableListOf<FrameEvent>()
-
-        // 2. Одноразовые события пересечения радиусов (срабатывают только в момент входа)
-        if (inSearchNow && !wasInSearchRadius) {
-            frameEvents.add(FrameEvent(FrameEvent.EventType.ON_SEARCH_RADIUS, controlNum, distM, devDeg))
-        }
-        if (inApproachNow && !wasInApproachRadius) {
-            frameEvents.add(FrameEvent(FrameEvent.EventType.ON_APPROACH_RADIUS, controlNum, distM, devDeg))
-        }
-        if (in100Now && !wasIn100Radius) {
-            frameEvents.add(FrameEvent(FrameEvent.EventType.ON_100_RADIUS, controlNum, distM, devDeg))
-        }
-
-        // 3. Непрерывное событие движения (каждый фрейм, пока не вошли в радиус поиска)
-        if (!inSearchNow) {
-            frameEvents.add(FrameEvent(FrameEvent.EventType.ON_MOVE_TO_CP, controlNum, distM, devDeg))
-        }
-
-        // 4. Фиксируем текущее состояние для следующего фрейма
-        wasInSearchRadius = inSearchNow
-        wasInApproachRadius = inApproachNow
-        wasIn100Radius = in100Now
-
-        return frameEvents
     }
 }

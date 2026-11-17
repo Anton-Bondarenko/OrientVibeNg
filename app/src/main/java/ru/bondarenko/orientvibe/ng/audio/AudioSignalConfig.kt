@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import ru.bondarenko.orientvibe.ng.auto.ApproachEvents
 import ru.bondarenko.orientvibe.ng.auto.FrameEvent
-import ru.bondarenko.orientvibe.ng.auto.FrameEventGenerator
 import ru.bondarenko.orientvibe.ng.model.AudioSignalState
 import ru.bondarenko.orientvibe.ng.model.DeviationDirection
 import ru.bondarenko.orientvibe.ng.model.NavigationData
@@ -20,19 +19,29 @@ enum class AudioSignalType {
     APPROACH_DOUBLE
 }
 
-/** Состояние подхода — хранит флаги пересечения радиусов между кадрами */
+/** Состояние подхода — хранит флаги пересечения радиусов и подхода к КП между кадрами */
 class ApproachState(
     var controlNum: Int = -1,
     val events: ApproachEvents = ApproachEvents(),
     var wasInSearchRadius: Boolean = false,   // < 40 м
     var wasInApproachDouble: Boolean = false, // < 50 м
-    var wasInApproachSingle: Boolean = false  // < 100 м
+    var wasInApproachSingle: Boolean = false, // < 100 м
+
+    // Состояние для ON_LEAVING_CP (аналог shouldSwitch)
+    var wasApproachingCP: Boolean = false,     // был(и) в зоне AUTO_APPROACHED_DIST
+    var wasLeavingCP: Boolean = false,         // сработал ли ON_LEAVING_CP сейчас
+    var wasApproachedZone: Boolean = false,    // dist < 80 м (текущий кадр)
+    var approachMinDist: Double = Double.MAX_VALUE // минимум дистанции в зоне 80 м
 ) {
     fun resetForControl(newControlNum: Int) {
         controlNum = newControlNum
         wasInSearchRadius = false
         wasInApproachDouble = false
         wasInApproachSingle = false
+        wasApproachingCP = false
+        wasLeavingCP = false
+        wasApproachedZone = false
+        approachMinDist = Double.MAX_VALUE
         events.clear()
     }
 }
@@ -123,16 +132,10 @@ object AudioSignalConfig {
     // ═══════════ 2. ОБРАБОТКА СОБЫТИЙ И ВЫВОД ЗВУКА ═══════════
 
     /**
-     * Точка входа для кадра: генерирует события и запускает их звуковую обработку.
+     * Обработка готовых событий кадра + звуковая реакция.
+     * Генерация событий происходит в caller (onMove) — events доступны всем модулям.
      */
-    fun playSignal(cfg: AudioPlayConfig) {
-        val navData = cfg.navData ?: return
-        val events = FrameEventGenerator.evaluate(
-            controlNum = cfg.approachState.controlNum,
-            navData = navData,
-            confidenceProduct = cfg.confidenceProduct,
-            state = cfg.approachState
-        )
+    fun handleAudio(events: List<FrameEvent>, cfg: AudioPlayConfig) {
         handleFrameEvents(events, cfg)
     }
 
@@ -199,6 +202,11 @@ object AudioSignalConfig {
                     playApproachSingleBeep(cfg.audioPlayer)
                     activeTypeForState = AudioSignalType.APPROACH_SINGLE
                 }
+//// ── Выход за DIST_GAP после подхода (срабатывает ОДИН РАЗ) ────
+//                FrameEvent.EventType.ON_LEAVING_CP -> {
+//                    Log.d("AudioNav", "▶ LEAVING_CP: CP#${event.controlNum} dist=${"%.1f".format(Locale.US, event.distM)}m")
+//                }
+
 // ── Движение к КП (каждый кадр вне 40 м) ──────────────────────
                 FrameEvent.EventType.ON_MOVE_TO_CP -> {
                     val angleIsCenter = absDegVal <= deadZoneDeg || navData.direction == DeviationDirection.CENTER
@@ -236,6 +244,7 @@ object AudioSignalConfig {
                         cfg.lastPlayedSignalType = AudioSignalType.DEVIATION
                     }
                 }
+                else -> {}
             }
         }
 // Обновляем итоговое состояние кадра для UI
