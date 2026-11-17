@@ -19,19 +19,17 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import ru.bondarenko.orientvibe.ng.auto.ApproachEvents
 import ru.bondarenko.orientvibe.ng.audio.ApproachState
+import ru.bondarenko.orientvibe.ng.audio.ArrivedState
 import ru.bondarenko.orientvibe.ng.audio.AudioPlayConfig
 import ru.bondarenko.orientvibe.ng.audio.AudioSignalConfig
+import ru.bondarenko.orientvibe.ng.audio.AudioSignalType
 import ru.bondarenko.orientvibe.ng.audio.StereoAudioPlayer
-import ru.bondarenko.orientvibe.ng.audio.ArrivedState
 import ru.bondarenko.orientvibe.ng.auto.AutoMoveManager
 import ru.bondarenko.orientvibe.ng.gps.MapCalibrationUtils
 import ru.bondarenko.orientvibe.ng.gps.MapGeometry
 import ru.bondarenko.orientvibe.ng.gps.NavViewModel
 import ru.bondarenko.orientvibe.ng.model.AccuracyLevel
-import ru.bondarenko.orientvibe.ng.model.AudioSignalState
-import ru.bondarenko.orientvibe.ng.audio.AudioSignalType
 import ru.bondarenko.orientvibe.ng.model.AutoMapState
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.model.CalibrationPoint
@@ -46,7 +44,6 @@ import ru.bondarenko.orientvibe.ng.service.BackgroundNavigationService
 import ru.bondarenko.orientvibe.ng.yolo.MapDetectionProgressListener
 import ru.bondarenko.orientvibe.ng.yolo.MapDetectionResult
 import ru.bondarenko.orientvibe.ng.yolo.MapDetector
-import kotlin.concurrent.thread
 
 /**
  * Внутренний результат жесткой привязки к координате.
@@ -84,12 +81,9 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
     private var lastAudioPlayTimestampMs: Long = 0L
     private var lastPlayedSignalType: AudioSignalType = AudioSignalType.NONE
 
-    // Состояние подхода для событийной модели (персистент между кадрами)
-    private var lastApproachControlNum: Int = -1
-    private var approachWasInSearch: Boolean = false
-    private var approachWasInDouble: Boolean = false
-    private var approachWasInSingle: Boolean = false
-    private var approachWasOnMoveToCP: Boolean = false
+    // Единое состояние подхода для событийной модели (персистент между кадрами)
+    private val approachState = ApproachState()
+
     private var _firstGps: GpsCoordinate? = null
     private var accuracyLevelTransitionCount = 0
 
@@ -252,7 +246,6 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         val targetBox =
             _mapState.value.controlsBoundingBoxes.firstOrNull { it.number == targetNumber }
                 ?: return Pair(false, "CP #$targetNumber не найдена на карте")
-
         val pointB =
             CalibrationPoint(currentFix.coordinate, targetBox.centerX, targetBox.centerY, 1.0)
         val newCal =
@@ -261,30 +254,31 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
                 pointB,
                 _mapState.value.northAngle,
                 calibration
-                ) ?: return Pair(false, "Точки слишком близко — нельзя рассчитать масштаб")
+            ) ?: return Pair(false, "Точки слишком близко — нельзя рассчитать масштаб")
             else
                 MapGeometry.computeCalibrationHard(
                     calibration.pointA,
                     pointB,
-                    MapGeometry.calculateMagneticDeclination(currentFix.coordinate.latitude, currentFix.coordinate.longitude, currentFix.timestamp),
+                    MapGeometry.calculateMagneticDeclination(
+                        currentFix.coordinate.latitude,
+                        currentFix.coordinate.longitude,
+                        currentFix.timestamp
+                    ),
                     _mapState.value.northAngle
                 ) ?: return Pair(false, "Точки слишком близко — нельзя рассчитать масштаб")
-
         Log.d(tag, "===== recalibrateToTargetControl END =====")
         applyNewCalibration(newCal)
         setCurrentControl(targetNumber)
         return Pair(true, "Масштаб обновлён")
     }
-
     private fun applyNewCalibration(newCalibration: MapCalibration) {
         val navViewModel = navVm ?: return
-        // Обновляем только калибровку — НЕ startTracking(), чтобы не очистить трек при перекалибровке
+// Обновляем только калибровку — НЕ startTracking(), чтобы не очистить трек при перекалибровке
         navViewModel.applyNewCalibration(newCalibration)
         _calibration = newCalibration
         _mapState.value = _mapState.value.copy(mapCalibration = newCalibration)
         _calibrationVersion.value = _calibrationVersion.value + 1
     }
-
     fun startMonitoringIfNeeded() {
         val navViewModel = navVm
         if (navViewModel != null) {
@@ -294,7 +288,6 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             Log.w(tag, "startMonitoring: sharedNavViewModel is still null")
         }
     }
-
     private fun startGpsMonitoring(navViewModel: NavViewModel) {
         viewModelScope.launch {
             navViewModel.gpsState.collectLatest { gpsState ->
@@ -302,30 +295,25 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             }
         }
     }
-
     private fun handleGpsUpdate(gpsState: GpsState) {
         val currentLevel = gpsState.accuracyLevel
         val fix = gpsState.currentFix
-
         when (currentLevel) {
             AccuracyLevel.HIGH_ACCURACY -> {
                 if (fix != null) {
-                    // 1. Сразу после загрузки карты и получения хорошего GPS включаем запись трека
-                    // (даже если детекция YOLO ещё идёт)
+// 1. Сразу после загрузки карты и получения хорошего GPS включаем запись трека
+// (даже если детекция YOLO ещё идёт)
                     navVm?.enableTrackingWithoutClearing()
-
-                    // 2. Фиксируем самую первую точную GPS-координату после загрузки карты
+// 2. Фиксируем самую первую точную GPS-координату после загрузки карты
                     if (_firstGps == null) {
                         _firstGps = fix.coordinate
                         Log.d(tag, "Captured first GPS point after map load: $_firstGps")
                     }
-
                     accuracyLevelTransitionCount++
                     if (accuracyLevelTransitionCount == 1) {
                         showMoveReadyAlert()
                     }
-
-                    // 3. Привязку КП #1 и навигацию выполняем только когда детекция завершена
+// 3. Привязку КП #1 и навигацию выполняем только когда детекция завершена
                     if (!_mapState.value.isProcessing) {
                         if (_calibration == null) {
                             onNoBind(fix)
@@ -335,7 +323,6 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
                     }
                 }
             }
-
             AccuracyLevel.LOW_ACCURACY -> return
             AccuracyLevel.NO_FIX -> {
                 accuracyLevelTransitionCount = 0
@@ -344,7 +331,6 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             }
         }
     }
-
     private fun showMoveReadyAlert() {
         viewModelScope.launch {
             _moveReadyAlert.value =
@@ -368,7 +354,6 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             }
         }
     }
-
     override fun onProgressUpdate(current: Int, total: Int, message: String) {
         viewModelScope.launch {
             val currentHandle = mapDetector.currentTaskRef.get()
@@ -377,7 +362,6 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             }
         }
     }
-
     private fun applyDetectionResult(result: MapDetectionResult?, taskVersion: Int) {
         val currentHandle = mapDetector.currentTaskRef.get()
         if (currentHandle != null && currentHandle.version == taskVersion && !currentHandle.job.isCancelled && result != null) {
@@ -387,14 +371,12 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
                 isProcessing = false,
                 progressMessage = null
             )
-
-            // Детекция завершена: привязываем КП #1 к самой первой точке трека после загрузки карты
+// Детекция завершена: привязываем КП #1 к самой первой точке трека после загрузки карты
             if (_calibration == null) {
                 val navViewModel = navVm
                 val startCoord = _firstGps
                     ?: navViewModel?.trackData?.trackPoints?.firstOrNull()?.coordinate
                     ?: navViewModel?.gpsState?.value?.currentFix?.coordinate
-
                 if (startCoord != null && navViewModel != null) {
                     val bindResult = bindGpsToCp(startCoord, 1)
                     if (bindResult != null) {
@@ -406,7 +388,6 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             }
         }
     }
-
     fun loadImageFromUri(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -431,7 +412,6 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             }
         }
     }
-
     fun loadImageFromBitmap(bitmap: Bitmap, imageUri: Uri?) {
         var displayBitmap = bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)
         if (imageUri != null) {
@@ -450,7 +430,6 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         }
         launchDetectionWithBitmap(displayBitmap)
     }
-
     private fun onNoBind(fix: GpsFix) {
         val firstGps = _firstGps ?: fix.coordinate
         val navViewModel = navVm
@@ -460,7 +439,6 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             setCurrentControl(2)
         }
     }
-
     private fun getSoundMode(): String {
         return try {
             val prefs = context.getSharedPreferences("orientvibe_settings", 0)
@@ -469,7 +447,6 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             "errors"
         }
     }
-
     private fun getAutoBind(): Boolean {
         return try {
             val prefs = context.getSharedPreferences("orientvibe_settings", 0)
@@ -478,94 +455,56 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             true
         }
     }
-
     private fun onMove(gpsFix: GpsFix?) {
         val ms = _movementState.value
         val mapCalibration = _calibration ?: return
         val fix = gpsFix ?: return
-
-        // doMove mutates its movementState arg in-place and returns it as result2,
-        // so result2 IS workingState — skip the second .copy() cascade (3 objects)
         val autoBind = getAutoBind()
         val updatedState = ms.copy(
             currentControl = ms.currentControl.copy(),
             prevControl = ms.prevControl.copy()
         )
         _autoMoveManager.doMove(_mapState.value, updatedState, mapCalibration, fix, autoBind)
-        // Only emit autoCalibrations when doMove actually produced a new calibration
-        // (avoids unnecessary ArrayList copy + StateFlow emission on every onMove)
         if (updatedState.newMapCalibration != null) {
             _autoCalibrationsList.value = _autoMoveManager.autoCalibrations
         }
-
+        val currentCpNum = updatedState.currentControl.num
         val navData = _calibration?.let {
             AutoMoveManager.analyzeNavigation(
-                updatedState.currentControl.num,
+                currentCpNum,
                 fix,
                 it,
                 _mapState.value,
                 _autoMoveManager.getLastAverage3Bearing()
             )
         }
-
-        // ── Аудио-сигнал: единый вызов playSignal со всеми параметрами ──────────────
+// ── Синхронизируем номер текущего КП перед генерацией событий кадра ──────
+        if (approachState.controlNum != currentCpNum) {
+            approachState.resetForControl(currentCpNum)
+        }
         val confA = _calibration?.pointA?.confidence ?: 1.0
         val confB = _calibration?.pointB?.confidence ?: 1.0
         val confProduct = if (_calibration?.pointB != null) confA * confB else confA
-
-        AudioSignalConfig.playSignal(
-            AudioPlayConfig(
-                audioPlayer = _audioPlayer,
-                context = context,
-                approachState = if (updatedState.approachControlNum != lastApproachControlNum) {
-                    // Новая точка калибровки — полный сброс
-                    ApproachState(updatedState.approachControlNum)
-                } else {
-                    // Тот же CP — сохраняем wasIn* флаги, создаём свежий events контейнер
-                    ApproachState(
-                        controlNum = updatedState.approachControlNum,
-                        events = ApproachEvents(),
-                        wasInSearchRadius = approachWasInSearch,
-                        wasInApproachDouble = approachWasInDouble,
-                        wasInApproachSingle = approachWasInSingle,
-                        wasOnMoveToCP = approachWasOnMoveToCP
-                    )
-                },
-                arrivedState = ArrivedState(arrivedPlayedForControlNum),
-                lastPlayedSignalType = lastPlayedSignalType,
-                lastAudioPlayTimestampMs = lastAudioPlayTimestampMs,
-                soundMode = getSoundMode(),
-                fixSpeedKmH = fix.speed.toFloat() * 3.6f,
-                confidenceProduct = confProduct,
-                hasCalibrationPointB = _calibration?.pointB != null,
-                navData = navData
-        ).also { cfg ->
-            // playSignal обновляет поля cfg в place — синхронизируем обратно в ViewModel
-            updatedState.audioSignalState = cfg.audioSignalState
-            lastPlayedSignalType = cfg.lastPlayedSignalType
-            lastAudioPlayTimestampMs = cfg.lastAudioPlayTimestampMs
-            arrivedPlayedForControlNum = cfg.arrivedState.playedControlNum
-
-            // События подхода — персистент между кадрами
-            if (updatedState.approachControlNum == lastApproachControlNum) {
-                approachWasInSearch = cfg.approachState.wasInSearchRadius
-                approachWasInDouble = cfg.approachState.wasInApproachDouble
-                approachWasInSingle = cfg.approachState.wasInApproachSingle
-                approachWasOnMoveToCP = cfg.approachState.wasOnMoveToCP
-            } else {
-                lastApproachControlNum = updatedState.approachControlNum
-            }
-
-            // arrivedPlayedForControlNum — синхронизируем обратно, иначе трель играет каждый кадр!
-            if (cfg.audioSignalState.type == AudioSignalType.NONE && cfg.arrivedState.playedControlNum != -1) {
-                arrivedPlayedForControlNum = cfg.arrivedState.playedControlNum
-            }
-        }
+        val audioPlayConfig = AudioPlayConfig(
+            audioPlayer = _audioPlayer,
+            context = context,
+            approachState = approachState,
+            arrivedState = ArrivedState(arrivedPlayedForControlNum),
+            lastPlayedSignalType = lastPlayedSignalType,
+            lastAudioPlayTimestampMs = lastAudioPlayTimestampMs,
+            soundMode = getSoundMode(),
+            fixSpeedKmH = fix.speed.toFloat() * 3.6f,
+            confidenceProduct = confProduct,
+            hasCalibrationPointB = _calibration?.pointB != null,
+            navData = navData
         )
-
-        // Сохраняем в StateFlow уже ПОСЛЕ обновления lastAudioPlayMs и audioSignalState
+        AudioSignalConfig.playSignal(audioPlayConfig)
+// Синхронизируем обновлённые поля обратно в ViewModel
+        updatedState.audioSignalState = audioPlayConfig.audioSignalState
+        lastPlayedSignalType = audioPlayConfig.lastPlayedSignalType
+        lastAudioPlayTimestampMs = audioPlayConfig.lastAudioPlayTimestampMs
+        arrivedPlayedForControlNum = audioPlayConfig.arrivedState.playedControlNum
         _movementState.value = updatedState
-
         updatedState.newMapCalibration?.let { newCalib ->
             val prefs = context.getSharedPreferences("orientvibe_settings", 0)
             if (!autoBind) {
@@ -577,30 +516,21 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             }
         }
     }
-
     private fun launchDetectionWithBitmap(bitmap: Bitmap?) {
         if (bitmap == null) return
-
         val task = mapDetector.launchDetection()
-
-        // Сбрасываем предыдущую привязку и стартовую точку для новой карты
+// Сбрасываем предыдущую привязку и стартовую точку для новой карты
         _calibration = null
         _firstGps = null
         accuracyLevelTransitionCount = 0
-
         _mapState.value = AutoMapState(
             bitmap = bitmap,
             isProcessing = true,
             progressMessage = "Запуск детекции..."
         )
-
-        // 2. Запускаем корутину, привязанную к task.job, чтобы при его отмене
-        // мгновенно прервались все вложенные циклы в OnnxObjectDetector
         viewModelScope.launch(task.job + Dispatchers.IO) {
             try {
                 val result = mapDetector.detect(bitmap)
-
-                // 3. Перед применением результата проверяем, что эта задача всё ещё актуальна
                 val currentHandle = mapDetector.currentTaskRef.get()
                 if (currentHandle != null && currentHandle.version == task.version && task.job.isActive) {
                     withContext(Dispatchers.Main) {
@@ -612,20 +542,15 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             }
         }
     }
-
-
     fun updateNorthAngle(angle: Double) {
         _mapState.value = _mapState.value.copy(northAngle = angle.coerceIn(-45.0, 45.0))
     }
-
     fun resetNorthAngle() {
         _mapState.value = _mapState.value.copy(northAngle = 0.0)
     }
-
     fun clearError() {
         _mapState.value = _mapState.value.copy(errorMessage = null)
     }
-
     fun reset() {
         navVm?.clearTrack()
         navVm?.resetCalibration()
@@ -638,39 +563,12 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         arrivedPlayedForControlNum = -1
         lastAudioPlayTimestampMs = 0L
         lastPlayedSignalType = AudioSignalType.NONE
-        lastApproachControlNum = -1
-        approachWasInSearch = false
-        approachWasInDouble = false
-        approachWasInSingle = false
-        approachWasOnMoveToCP = false
+        approachState.resetForControl(-1)
     }
-
-    private fun playDoubleBeep(audioState: AudioSignalState) {
-        val isDoublePair = audioState.type == AudioSignalType.APPROACH_DOUBLE
-        Log.d(
-            "AudioPlayer",
-            "playDoubleBeep: " + if (isDoublePair) "double-pair(4beeps)" else "single-pair(2beeps)"
-        )
-        _audioPlayer.playTone(AudioSignalConfig.APPROACH_TONE1_FREQ, AudioSignalConfig.APPROACH_TONE_DUR_MS, 1.0f, AudioSignalConfig.APPROACH_TONE_BALANCE)
-        thread(start = true) {
-            Thread.sleep(AudioSignalConfig.APPROACH_PAIR_GAP_MS)
-            _audioPlayer.playTone(AudioSignalConfig.APPROACH_TONE2_FREQ, AudioSignalConfig.APPROACH_TONE_DUR_MS, 1.0f, AudioSignalConfig.APPROACH_TONE_BALANCE)
-        }
-        if (isDoublePair) {
-            thread(start = true) {
-                Thread.sleep(AudioSignalConfig.APPROACH_DOUBLE_GAP_MS)
-                _audioPlayer.playTone(AudioSignalConfig.APPROACH_TONE1_FREQ, AudioSignalConfig.APPROACH_TONE_DUR_MS, 1.0f, AudioSignalConfig.APPROACH_TONE_BALANCE)
-                Thread.sleep(AudioSignalConfig.APPROACH_PAIR_GAP_MS)
-                _audioPlayer.playTone(AudioSignalConfig.APPROACH_TONE2_FREQ, AudioSignalConfig.APPROACH_TONE_DUR_MS, 1.0f, AudioSignalConfig.APPROACH_TONE_BALANCE)
-            }
-        }
-    }
-
     private fun rotateBitmap(src: Bitmap, degrees: Double): Bitmap {
         val matrix = Matrix().apply { postRotate(degrees.toFloat()) }
         return Bitmap.createBitmap(src, 0, 0, src.width, src.height, matrix, true)
     }
-
     // --- Lifecycle foreground-службы для фонового GPS/аудио ---
     fun startBackgroundService() {
         val intent = BackgroundNavigationService.createStartIntent(context)
@@ -681,21 +579,17 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         }
         Log.d(tag, "Background navigation service started")
     }
-
     private fun stopBackgroundService() {
         val intent = BackgroundNavigationService.createStartIntent(context)
         context.stopService(intent)
         Log.d(tag, "Background navigation service stopped")
     }
-
     override fun onCleared() {
         mapDetector.close()
-        _audioPlayer?.release()
-        // --- Останавливаем foreground-службу, выходя из AutoModeScreen ---
+        _audioPlayer.release()
         stopBackgroundService()
         Log.d(tag, "AutoModeViewModel cleared — background service stopped")
     }
-
     companion object {
         const val DISPLAY_TRACK_POINTS = 900
         fun Factory(context: Context): ViewModelProvider.Factory =
