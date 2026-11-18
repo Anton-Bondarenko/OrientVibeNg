@@ -230,7 +230,8 @@ object MapCalibrationUtils {
         imageProportion: Double,
         scaleMetersPerMapX: Double? = null,
         scaleMetersPerMapY: Double? = null,
-        confidence: Double = 1.0
+        confidence: Double = 1.0,
+        pointB: CalibrationPoint? = null
     ): MapCalibration {
         val calibrationPoint =
             CalibrationPoint(startGPS, startPointImageX, startPointImageY, confidence)
@@ -247,37 +248,8 @@ object MapCalibrationUtils {
             ) else magneticDeclination,
             northAngle,
             finalScaleX,
-            finalScaleY
+            finalScaleY,
+            pointB
         )
-    }
-
-    fun bindGpsToFinishWithTrack(
-        startGPS: GpsCoordinate,
-        startPointImageX: Double,
-        startPointImageY: Double,
-        finishPointImageX: Double,
-        finishPointImageY: Double,
-        currentFixGPS: GpsCoordinate,
-        magneticDeclination: Double = 0.0,
-        confidence: Double = 1.0
-    ): BindResult {
-        val pointA = CalibrationPoint(startGPS, startPointImageX, startPointImageY, confidence)
-        val pointB =
-            CalibrationPoint(currentFixGPS, finishPointImageX, finishPointImageY, confidence)
-
-        val newCal = MapGeometry.computeCalibrationHard(
-            pointA,
-            pointB,
-            magneticDeclination,
-            0.0
-        )
-
-        if (newCal != null) {
-            val trueBearing = MapGeometry.bearing(pointA.gps, pointB.gps)
-            val northAngleDeg = -(trueBearing - magneticDeclination)
-            return BindResult(newCal, northAngleDeg)
-        }
-
-        throw IllegalStateException("bindGpsToFinishWithTrack: calibration points too close")
     }
 }

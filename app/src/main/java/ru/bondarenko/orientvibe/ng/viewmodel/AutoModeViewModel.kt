@@ -193,7 +193,8 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             imageProportion = width,
             scaleMetersPerMapX = _calibration?.scaleMetersPerMapX,
             scaleMetersPerMapY = _calibration?.scaleMetersPerMapY,
-            confidence = 1.0
+            confidence = 1.0,
+            _calibration?.pointB
         )
 
         val pairGpsToImage =
@@ -249,22 +250,10 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         val pointB =
             CalibrationPoint(currentFix.coordinate, targetBox.centerX, targetBox.centerY, 1.0)
         val newCal =
-            if (calibration.pointB != null) MapGeometry.computeCalibrationSoft(
-                calibration.pointA,
-                pointB,
-                _mapState.value.northAngle,
-                calibration
-            ) ?: return Pair(false, "Точки слишком близко — нельзя рассчитать масштаб")
-            else
                 MapGeometry.computeCalibrationHard(
                     calibration.pointA,
                     pointB,
-                    MapGeometry.calculateMagneticDeclination(
-                        currentFix.coordinate.latitude,
-                        currentFix.coordinate.longitude,
-                        currentFix.timestamp
-                    ),
-                    _mapState.value.northAngle
+                    oldCalibration = calibration
                 ) ?: return Pair(false, "Точки слишком близко — нельзя рассчитать масштаб")
         Log.d(tag, "===== recalibrateToTargetControl END =====")
         applyNewCalibration(newCal)
@@ -435,8 +424,8 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         val navViewModel = navVm
         val bindResult = bindGpsToCp(firstGps, 1)
         if (bindResult != null && navViewModel != null) {
-            applyBind(bindResult, navViewModel)
             setCurrentControl(2)
+            applyBind(bindResult, navViewModel)
         }
     }
     private fun getSoundMode(): String {

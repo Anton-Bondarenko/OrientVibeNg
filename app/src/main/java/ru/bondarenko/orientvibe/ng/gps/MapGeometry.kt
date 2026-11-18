@@ -11,7 +11,7 @@ object MapGeometry {
     private const val TAG = "MapGeometry"
     private const val EARTH_RADIUS_METERS = 6371000.0
     private const val MAX_DELTA_DECLINATION = 1.2
-    private const val MAX_DELTA_DISTANCE = 0.01
+    private const val MAX_DELTA_DISTANCE = 80 // сдвигаем максимум в метрах
     private const val MAX_DELTA_SCALE = 250.0
 
     /** Быстрое форматирование doubles для логов — без String.format / Formatter аллокаций */
@@ -102,7 +102,7 @@ object MapGeometry {
         return trueBearing - declination
     }
 
-    fun computeCalibrationHard(pointA: CalibrationPoint, pointB: CalibrationPoint, magneticDeclination: Double, northAngle: Double = 0.0): MapCalibration? {
+    fun computeCalibrationHard(pointA: CalibrationPoint, pointB: CalibrationPoint, northAngle: Double = 0.0, oldCalibration: MapCalibration): MapCalibration? {
         val dNorth = northDistance(pointA.gps, pointB.gps)
         val dEast = (pointB.gps.longitude - pointA.gps.longitude) *
                 0.017453292519943295 * EARTH_RADIUS_METERS * cos(Math.toRadians(pointA.gps.latitude))
@@ -110,7 +110,7 @@ object MapGeometry {
         val gpsDistance = sqrt((dNorth * dNorth) + (dEast * dEast))
         if (gpsDistance < 1.0) return null
 
-        val rotatedPoint = rotateAroundPoint(pointB.imageX, pointB.imageY, pointA.imageX, pointA.imageY, magneticDeclination + northAngle)
+        val rotatedPoint = rotateAroundPoint(pointB.imageX, pointB.imageY, pointA.imageX, pointA.imageY, oldCalibration.magneticDeclination + northAngle)
         val dx = rotatedPoint.first - pointA.imageX
         val dy = rotatedPoint.second - pointA.imageY
 
@@ -122,9 +122,9 @@ object MapGeometry {
             pointB = pointB,
             scaleMetersPerMapX = abs(dEast / dx),
             scaleMetersPerMapY = abs(dNorth / dy),
-            bearingDegrees = magneticDeclination,
-            magneticDeclination = magneticDeclination,
-            physicalDeclination = magneticDeclination
+            bearingDegrees = oldCalibration.magneticDeclination,
+            magneticDeclination = oldCalibration.magneticDeclination,
+            physicalDeclination = oldCalibration.magneticDeclination
         )
     }
 
@@ -244,9 +244,9 @@ object MapGeometry {
         oldCalibration: MapCalibration
     ): MapCalibration {
         val pairGpsToImage = gpsToImage(pointA.gps, oldCalibration, northAngle)
-        val maxDelta = MAX_DELTA_DISTANCE * pointA.confidence
 
-        var clamped = false
+        var clampedX = false
+        var clampedY = false
         val newImgX: Double
         val newImgY: Double
 
@@ -255,25 +255,35 @@ object MapGeometry {
             val oldImgY = pairGpsToImage.second
             val dxVal = pointA.imageX - oldImgX
             val dyVal = pointA.imageY - oldImgY
-            val dist = sqrt((dxVal * dxVal) + (dyVal * dyVal))
+//            val dist = sqrt((dxVal * dxVal) + (dyVal * dyVal))
 
-            if (dist > maxDelta && dist > 1e-9) {
-                val ratio = maxDelta / dist
+            val maxDeltaX = MAX_DELTA_DISTANCE / scaleX * pointA.confidence
+            val maxDeltaY = MAX_DELTA_DISTANCE / scaleY * pointA.confidence
+
+            if (dxVal > maxDeltaX) {
+                val ratio = maxDeltaX / dxVal
                 newImgX = oldImgX + (dxVal * ratio)
-                newImgY = oldImgY + (dyVal * ratio)
-                clamped = true
+                clampedX = true
             } else {
                 newImgX = pointA.imageX
+            }
+
+            if (dyVal > maxDeltaY) {
+                val ratio = maxDeltaX / dxVal
+                newImgY = oldImgY + (dyVal * ratio)
+                clampedY = true
+            } else {
                 newImgY = pointA.imageY
             }
 
+
             val sb = java.lang.StringBuilder(180)
             sb.append("calibrationSingleSoft ")
-            sb.append(if (clamped) "[CLAMPED]" else "OK")
-            sb.append(" dist=${fmt(dist, 5)} maxDelta=${fmt(maxDelta, 5)}")
+            sb.append(if (clampedX) "[CLAMPED X]" else "OK")
+            sb.append(if (clampedY) "[CLAMPED Y]" else "OK")
+            sb.append(" distX=${fmt(dxVal, 5)} maxDelta=${fmt(maxDeltaX, 5)}")
+            sb.append(" distY=${fmt(dyVal, 5)} maxDelta=${fmt(maxDeltaY, 5)}")
             sb.append(" conf=${fmt(pointA.confidence, 2)}")
-            sb.append(" dX=${fmt(dxVal, 4)}→${fmt(newImgX - oldImgX, 4)}")
-            sb.append(" dY=${fmt(dyVal, 4)}→${fmt(newImgY - oldImgY, 4)}")
             Log.d(TAG, sb.toString())
         } else {
             newImgX = pointA.imageX
