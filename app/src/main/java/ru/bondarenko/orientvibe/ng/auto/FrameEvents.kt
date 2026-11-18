@@ -67,14 +67,12 @@ object FrameEventGenerator {
     private const val BASE_SEARCH_RADIUS_M = 40.0
     private const val BASE_APPROACH_DOUBLE_M = 50.0
     private const val BASE_APPROACH_SINGLE_M = 100.0
-
-    /** Константы, общие с AutoMoveManager */
     const val AUTO_APPROACHED_DIST = 80.0
-    const val LEAVING_CP_MIN_GAP = 30.0
+    const val LEAVING_CP_MIN_GAP = 60.0
 
     fun evaluate(
         controlNum: Int,
-        navData: ru.bondarenko.orientvibe.ng.model.NavigationData,
+        navData: NavigationData,
         confidenceProduct: Double,
         state: ApproachState,
         autoApproachedDist: Double = AUTO_APPROACHED_DIST,
@@ -132,6 +130,7 @@ object FrameEventGenerator {
                     FrameEvent(FrameEvent.EventType.ON_LEAVING_CP, controlNum, dist.toFloat(), devDeg)
                 )
                 state.wasLeavingCP = true
+                state.wasApproachingCP = false
             }
         }
         return state.events.items()

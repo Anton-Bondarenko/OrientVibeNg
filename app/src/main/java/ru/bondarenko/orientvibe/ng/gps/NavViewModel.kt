@@ -24,14 +24,10 @@ import kotlin.math.sin
 class NavViewModel(context: Context) : ViewModel() {
 
     private var _autoBindActive = false
-    private var _autoBindActiveFlag = false
-    private var _imageDimensions: Pair<Double, Double>? = null
-    private var _kpBoxes: List<BoundingBox> = emptyList()
     private var calibration: MapCalibration? = null
 
     private val gpsManager = GpsManager(context)
     val trackRecorder = TrackRecorder()
-    private val hitTestRadiusRel = 0.05f
 
     private val _gpsState = MutableStateFlow(GpsState())
     val gpsState: StateFlow<GpsState> = _gpsState.asStateFlow()
@@ -90,99 +86,9 @@ class NavViewModel(context: Context) : ViewModel() {
         gpsManager.startGpsUpdates()
     }
 
-    fun stopGps() {
-        gpsManager.stopGpsUpdates()
-    }
-
-    fun setAutoBindActive(active: Boolean) {
-        _autoBindActive = active
-        _autoBindActiveFlag = active
-        _gpsState.value = _gpsState.value.copy(autoBindActive = active)
-    }
-
-    fun getAutoBindActive(): Boolean = _autoBindActive
-
-    fun getCurrentGpsImageAbs(northAngleDeg: Double): Pair<Double, Double>? {
-        val fix = _gpsState.value.currentFix ?: return null
-        val cal = calibration ?: return null
-
-        val result = MapCalibrationUtils.gpsToImage(fix.coordinate, cal, northAngleDeg)
-        if (result?.first == null || result.second == null) return null
-        return Pair(result.first!!, result.second!!)
-    }
-
-    fun checkKpHit(absX: Double, absY: Double): Int {
-        val dims = _imageDimensions ?: return -1
-        if (dims.first <= 0.0 || dims.second <= 0.0 || !_autoBindActiveFlag) return -1
-
-        val relX = absX / dims.first
-        val relY = absY / dims.second
-
-        var closestIdx = -1
-        var closestDistSq = (hitTestRadiusRel * hitTestRadiusRel).toDouble()
-
-        _kpBoxes.forEachIndexed { index, box ->
-            val dx = box.centerX - relX
-            val dy = box.centerY - relY
-            val distSq = (dx * dx) + (dy * dy)
-            if (distSq < closestDistSq) {
-                closestDistSq = distSq
-                closestIdx = index
-            }
-        }
-        return closestIdx
-    }
-
-    fun setAutoBindKpBoxes(boxes: List<BoundingBox>) {
-        _kpBoxes = boxes
-    }
-
-    fun setAutoBindImageDimensions(dims: Pair<Double, Double>?) {
-        _imageDimensions = dims
-    }
-
-    fun distanceBetween(a: GpsCoordinate, b: GpsCoordinate): Double {
-        return MapCalibrationUtils.haversineDistance(a, b)
-    }
-
-    fun magneticBearingBetween(from: GpsCoordinate, to: GpsCoordinate): Double {
-        val declination = calibration?.physicalDeclination ?: 0.0
-        return MapCalibrationUtils.magneticBearing(from, to, declination)
-    }
-
-    fun calculateDestinationCoordinate(start: GpsCoordinate, bearingMagnetic: Double, distanceMeters: Double): GpsCoordinate {
-        val angularDistance = distanceMeters / 6371000.0
-        val bearingRad = Math.toRadians(bearingMagnetic)
-        val lat1Rad = Math.toRadians(start.latitude)
-        val lon1Rad = Math.toRadians(start.longitude)
-
-        val lat2Rad = asin(
-            (sin(lat1Rad) * cos(angularDistance)) + (cos(lat1Rad) * sin(angularDistance) * cos(bearingRad))
-        )
-        val lon2Rad = atan2(
-            sin(bearingRad) * sin(angularDistance) * cos(lat1Rad),
-            cos(angularDistance) - (sin(lat1Rad) * sin(lat2Rad))
-        ) + lon1Rad
-
-        return GpsCoordinate(Math.toDegrees(lat2Rad), Math.toDegrees(lon2Rad))
-    }
-
-    fun startTracking() {
-        trackRecorder.startTracking()
-    }
-
     /** Включает трекинг без очистки — для начальной калибровки */
     fun enableTrackingWithoutClearing() {
         trackRecorder.enableTracking()
-    }
-
-    fun stopTracking() {
-        trackRecorder.stopTracking()
-    }
-
-    fun recordTrackPoint() {
-        val fix = _gpsState.value.currentFix ?: return
-        trackRecorder.recordPoint(fix, calibration)
     }
 
     fun clearTrack() {

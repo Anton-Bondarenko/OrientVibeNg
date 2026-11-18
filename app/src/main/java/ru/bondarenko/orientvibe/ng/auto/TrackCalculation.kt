@@ -23,7 +23,7 @@ data class TimedGpsPrivate(
 object TrackCalculation {
 
     private const val TRACK_HISTORY_SECONDS = 90
-    private const val HEADING_WINDOW_SECONDS = 2
+    private const val HEADING_WINDOW_SECONDS = 4
     private const val HEADING_WINDOW_LONG_SECONDS = 10
 
     private val _trackHistory = ArrayDeque<TimedGpsPrivate>(128)

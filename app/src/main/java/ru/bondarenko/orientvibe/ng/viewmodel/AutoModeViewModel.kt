@@ -196,7 +196,8 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
             imageProportion = width,
             scaleMetersPerMapX = _calibration?.scaleMetersPerMapX,
             scaleMetersPerMapY = _calibration?.scaleMetersPerMapY,
-            confidence = 1.0
+            confidence = 1.0,
+            _calibration?.pointB
         )
 
         val pairGpsToImage =
@@ -216,13 +217,40 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         return BindResult(cal)
     }
 
-    private fun applyBind(result: BindResult, navViewModel: NavViewModel) {
+    private fun applyBind(
+        result: BindResult,
+        navViewModel: NavViewModel,
+        fix: GpsFix? = navViewModel.gpsState.value.currentFix
+    ) {
         _calibration = result.calibration
         _mapState.value = _mapState.value.copy(mapCalibration = result.calibration)
         navViewModel.applyNewCalibration(result.calibration)
         _calibrationVersion.value += 1
         // Трекинг включаем без очистки — трек очищается только в reset()
         navVm?.enableTrackingWithoutClearing()
+
+        // Пересчитываем дистанцию до текущего КП сразу после привязки
+        val currentFix = fix ?: return
+        val ms = _movementState.value
+        val navData = analyzeNavigation(
+            currentControlNum = ms.currentControl.num,
+            gpsFix = currentFix,
+            mapCalibration = result.calibration,
+            autoMapState = _mapState.value,
+            lastAvgBearing = TrackCalculation.getLastAverage3Bearing()
+        )
+
+        if (navData != null) {
+            _movementState.value = ms.copy(
+                gpsFix = currentFix,
+                distanceToTarget = navData.distanceToTargetMeters,
+                audioSignalState = ms.audioSignalState.copy(
+                    distanceToTargetMeters = navData.distanceToTargetMeters,
+                    deviationDeg = navData.deviationDeg,
+                    controlNum = ms.currentControl.num
+                )
+            )
+        }
     }
 
     fun bindGpsToCurrentControl(): Pair<Boolean, String> {
@@ -252,22 +280,10 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         val pointB =
             CalibrationPoint(currentFix.coordinate, targetBox.centerX, targetBox.centerY, 1.0)
         val newCal =
-            if (calibration.pointB != null) MapGeometry.computeCalibrationSoft(
-                calibration.pointA,
-                pointB,
-                _mapState.value.northAngle,
-                calibration
-            ) ?: return Pair(false, "Точки слишком близко — нельзя рассчитать масштаб")
-            else
                 MapGeometry.computeCalibrationHard(
                     calibration.pointA,
                     pointB,
-                    MapGeometry.calculateMagneticDeclination(
-                        currentFix.coordinate.latitude,
-                        currentFix.coordinate.longitude,
-                        currentFix.timestamp
-                    ),
-                    _mapState.value.northAngle
+                    oldCalibration = calibration
                 ) ?: return Pair(false, "Точки слишком близко — нельзя рассчитать масштаб")
         Log.d(tag, "===== recalibrateToTargetControl END =====")
         applyNewCalibration(newCal)
@@ -438,8 +454,8 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         val navViewModel = navVm
         val bindResult = bindGpsToCp(firstGps, 1)
         if (bindResult != null && navViewModel != null) {
-            applyBind(bindResult, navViewModel)
             setCurrentControl(2)
+            applyBind(bindResult, navViewModel)
         }
     }
     private fun getSoundMode(): String {
@@ -502,6 +518,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
 //            _autoCalibrationsList.value = _autoMoveManager.autoCalibrations
 //        }
         val currentCpNum = updatedState.currentControl.num
+        TrackCalculation.onMove(gpsFix)
         val navData = _calibration?.let {
             analyzeNavigation(
                 currentCpNum,
@@ -559,14 +576,11 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
         )
         AudioSignalConfig.handleAudio(frameEvents, audioPlayConfig)
 
-        TrackCalculation.onMove(gpsFix)
-
 // Синхронизируем обновлённые поля обратно в ViewModel
         updatedState.audioSignalState = audioPlayConfig.audioSignalState
         lastPlayedSignalType = audioPlayConfig.lastPlayedSignalType
         lastAudioPlayTimestampMs = audioPlayConfig.lastAudioPlayTimestampMs
         arrivedPlayedForControlNum = audioPlayConfig.arrivedState.playedControlNum
-        _movementState.value = updatedState
         updatedState.newMapCalibration?.let { newCalib ->
             val prefs = context.getSharedPreferences("orientvibe_settings", 0)
             if (!autoBind) {
@@ -577,6 +591,7 @@ class AutoModeViewModel(private val context: Context) : ViewModel(), MapDetectio
                 Log.d(tag, "Автокалибровка отключена — newMapCalibration пропущен")
             }
         }
+        _movementState.value = updatedState
     }
     private fun launchDetectionWithBitmap(bitmap: Bitmap?) {
         if (bitmap == null) return

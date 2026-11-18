@@ -17,9 +17,10 @@ import kotlin.math.sin
 // Constants (same values as AutoMoveManager)
 private const val HEADING_TOLERANCE_DEG = 30.0
 private const val HEADING_JUMP_DEG = 35.0
-private const val HEADING_BIG_JUMP_DEG = 35.0
+private const val HEADING_BIG_JUMP_DEG = 45.0
 private const val AUTO_CONFIRM_TIMEOUT_MS = 10000L
-private const val TRACK_HISTORY_SECONDS = 90
+private const val TRACK_HISTORY_SECONDS = 60
+private const val MIN_VECTOR_DISTANCE = 10
 
 /**
  * Менеджер калибровки — обрабатывает события ON_LEAVING_CP
@@ -210,16 +211,44 @@ fun findHeadingAlignedCalibrationPoint(
 
     val trackLastIndex = rewindTrackHistory(trackHistory, trackHistory.size - 1, -(TRACK_HISTORY_SECONDS * 1000L))
 
-    // 1. Поиск точки поворота, выровненной по направлению на следующий КП
-    if (bearingDiff < HEADING_TOLERANCE_DEG && trackLastIndex <= trackHistory.size - 2) {
+//    // 1. Поиск точки поворота, выровненной по направлению на следующий КП
+//    if (bearingDiff < HEADING_TOLERANCE_DEG && trackLastIndex <= trackHistory.size - 2) {
+//        for (i in (trackHistory.size - 2) downTo trackLastIndex) {
+//            val diff = abs(vectorChangeByIndex(trackHistory, i, 1L))
+//            if (diff >= HEADING_JUMP_DEG) {
+//                val diff1 = abs(vectorChangeByIndex(trackHistory, i, AUTO_CONFIRM_TIMEOUT_MS))
+//                val confidence = if (diff1 < 55.0) 0.6 else 0.9
+//                Log.d(
+//                    "RecalibrationManager",
+//                    "Нашлась точка изменения направления на треке на цель: $bearingToNext трек: ${trackHistory[i + 1].average3Bearing} Вектор:$diff1 Мгновенный:$diff Confidence = $confidence"
+//                )
+//                return CalibrationPoint(
+//                    trackHistory[i].coordinate,
+//                    currentBox.centerX,
+//                    currentBox.centerY,
+//                    confidence
+//                )
+//            }
+//        }
+//    }
+
+    // alternative direction change algorithm
+    // detect outline direction and search for direction change
+    if (trackLastIndex <= trackHistory.size - 2) {
+        // попробуем выяснить генеральное направление:
+//        var currentDirection = trackHistory.last().average10Bearing // попробуем вектор за 10 секунд
+//        if (abs(currentDirection - trackHistory.last().average3Bearing) >= HEADING_BIG_JUMP_DEG) // три секунды назад направление было другим, не доверяем 10-ти секундному вектору
+//            currentDirection = trackHistory.last().average3Bearing
+        val vectorMinDistanceIndex = rewindTrackHistoryInMeters(trackHistory, trackLastIndex-1, MIN_VECTOR_DISTANCE) // на меньшей дистанции вектор бесполезен
         for (i in (trackHistory.size - 2) downTo trackLastIndex) {
-            val diff = abs(vectorChangeByIndex(trackHistory, i, 1L))
-            if (diff >= HEADING_JUMP_DEG) {
-                val diff1 = abs(vectorChangeByIndex(trackHistory, i, AUTO_CONFIRM_TIMEOUT_MS))
-                val confidence = if (diff1 < 55.0) 0.6 else 0.9
+            var bearingChange =
+                abs(if (i > vectorMinDistanceIndex) trackHistory[trackHistory.size - 1].average3Bearing - trackHistory[i].average3Bearing else
+                    vectorChangeByIndexInMeters(trackHistory, i, 20))
+            if (bearingChange >= HEADING_BIG_JUMP_DEG) {
+                val confidence = 0.8
                 Log.d(
                     "RecalibrationManager",
-                    "Нашлась точка изменения направления на треке на цель: $bearingToNext трек: ${trackHistory[i + 1].average3Bearing} Вектор:$diff1 Мгновенный:$diff Confidence = $confidence"
+                    "Нашлась точка сильного изменения направления на треке Вектор:$bearingChange confidence:$confidence"
                 )
                 return CalibrationPoint(
                     trackHistory[i].coordinate,
@@ -231,26 +260,26 @@ fun findHeadingAlignedCalibrationPoint(
         }
     }
 
-    // 2. Поиск любой точки резкого изменения направления на треке
-    if (trackLastIndex <= trackHistory.size - 2) {
-        for (i in (trackHistory.size - 2) downTo trackLastIndex) {
-            val diff2 = abs(vectorChangeByIndex(trackHistory, i, 0L))
-            if (diff2 >= HEADING_BIG_JUMP_DEG) {
-                val diff3 = abs(vectorChangeByIndex(trackHistory, i, AUTO_CONFIRM_TIMEOUT_MS))
-                val confidence2 = if (diff3 < 50.0) 0.4 else 0.8
-                Log.d(
-                    "RecalibrationManager",
-                    "Нашлась точка сильного изменения направления на треке Вектор:$diff3 Мгновенный:$diff2 confidence:$confidence2"
-                )
-                return CalibrationPoint(
-                    trackHistory[i].coordinate,
-                    currentBox.centerX,
-                    currentBox.centerY,
-                    confidence2
-                )
-            }
-        }
-    }
+//    // 2. Поиск любой точки резкого изменения направления на треке
+//    if (trackLastIndex <= trackHistory.size - 2) {
+//        for (i in (trackHistory.size - 2) downTo trackLastIndex) {
+//            val diff2 = abs(vectorChangeByIndex(trackHistory, i, 0L))
+//            if (diff2 >= HEADING_BIG_JUMP_DEG) {
+//                val diff3 = abs(vectorChangeByIndex(trackHistory, i, AUTO_CONFIRM_TIMEOUT_MS))
+//                val confidence2 = if (diff3 < 50.0) 0.4 else 0.8
+//                Log.d(
+//                    "RecalibrationManager",
+//                    "Нашлась точка сильного изменения направления на треке Вектор:$diff3 Мгновенный:$diff2 confidence:$confidence2"
+//                )
+//                return CalibrationPoint(
+//                    trackHistory[i].coordinate,
+//                    currentBox.centerX,
+//                    currentBox.centerY,
+//                    confidence2
+//                )
+//            }
+//        }
+//    }
 
     // 3. Fallback: поиск геометрически ближайшей точки трека к КП
     var minDistance = MapGeometry.haversineDistance(trackHistory.last().coordinate, currentControl)
@@ -418,6 +447,33 @@ private fun rewindTrackHistory(
     return index
 }
 
+private fun rewindTrackHistoryInMeters(
+    trackHistory: List<TimedGpsPrivate>,
+    startIndex: Int,
+    dMeters: Int
+): Int {
+    if (trackHistory.isEmpty()) return 0
+    var index = startIndex.coerceIn(0, trackHistory.size - 1)
+    val currentCoords = trackHistory.get(index).coordinate
+    while (index > 0 && index < trackHistory.size - 1 && MapGeometry.haversineDistance(currentCoords, trackHistory.get(index).coordinate) < dMeters) {
+        if (dMeters < 0) index--
+        else index ++
+    }
+    return index
+}
+
+// считаем удаление не по секундам, а по метрам
+private fun vectorChangeByIndexInMeters(
+    trackHistory: List<TimedGpsPrivate>,
+    startIndex: Int,
+    dMeters: Int // Positive number
+): Double {
+    val fromIndex = rewindTrackHistoryInMeters(trackHistory, startIndex, -abs(dMeters));
+    val toIndex = rewindTrackHistoryInMeters(trackHistory, startIndex, abs(dMeters));
+    val firstSegmentDirection = MapGeometry.bearing(trackHistory[fromIndex].coordinate, trackHistory[startIndex].coordinate);
+    val secondSegmentDirection = MapGeometry.bearing(trackHistory[startIndex].coordinate, trackHistory[toIndex].coordinate);
+    return abs(firstSegmentDirection - secondSegmentDirection)
+}
 private fun vectorChangeByIndex(
     trackHistory: List<TimedGpsPrivate>,
     startIndex: Int,
