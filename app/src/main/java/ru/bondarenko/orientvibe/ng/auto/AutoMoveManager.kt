@@ -266,7 +266,7 @@ class AutoMoveManager {
                     if (bearingChange > HEADING_BIG_JUMP_DEG) {
                         Log.d(
                             "RecalibrationManager",
-                            "В точке: $bearingChange"
+                            "В точке: $bearingChange conf=0.8"
                         )
                         return CalibrationPoint(
                             trackHistory[i].coordinate,
@@ -303,11 +303,12 @@ class AutoMoveManager {
         // 3. Fallback: поиск геометрически ближайшей точки трека к КП
         var minDistance =
             MapGeometry.haversineDistance(trackHistory.last().coordinate, currentControl)
+        var confidence = 0.4
         var nearestCalibrationPoint = CalibrationPoint(
             trackHistory.last().coordinate,
             currentBox.centerX,
             currentBox.centerY,
-            0.2
+            confidence
         )
 
         if (trackLastIndex <= trackHistory.size - 2) {
@@ -315,18 +316,19 @@ class AutoMoveManager {
                 val distance =
                     MapGeometry.haversineDistance(trackHistory[i].coordinate, currentControl)
                 if (distance < minDistance) {
+                    confidence = 0.5
                     minDistance = distance
                     nearestCalibrationPoint = CalibrationPoint(
                         trackHistory[i].coordinate,
                         currentBox.centerX,
                         currentBox.centerY,
-                        0.3
+                        confidence
                     )
                 }
             }
         }
 
-        Log.d("RecalibrationManager", "Не нашли точку на треке, используем ближайшую")
+        Log.d("RecalibrationManager", "Не нашли точку на треке, используем ближайшую conf=$confidence")
         return nearestCalibrationPoint
     }
 

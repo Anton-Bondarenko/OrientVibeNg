@@ -139,7 +139,7 @@ object AudioSignalConfig {
         val sf = scaleFactorFor(confidenceProduct)
         val searchRadius = BASE_SILENT_RADIUS_M * sf
         val approachRadius = BASE_APPROACH_DOUBLE_M * sf
-        val radius100 = BASE_APPROACH_SINGLE_M * sf
+        val radius100 = BASE_APPROACH_SINGLE_M // * sf
 
         val dist = navData.distanceToTargetMeters
         val devDeg = navData.deviationDeg
