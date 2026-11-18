@@ -2,6 +2,7 @@
 
 import android.util.Log
 import ru.bondarenko.orientvibe.ng.gps.MapGeometry
+import ru.bondarenko.orientvibe.ng.gps.MapGeometry.turnDetection
 import ru.bondarenko.orientvibe.ng.model.AutoMapState
 import ru.bondarenko.orientvibe.ng.model.BoundingBox
 import ru.bondarenko.orientvibe.ng.model.CalibrationPoint
@@ -237,28 +238,32 @@ class AutoMoveManager {
             for (i in (trackHistory.size - 2) downTo trackLastIndex) {
                 val bearingChange =
                     abs(
-                        if (i > vectorMinDistanceIndex) trackHistory[trackHistory.size - 1].average3Bearing - trackHistory[i].average3Bearing else
+                        if (i > vectorMinDistanceIndex) abs(
+                            turnDetection(
+                                trackHistory[trackHistory.size - 1].average3Bearing,
+                                trackHistory[i].average3Bearing
+                            )
+                        ) else
                             vectorChangeByIndexInMeters(trackHistory, i, 20)
                     )
-                Log.d(
-                    "RecalibrationManager",
-                    "Нашлась точка сильного изменения направления на треке Вектор:$bearingChange"
-                )
                 if (bearingChange >= HEADING_BIG_JUMP_DEG) {
+                    Log.d(
+                        "RecalibrationManager",
+                        "Нашлась точка сильного изменения направления на треке Вектор:$bearingChange"
+                    )
                     foundIndex = i // больше фильтровать не нужно, найдём точное место
                     break
                 }
             }
             if (foundIndex != null) {
-
                 for (i in foundIndex downTo rewindTrackHistoryInMeters(
                     trackHistory,
                     foundIndex,
-                    SEARCH_DISTANCE
+                    -SEARCH_DISTANCE
                 )) {
                     val bearingChange =
-                        abs(trackHistory[i].realBearing - trackHistory[i + 1].realBearing) > HEADING_BIG_JUMP_DEG
-                    if (bearingChange) {
+                        abs(turnDetection(trackHistory[i].realBearing, trackHistory[i + 1].realBearing))
+                    if (bearingChange > HEADING_BIG_JUMP_DEG) {
                         Log.d(
                             "RecalibrationManager",
                             "В точке: $bearingChange"
@@ -358,7 +363,7 @@ class AutoMoveManager {
             )].coordinate,
             trackHistory[startIndex].coordinate
         )
-        return abs(vectorBefore - vectorAfter)
+        return abs(turnDetection(vectorBefore, vectorAfter))
     }
 
     private fun rewindTrackHistory(
@@ -386,7 +391,7 @@ class AutoMoveManager {
         while (index > 0 && index < trackHistory.size - 1 && MapGeometry.haversineDistance(
                 currentCoords,
                 trackHistory.get(index).coordinate
-            ) < dMeters
+            ) < abs(dMeters)
         ) {
             if (dMeters < 0) index--
             else index++
@@ -410,7 +415,7 @@ class AutoMoveManager {
             trackHistory[startIndex].coordinate,
             trackHistory[toIndex].coordinate
         );
-        return abs(firstSegmentDirection - secondSegmentDirection)
+        return abs(turnDetection(firstSegmentDirection, secondSegmentDirection))
     }
 
     private fun detectionReset() {

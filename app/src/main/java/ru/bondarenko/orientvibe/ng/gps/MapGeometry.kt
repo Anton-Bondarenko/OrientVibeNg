@@ -416,4 +416,14 @@ object MapGeometry {
             ((y * size) + (height - size) / 2.0).toFloat()
         )
     }
+
+    fun turnDetection(angle1: Double, angle2: Double): Double{
+        var diff = (angle1 - angle2) % 360.0
+        if (diff > 180.0) {
+            diff -= 360.0
+        } else if (diff <= -180.0) {
+            diff += 360.0
+        }
+        return diff
+    }
 }
