@@ -10,6 +10,7 @@ import ru.bondarenko.orientvibe.ng.model.NavigationData
 import java.util.Locale
 import kotlin.concurrent.thread
 import kotlin.math.abs
+import kotlin.math.min
 
 enum class AudioSignalType {
     NONE,
@@ -137,9 +138,10 @@ object AudioSignalConfig {
         }
 
         val sf = scaleFactorFor(confidenceProduct)
-        val searchRadius = BASE_SILENT_RADIUS_M * sf
-        val approachRadius = BASE_APPROACH_DOUBLE_M * sf
         val radius100 = BASE_APPROACH_SINGLE_M // * sf
+        val searchRadius = min(BASE_SILENT_RADIUS_M * sf, radius100)
+        val approachRadius = min(BASE_APPROACH_DOUBLE_M * sf, radius100)
+
 
         val dist = navData.distanceToTargetMeters
         val devDeg = navData.deviationDeg
@@ -151,24 +153,49 @@ object AudioSignalConfig {
         // Одноразовые события при пересечении границы снаружи внутрь
         if (inSearchNow && !state.wasInSearchRadius) {
             state.events.add(
-                ApproachEvent(ApproachEvent.EventType.ON_SEARCH_RADIUS, controlNum, dist.toFloat(), devDeg)
+                ApproachEvent(
+                    ApproachEvent.EventType.ON_SEARCH_RADIUS,
+                    controlNum,
+                    dist.toFloat(),
+                    devDeg
+                )
             )
         }
-        if (inDoubleNow && !state.wasInApproachDouble) {
+        if (inDoubleNow && !state.wasInApproachDouble && !state.events.items()
+                .any { ApproachEvent.EventType.ON_SEARCH_RADIUS == it.type }
+        ) {
             state.events.add(
-                ApproachEvent(ApproachEvent.EventType.ON_APPROACH_RADIUS, controlNum, dist.toFloat(), devDeg)
+                ApproachEvent(
+                    ApproachEvent.EventType.ON_APPROACH_RADIUS,
+                    controlNum,
+                    dist.toFloat(),
+                    devDeg
+                )
             )
         }
-        if (inSingleNow && !state.wasInApproachSingle) {
+        if (inSingleNow && !state.wasInApproachSingle && !state.events.items()
+                .any { ApproachEvent.EventType.ON_SEARCH_RADIUS == it.type }
+            && !state.events.items().any { ApproachEvent.EventType.ON_APPROACH_RADIUS == it.type }
+        ) {
             state.events.add(
-                ApproachEvent(ApproachEvent.EventType.ON_100_RADIUS, controlNum, dist.toFloat(), devDeg)
+                ApproachEvent(
+                    ApproachEvent.EventType.ON_100_RADIUS,
+                    controlNum,
+                    dist.toFloat(),
+                    devDeg
+                )
             )
         }
 
         // Непрерывное событие движения — каждый кадр вне радиуса поиска
         if (!inSearchNow) {
             state.events.add(
-                ApproachEvent(ApproachEvent.EventType.ON_MOVE_TO_CP, controlNum, dist.toFloat(), devDeg)
+                ApproachEvent(
+                    ApproachEvent.EventType.ON_MOVE_TO_CP,
+                    controlNum,
+                    dist.toFloat(),
+                    devDeg
+                )
             )
         }
 
@@ -231,7 +258,15 @@ object AudioSignalConfig {
                 ApproachEvent.EventType.ON_SEARCH_RADIUS -> {
                     val curCpNum = event.controlNum
                     if (cfg.arrivedState.playedControlNum != curCpNum) {
-                        Log.d("AudioNav", "▶ ARRIVED trill: CP#$curCpNum dist=${"%.1f".format(Locale.US, event.distM)}m")
+                        Log.d(
+                            "AudioNav",
+                            "▶ ARRIVED trill: CP#$curCpNum dist=${
+                                "%.1f".format(
+                                    Locale.US,
+                                    event.distM
+                                )
+                            }m"
+                        )
                         cfg.audioPlayer.playTrill(
                             ARRIVED_TONE_FREQ,
                             ARRIVED_TONE_VOL,
@@ -248,20 +283,37 @@ object AudioSignalConfig {
 
                 // ── Вход в 50 м (срабатывает 1 раз) ──────────────────────────
                 ApproachEvent.EventType.ON_APPROACH_RADIUS -> {
-                    Log.d("AudioNav", "▶ APPROACH_DOUBLE: dist=${"%.1f".format(Locale.US, event.distM)}m dev=${"%.1f".format(Locale.US, event.devDeg)}°")
+                    Log.d(
+                        "AudioNav",
+                        "▶ APPROACH_DOUBLE: dist=${
+                            "%.1f".format(
+                                Locale.US,
+                                event.distM
+                            )
+                        }m dev=${"%.1f".format(Locale.US, event.devDeg)}°"
+                    )
                     playApproachDoubleBeep(cfg.audioPlayer)
                     activeTypeForState = AudioSignalType.APPROACH_DOUBLE
                 }
 
 // ── Вход в 100 м (срабатывает 1 раз) ─────────────────────────
                 ApproachEvent.EventType.ON_100_RADIUS -> {
-                    Log.d("AudioNav", "▶ APPROACH_SINGLE: dist=${"%.1f".format(Locale.US, event.distM)}m dev=${"%.1f".format(Locale.US, event.devDeg)}°")
+                    Log.d(
+                        "AudioNav",
+                        "▶ APPROACH_SINGLE: dist=${
+                            "%.1f".format(
+                                Locale.US,
+                                event.distM
+                            )
+                        }m dev=${"%.1f".format(Locale.US, event.devDeg)}°"
+                    )
                     playApproachSingleBeep(cfg.audioPlayer)
                     activeTypeForState = AudioSignalType.APPROACH_SINGLE
                 }
 // ── Движение к КП (каждый кадр вне 40 м) ──────────────────────
                 ApproachEvent.EventType.ON_MOVE_TO_CP -> {
-                    val angleIsCenter = absDegVal <= deadZoneDeg || navData.direction == DeviationDirection.CENTER
+                    val angleIsCenter =
+                        absDegVal <= deadZoneDeg || navData.direction == DeviationDirection.CENTER
                     if (angleIsCenter) {
                         if (activeTypeForState == AudioSignalType.NONE) {
                             activeTypeForState = AudioSignalType.NONE
@@ -290,7 +342,15 @@ object AudioSignalConfig {
                         val freqHz = frequencyFromDeviation(absDegVal)
                         val balance = balanceFromDeviation(devDeg, absDegVal)
                         val durationMs = deviationDurationMs(absDegVal)
-                        Log.d("AudioNav", "▶ DEVIATION: freq=${freqHz}Hz speed=${"%.1f".format(Locale.US, cfg.fixSpeedKmH)} км/ч dev=${"%.1f".format(Locale.US, devDeg)}°")
+                        Log.d(
+                            "AudioNav",
+                            "▶ DEVIATION: freq=${freqHz}Hz speed=${
+                                "%.1f".format(
+                                    Locale.US,
+                                    cfg.fixSpeedKmH
+                                )
+                            } км/ч dev=${"%.1f".format(Locale.US, devDeg)}°"
+                        )
                         cfg.audioPlayer.playTone(freqHz, durationMs, 1.0f, balance)
                         cfg.lastAudioPlayTimestampMs = now
                         cfg.lastPlayedSignalType = AudioSignalType.DEVIATION
@@ -299,8 +359,12 @@ object AudioSignalConfig {
             }
         }
 // Обновляем итоговое состояние кадра для UI
-        val freqHz = if (activeTypeForState == AudioSignalType.DEVIATION) frequencyFromDeviation(absDegVal) else DEVIATION_MAX_FREQ_HZ
-        val balance = if (activeTypeForState == AudioSignalType.DEVIATION) balanceFromDeviation(devDeg, absDegVal) else APPROACH_TONE_BALANCE
+        val freqHz =
+            if (activeTypeForState == AudioSignalType.DEVIATION) frequencyFromDeviation(absDegVal) else DEVIATION_MAX_FREQ_HZ
+        val balance = if (activeTypeForState == AudioSignalType.DEVIATION) balanceFromDeviation(
+            devDeg,
+            absDegVal
+        ) else APPROACH_TONE_BALANCE
         cfg.audioSignalState = AudioSignalState(
             type = activeTypeForState,
             frequencyHz = freqHz,
@@ -310,40 +374,74 @@ object AudioSignalConfig {
             distanceToTargetMeters = dist
         )
     }
+
     // ═══════════ Helpers для воспроизведения и расчёта параметров ═══════════
     private fun playApproachSingleBeep(audioPlayer: StereoAudioPlayer) {
         audioPlayer.playTone(APPROACH_TONE1_FREQ, APPROACH_TONE_DUR_MS, 1.0f, APPROACH_TONE_BALANCE)
         thread(start = true) {
             Thread.sleep(APPROACH_PAIR_GAP_MS)
-            audioPlayer.playTone(APPROACH_TONE2_FREQ, APPROACH_TONE_DUR_MS, 1.0f, APPROACH_TONE_BALANCE)
+            audioPlayer.playTone(
+                APPROACH_TONE2_FREQ,
+                APPROACH_TONE_DUR_MS,
+                1.0f,
+                APPROACH_TONE_BALANCE
+            )
         }
     }
+
     private fun playApproachDoubleBeep(audioPlayer: StereoAudioPlayer) {
         audioPlayer.playTone(APPROACH_TONE1_FREQ, APPROACH_TONE_DUR_MS, 1.0f, APPROACH_TONE_BALANCE)
         thread(start = true) {
             Thread.sleep(APPROACH_PAIR_GAP_MS)
-            audioPlayer.playTone(APPROACH_TONE2_FREQ, APPROACH_TONE_DUR_MS, 1.0f, APPROACH_TONE_BALANCE)
+            audioPlayer.playTone(
+                APPROACH_TONE2_FREQ,
+                APPROACH_TONE_DUR_MS,
+                1.0f,
+                APPROACH_TONE_BALANCE
+            )
         }
         thread(start = true) {
             Thread.sleep(APPROACH_DOUBLE_GAP_MS)
-            audioPlayer.playTone(APPROACH_TONE1_FREQ, APPROACH_TONE_DUR_MS, 1.0f, APPROACH_TONE_BALANCE)
+            audioPlayer.playTone(
+                APPROACH_TONE1_FREQ,
+                APPROACH_TONE_DUR_MS,
+                1.0f,
+                APPROACH_TONE_BALANCE
+            )
             Thread.sleep(APPROACH_PAIR_GAP_MS)
-            audioPlayer.playTone(APPROACH_TONE2_FREQ, APPROACH_TONE_DUR_MS, 1.0f, APPROACH_TONE_BALANCE)
+            audioPlayer.playTone(
+                APPROACH_TONE2_FREQ,
+                APPROACH_TONE_DUR_MS,
+                1.0f,
+                APPROACH_TONE_BALANCE
+            )
         }
     }
+
     fun frequencyFromDeviation(absDeg: Double): Int {
-        return (DEVIATION_CENTER_FREQ - ((absDeg.coerceIn(0.0, DEVIATION_MAX_DEG)) / 40.0) * DEVIATION_FREQ_SPAN)
+        return (DEVIATION_CENTER_FREQ - ((absDeg.coerceIn(
+            0.0,
+            DEVIATION_MAX_DEG
+        )) / 40.0) * DEVIATION_FREQ_SPAN)
             .coerceIn(DEVIATION_MIN_FREQ_HZ.toDouble(), DEVIATION_MAX_FREQ_HZ.toDouble())
             .toInt()
     }
+
     fun balanceFromDeviation(dev: Double, absDeg: Double): Float {
         val clampedDeg = absDeg.coerceIn(0.0, 60.0).toFloat()
         return if (dev < 0.0) {
-            (APPROACH_TONE_BALANCE - clampedDeg / DEVIATION_BALANCE_SPAN.toFloat()).coerceIn(0.0f, 1.0f)
+            (APPROACH_TONE_BALANCE - clampedDeg / DEVIATION_BALANCE_SPAN.toFloat()).coerceIn(
+                0.0f,
+                1.0f
+            )
         } else {
-            (APPROACH_TONE_BALANCE + clampedDeg / DEVIATION_BALANCE_SPAN.toFloat()).coerceIn(0.0f, 1.0f)
+            (APPROACH_TONE_BALANCE + clampedDeg / DEVIATION_BALANCE_SPAN.toFloat()).coerceIn(
+                0.0f,
+                1.0f
+            )
         }
     }
+
     private fun intervalFromDeviation(absDeg: Double): Long {
         return when {
             absDeg > 60.0 -> DEVIATION_INTERVAL_FAST_MS
@@ -352,7 +450,9 @@ object AudioSignalConfig {
             else -> DEVIATION_INTERVAL_IDLE_MS
         }
     }
+
     fun deviationDurationMs(absDeviationDeg: Double): Long {
-        return (DEVIATION_BASE_DUR_MS + (DEVIATION_DEG_PER_MS * absDeviationDeg)).toLong().coerceAtMost(600L)
+        return (DEVIATION_BASE_DUR_MS + (DEVIATION_DEG_PER_MS * absDeviationDeg)).toLong()
+            .coerceAtMost(600L)
     }
 }

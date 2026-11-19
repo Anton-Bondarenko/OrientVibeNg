@@ -131,7 +131,7 @@ object MapGeometry {
     fun computeCalibrationSoft(pointA: CalibrationPoint, pointB: CalibrationPoint, northAngle: Double = 0.0, oldCalibration: MapCalibration): MapCalibration? {
         val trueBearing = bearing(pointA.gps, pointB.gps)
         val screenBearing = screenBearing(pointA.imageX, pointA.imageY, pointB.imageX, pointB.imageY) - northAngle
-        val calculatedDeclinationRaw = trueBearing - screenBearing
+        val calculatedDeclinationRaw = turnDetection(trueBearing, screenBearing)
 
         var limitDecl: String? = null
         val calculatedDeclination = if (oldCalibration.pointB == null) {
