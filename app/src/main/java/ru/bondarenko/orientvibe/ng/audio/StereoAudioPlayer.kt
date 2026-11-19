@@ -16,6 +16,8 @@ class StereoAudioPlayer private constructor(context: Context) {
         const val MAX_BUFFER_FRAMES = DEFAULT_SAMPLE_RATE * 2
         const val FRAME_DURATION_MS = 13
         const val MIN_FADE_MS = 30
+        const val STOP_FADE_MS = 20L
+        const val IDLE_TIMEOUT_MS = 500L
         const val CLIP_TONE = "tone"
         const val CLIP_TRILL = "trill"
         const val MAX_VOLUME = 1.0f
@@ -28,9 +30,19 @@ class StereoAudioPlayer private constructor(context: Context) {
     }
 
     private var audioTrack: AudioTrack? = null
+    private var audioThread: Thread? = null
     private val lock = Any()
+
     private val sampleRate: Int = DEFAULT_SAMPLE_RATE
     private val samplesPerFrame = FRAME_DURATION_MS * sampleRate / 1000 // 624 стерео-сэмпла
+    private val stopFadeFrames = ((sampleRate * STOP_FADE_MS) / 1000).toInt()
+    private val maxIdleFrames = (IDLE_TIMEOUT_MS / FRAME_DURATION_MS).toInt()
+
+    private val activeSounds = ArrayList<SoundClip>()
+    private val stereoBuffer = ShortArray(samplesPerFrame * 2)
+    private val silenceBuffer = ShortArray(samplesPerFrame * 2)
+
+    @Volatile private var audioActive = false
 
     private val audioAttributes: AudioAttributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -110,34 +122,38 @@ class StereoAudioPlayer private constructor(context: Context) {
         }
     }
 
+    /**
+     * Плавно гасит все текущие звуки за STOP_FADE_MS (20 мс),
+     * чтобы избежать щелчка при обрыве сигнала.
+     */
     fun stop() {
         synchronized(lock) {
-            activeSounds.clear()
+            for (s in activeSounds) {
+                s.triggerFadeOut(stopFadeFrames)
+            }
         }
     }
 
+    /**
+     * Немедленно останавливает воспроизведение и освобождает все ресурсы.
+     */
     fun release() {
+        val trackToRelease: AudioTrack?
+        val threadToJoin: Thread?
         synchronized(lock) {
             audioActive = false
-            audioTrack?.apply {
-                try { stop() } catch (_: Exception) {}
-                try { release() } catch (_: Exception) {}
-            }
+            trackToRelease = audioTrack
+            threadToJoin = audioThread
             audioTrack = null
-            audioThread?.interrupt()
             audioThread = null
             activeSounds.clear()
         }
+        releaseTrackSafe(trackToRelease)
+        threadToJoin?.interrupt()
     }
 
-    private var audioThread: Thread? = null
-    private val activeSounds = ArrayList<SoundClip>()
-    private val stereoBuffer = ShortArray(samplesPerFrame * 2)
-    private val silenceBuffer = ShortArray(samplesPerFrame * 2)
-    @Volatile private var audioActive = true
-
     private fun ensurePlayingLocked() {
-        if (audioTrack != null) return
+        if (audioTrack != null && audioActive) return
 
         val bufferSize = AudioTrack.getMinBufferSize(
             sampleRate,
@@ -146,8 +162,7 @@ class StereoAudioPlayer private constructor(context: Context) {
         )
         if (bufferSize <= 0) return
 
-        audioActive = true
-        audioTrack = AudioTrack.Builder().apply {
+        val track = AudioTrack.Builder().apply {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 setContext(appContext)
             }
@@ -158,22 +173,79 @@ class StereoAudioPlayer private constructor(context: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
             }
-        }.build().also { track ->
-            track.play()
-            audioThread = object : Thread("StereoAudioPlayer-mixer") {
-                init { isDaemon = true }
-                override fun run() {
-                    while (audioActive) {
-                        val hasAudio: Boolean
-                        synchronized(lock) {
-                            hasAudio = mixFrameLocked()
+        }.build()
+
+        track.play()
+        audioTrack = track
+        audioActive = true
+
+        audioThread = object : Thread("StereoAudioPlayer-mixer") {
+            init { isDaemon = true }
+            override fun run() {
+                var idleFramesCount = 0
+
+                while (audioActive) {
+                    var hasAudio = false
+                    var shouldStopOnIdle = false
+
+                    synchronized(lock) {
+                        if (!audioActive || audioTrack !== track) return@synchronized
+                        hasAudio = mixFrameLocked()
+
+                        if (hasAudio) {
+                            idleFramesCount = 0
+                        } else {
+                            idleFramesCount++
+                            if (idleFramesCount >= maxIdleFrames) {
+                                audioActive = false
+                                audioTrack = null
+                                audioThread = null
+                                shouldStopOnIdle = true
+                            }
                         }
-                        val bufferToWrite = if (hasAudio) stereoBuffer else silenceBuffer
-                        val written = track.write(bufferToWrite, 0, bufferToWrite.size)
-                        if (written < 0) break
+                    }
+
+                    if (shouldStopOnIdle) {
+                        releaseTrackSafe(track)
+                        break
+                    }
+
+                    val bufferToWrite = if (hasAudio) stereoBuffer else silenceBuffer
+                    val written = try {
+                        track.write(bufferToWrite, 0, bufferToWrite.size)
+                    } catch (_: Exception) {
+                        -1
+                    }
+
+                    if (written < 0) {
+                        synchronized(lock) {
+                            if (audioTrack === track) {
+                                audioActive = false
+                                audioTrack = null
+                                audioThread = null
+                            }
+                        }
+                        releaseTrackSafe(track)
+                        break
                     }
                 }
-            }.also { it.start() }
+            }
+        }.also { it.start() }
+    }
+
+    private fun releaseTrackSafe(track: AudioTrack?) {
+        if (track == null) return
+        try {
+            if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                track.pause()
+                track.flush()
+            }
+            track.stop()
+        } catch (_: Exception) {
+        }
+        try {
+            track.release()
+        } catch (_: Exception) {
         }
     }
 
@@ -196,42 +268,33 @@ class StereoAudioPlayer private constructor(context: Context) {
                     else -> 1.0
                 }
 
-                // Непрерывная фаза от начала воспроизведения клипа
                 val carrier = sin(frameIdx.toDouble() * s.phaseInc)
 
-                // Тремоло применяем только для CLIP_TRILL
                 val tremoloEnvelope = if (s.type == CLIP_TRILL) {
                     val tremoloPhase = frameIdx.toDouble() * s.modPhaseInc + s.trillPhaseOffset
                     0.575 + 0.425 * sin(tremoloPhase)
                 } else {
                     1.0
                 }
-
                 val sample = carrier * tremoloEnvelope * fadeMultiplier
                 leftAcc += sample * s.leftVol
                 rightAcc += sample * s.rightVol
-
                 s.currentFrame++
             }
-
-            // Soft-limit до [-0.95, 0.95] (~31128 в 16-bit PCM)
             val leftFinal = (leftAcc.coerceIn(-0.95, 0.95) * 32767.0).toInt().toShort()
             val rightFinal = (rightAcc.coerceIn(-0.95, 0.95) * 32767.0).toInt().toShort()
-
             stereoBuffer[i * 2] = leftFinal
             stereoBuffer[i * 2 + 1] = rightFinal
         }
-
         activeSounds.removeAll { it.currentFrame >= it.frames }
         return true
     }
-
     private class SoundClip(
         val type: String,
         frequencyHz: Int,
         modulationFreqHz: Double,
-        val fadeFrames: Int,
-        val frames: Int,
+        var fadeFrames: Int,
+        var frames: Int,
         val leftVol: Float,
         val rightVol: Float,
         sampleRateInv: Double
@@ -240,5 +303,24 @@ class StereoAudioPlayer private constructor(context: Context) {
         val modPhaseInc = modulationFreqHz * 2.0 * Math.PI * sampleRateInv
         val trillPhaseOffset = if (type == CLIP_TRILL) Math.random() * 2.0 * Math.PI else 0.0
         var currentFrame: Int = 0
+        private var stopping = false
+        fun triggerFadeOut(fadeOutLength: Int) {
+            if (stopping) return
+            stopping = true
+            val remaining = frames - currentFrame
+            if (remaining <= 1) {
+                frames = currentFrame
+                return
+            }
+// Если сигнал только начал нарастать (fade-in), корректируем амплитуду, чтобы не было скачка громкости
+            val currentGain = if (fadeFrames > 0 && currentFrame < fadeFrames) {
+                currentFrame.toDouble() / fadeFrames
+            } else {
+                1.0
+            }
+            val actualFade = minOf(fadeOutLength, remaining)
+            fadeFrames = if (currentGain > 0.0) (actualFade / currentGain).toInt() else actualFade
+            frames = currentFrame + actualFade
+        }
     }
 }
